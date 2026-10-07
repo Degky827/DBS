@@ -1,0 +1,27 @@
+# Dependencies & build artifacts
+node_modules
+npm-debug.log*
+coverage
+*.tsbuildinfo
+
+# Secrets - never bake .env into the image
+.env
+.env.*
+!.env.example
+
+# VCS / IDE / OS
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Logs & temp
+*.log
+logs
+tmp
+temp
