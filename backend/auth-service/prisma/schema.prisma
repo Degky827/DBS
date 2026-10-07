@@ -7,12 +7,37 @@ datasource db {
 }
 
 model User {
-    id              String   @id @default(uuid())
-    firstName       String
-    lastName        String
-    email           String   @unique
-    passwordHash    String
-    isEmailVerified Boolean  @default(false)
-    createdAt       DateTime @default(now())
-    updatedAt       DateTime @updatedAt
+    id                String    @id @default(uuid())
+    firstName         String
+    middleName        String?
+    lastName          String
+    username          String    @unique
+    dateOfBirth       DateTime
+    gender            String
+    phoneNumber       String
+    email             String    @unique
+    passwordHash      String
+    securityQuestion  String
+    securityAnswerHash String
+    acceptedTerms     Boolean   @default(false)
+    acceptedTermsAt   DateTime?
+    role              String    @default("USER")
+    isEmailVerified   Boolean   @default(false)
+    createdAt         DateTime  @default(now())
+    updatedAt         DateTime  @updatedAt
+    otpCodes          OtpCode[]
+}
+
+model OtpCode {
+    id         String    @id @default(uuid())
+    userId     String
+    user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    email      String
+    codeHash   String
+    purpose    String
+    expiresAt  DateTime
+    consumedAt DateTime?
+    createdAt  DateTime  @default(now())
+
+    @@index([email, purpose])
 }

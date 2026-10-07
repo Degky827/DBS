@@ -16,4 +16,14 @@ const me = async (req, res) => {
   return ApiResponse.success(res, result, "Profile fetched");
 };
 
-module.exports = { register, login, me };
+const verifyEmail = async (req, res) => {
+  const result = await authService.verifyEmail(req.body);
+  return ApiResponse.success(res, result, "Email verified");
+};
+
+const resendOtp = async (req, res) => {
+  const result = await authService.resendOtp(req.body);
+  return ApiResponse.success(res, null, result.message);
+};
+
+module.exports = { register, login, me, verifyEmail, resendOtp };

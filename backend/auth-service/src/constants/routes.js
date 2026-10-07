@@ -7,6 +7,8 @@ const ROUTES = Object.freeze({
     REGISTER: "/register",
     LOGIN: "/login",
     ME: "/me",
+    VERIFY_EMAIL: "/verify-email",
+    RESEND_OTP: "/resend-otp",
   }),
 });
 

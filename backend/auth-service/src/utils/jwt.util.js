@@ -7,6 +7,7 @@ const signAccessToken = (user) =>
     {
       sub: user.id,
       email: user.email,
+      role: user.role,
       typ: "access",
     },
     env.JWT_SECRET,
