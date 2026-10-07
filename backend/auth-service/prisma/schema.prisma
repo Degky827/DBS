@@ -26,6 +26,7 @@ model User {
     createdAt         DateTime  @default(now())
     updatedAt         DateTime  @updatedAt
     otpCodes          OtpCode[]
+    refreshTokens     RefreshToken[]
 }
 
 model OtpCode {
@@ -40,4 +41,16 @@ model OtpCode {
     createdAt  DateTime  @default(now())
 
     @@index([email, purpose])
+}
+
+model RefreshToken {
+    id         String    @id @default(uuid())
+    userId     String
+    user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    tokenHash  String    @unique
+    expiresAt  DateTime
+    revokedAt  DateTime?
+    createdAt  DateTime  @default(now())
+
+    @@index([userId])
 }

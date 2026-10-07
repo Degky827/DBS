@@ -79,13 +79,6 @@ const registerSchema = z
     path: ["confirmPassword"],
   });
 
-const loginSchema = z.object({
-  email: emailField,
-  password: requiredString("password")
-    .min(1, "password is required")
-    .max(72, "password must not exceed 72 characters"),
-});
-
 const verifyEmailSchema = z.object({
   email: emailField,
   otp: requiredString("otp")
@@ -97,4 +90,55 @@ const resendOtpSchema = z.object({
   email: emailField,
 });
 
-module.exports = { registerSchema, loginSchema, verifyEmailSchema, resendOtpSchema };
+const passwordField = (label) =>
+  requiredString(label)
+    .min(8, `${label} must be at least 8 characters`)
+    .max(72, `${label} must not exceed 72 characters`)
+    .regex(
+      PASSWORD_PATTERN,
+      `${label} must contain at least one uppercase letter, one lowercase letter and one number`
+    );
+
+const refreshSchema = z.object({
+  refreshToken: requiredString("refreshToken").trim().min(1, "refreshToken is required"),
+});
+
+const logoutSchema = z.object({
+  refreshToken: requiredString("refreshToken").trim().min(1, "refreshToken is required"),
+});
+
+const forgotPasswordSchema = z.object({
+  email: emailField,
+});
+
+const resetPasswordSchema = z
+  .object({
+    email: emailField,
+    otp: requiredString("otp")
+      .trim()
+      .regex(/^\d{6}$/, "otp must be a 6-digit code"),
+    newPassword: passwordField("newPassword"),
+    confirmNewPassword: requiredString("confirmNewPassword"),
+  })
+  .refine((data) => data.newPassword === data.confirmNewPassword, {
+    message: "newPassword and confirmNewPassword must match",
+    path: ["confirmNewPassword"],
+  });
+
+const loginSchema = z.object({
+  email: emailField,
+  password: requiredString("password")
+    .min(1, "password is required")
+    .max(72, "password must not exceed 72 characters"),
+});
+
+module.exports = {
+  registerSchema,
+  loginSchema,
+  verifyEmailSchema,
+  resendOtpSchema,
+  refreshSchema,
+  logoutSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+};

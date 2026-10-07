@@ -10,6 +10,12 @@ const {
 } = require("../../utils/password.util");
 const { signAccessToken } = require("../../utils/jwt.util");
 const {
+  generateRefreshToken,
+  hashRefreshToken,
+  refreshTokenExpiry,
+} = require("../../utils/refreshToken.util");
+const refreshTokenRepository = require("../../repositories/refreshToken.repository");
+const {
   generateOtp,
   hashOtp,
   compareOtp,
@@ -163,9 +169,15 @@ const login = async (input) => {
   }
 
   const accessToken = signAccessToken(user);
+  const refreshToken = generateRefreshToken();
+  await refreshTokenRepository.create({
+    userId: user.id,
+    tokenHash: hashRefreshToken(refreshToken),
+    expiresAt: refreshTokenExpiry(),
+  });
   audit("LOGIN_SUCCESS", { userId: user.id });
 
-  return { user: toPublicUser(user), accessToken };
+  return { user: toPublicUser(user), accessToken, refreshToken };
 };
 
 const getMe = async (userId) => {
@@ -178,4 +190,90 @@ const getMe = async (userId) => {
   return { user: toPublicUser(user) };
 };
 
-module.exports = { register, login, getMe, verifyEmail, resendOtp };
+const refresh = async (input) => {
+  const tokenHash = hashRefreshToken(input.refreshToken);
+  const record = await refreshTokenRepository.findActiveByHash(tokenHash);
+
+  if (!record || record.expiresAt.getTime() <= Date.now()) {
+    audit("REFRESH_FAILED", {});
+    throw ApiError.unauthorized("Invalid or expired refresh token", "INVALID_REFRESH_TOKEN");
+  }
+
+  await refreshTokenRepository.revoke(record.id);
+
+  const accessToken = signAccessToken(record.user);
+  const refreshToken = generateRefreshToken();
+  await refreshTokenRepository.create({
+    userId: record.user.id,
+    tokenHash: hashRefreshToken(refreshToken),
+    expiresAt: refreshTokenExpiry(),
+  });
+  audit("TOKEN_REFRESHED", { userId: record.user.id });
+
+  return { user: toPublicUser(record.user), accessToken, refreshToken };
+};
+
+const logout = async (input) => {
+  const tokenHash = hashRefreshToken(input.refreshToken);
+  const record = await refreshTokenRepository.findActiveByHash(tokenHash);
+
+  if (record) {
+    await refreshTokenRepository.revoke(record.id);
+    audit("LOGOUT", { userId: record.user.id });
+  }
+
+  return { message: "Logged out" };
+};
+
+const forgotPassword = async (input) => {
+  const email = input.email.toLowerCase();
+  const user = await userRepository.findByEmail(email);
+
+  if (user) {
+    await issueOtp(user, OTP_PURPOSES.PASSWORD_RESET);
+  }
+
+  return {
+    message: "If the account exists, a password reset code has been sent",
+  };
+};
+
+const resetPassword = async (input) => {
+  const email = input.email.toLowerCase();
+  const user = await userRepository.findByEmail(email);
+
+  const record = await otpRepository.findLatestActive(
+    email,
+    OTP_PURPOSES.PASSWORD_RESET
+  );
+
+  const valid =
+    user && record && record.expiresAt.getTime() > Date.now()
+      ? await compareOtp(input.otp, record.codeHash)
+      : false;
+
+  if (!valid) {
+    audit("PASSWORD_RESET_FAILED", { email });
+    throw new ApiError(400, "Invalid or expired reset code", "INVALID_OTP");
+  }
+
+  await otpRepository.consume(record.id);
+  const passwordHash = await hashPassword(input.newPassword);
+  await userRepository.updatePassword(user.id, passwordHash);
+  await refreshTokenRepository.revokeAllForUser(user.id);
+  audit("PASSWORD_RESET_SUCCESS", { userId: user.id });
+
+  return { message: "Password has been reset" };
+};
+
+module.exports = {
+  register,
+  login,
+  getMe,
+  verifyEmail,
+  resendOtp,
+  refresh,
+  logout,
+  forgotPassword,
+  resetPassword,
+};

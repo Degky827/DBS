@@ -10,6 +10,10 @@ const {
   loginSchema,
   verifyEmailSchema,
   resendOtpSchema,
+  refreshSchema,
+  logoutSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
 } = require("./auth.validation");
 
 router.use(authLimiter);
@@ -23,5 +27,13 @@ router.get(ROUTES.AUTH.ME, authenticate, authController.me);
 router.post(ROUTES.AUTH.VERIFY_EMAIL, validate(verifyEmailSchema), authController.verifyEmail);
 
 router.post(ROUTES.AUTH.RESEND_OTP, validate(resendOtpSchema), authController.resendOtp);
+
+router.post(ROUTES.AUTH.REFRESH, validate(refreshSchema), authController.refresh);
+
+router.post(ROUTES.AUTH.LOGOUT, validate(logoutSchema), authController.logout);
+
+router.post(ROUTES.AUTH.FORGOT_PASSWORD, validate(forgotPasswordSchema), authController.forgotPassword);
+
+router.post(ROUTES.AUTH.RESET_PASSWORD, validate(resetPasswordSchema), authController.resetPassword);
 
 module.exports = router;

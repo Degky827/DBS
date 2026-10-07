@@ -26,4 +26,34 @@ const resendOtp = async (req, res) => {
   return ApiResponse.success(res, null, result.message);
 };
 
-module.exports = { register, login, me, verifyEmail, resendOtp };
+const refresh = async (req, res) => {
+  const result = await authService.refresh(req.body);
+  return ApiResponse.success(res, result, "Token refreshed");
+};
+
+const logout = async (req, res) => {
+  const result = await authService.logout(req.body);
+  return ApiResponse.success(res, null, result.message);
+};
+
+const forgotPassword = async (req, res) => {
+  const result = await authService.forgotPassword(req.body);
+  return ApiResponse.success(res, null, result.message);
+};
+
+const resetPassword = async (req, res) => {
+  const result = await authService.resetPassword(req.body);
+  return ApiResponse.success(res, null, result.message);
+};
+
+module.exports = {
+  register,
+  login,
+  me,
+  verifyEmail,
+  resendOtp,
+  refresh,
+  logout,
+  forgotPassword,
+  resetPassword,
+};

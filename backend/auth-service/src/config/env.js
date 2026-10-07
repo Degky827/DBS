@@ -41,6 +41,7 @@ const env = Object.freeze({
   })(),
   JWT_SECRET: readRequired("JWT_SECRET"),
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "15m",
+  REFRESH_TOKEN_TTL_MS: readNumber("REFRESH_TOKEN_TTL_MS", 7 * 24 * 60 * 60 * 1000),
   JWT_ISSUER: process.env.JWT_ISSUER || "auth-service",
   JWT_AUDIENCE: process.env.JWT_AUDIENCE || "banking-system",
   BCRYPT_ROUNDS: readNumber("BCRYPT_ROUNDS", 12),

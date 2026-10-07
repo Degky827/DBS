@@ -2,7 +2,10 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 
 const OTP_TTL_MS = 10 * 60 * 1000;
-const OTP_PURPOSES = { EMAIL_VERIFICATION: "EMAIL_VERIFICATION" };
+const OTP_PURPOSES = {
+  EMAIL_VERIFICATION: "EMAIL_VERIFICATION",
+  PASSWORD_RESET: "PASSWORD_RESET",
+};
 
 const generateOtp = () => crypto.randomInt(0, 1000000).toString().padStart(6, "0");
 
