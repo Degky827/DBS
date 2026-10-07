@@ -1,0 +1,594 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Digital Banking - Auth Service",
+    "version": "1.0.0",
+    "description": "Authentication API for the Digital Banking System. Endpoints for user registration, login and the authenticated profile. All responses use a consistent JSON envelope (`success`, `message`, `data` / `errors`). Every response carries an `X-Request-Id` correlation header (echoed from the request when present and valid, otherwise generated). Unknown routes return `404` with the standard error envelope.",
+    "contact": {
+      "name": "Auth Service Team"
+    },
+    "license": {
+      "name": "UNLICENSED",
+      "url": "https://example.com/license"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5001",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Service liveness and readiness"
+    },
+    {
+      "name": "Auth",
+      "description": "Registration, login and session profile"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Service root",
+        "description": "Liveness probe at the service root. Returns basic service metadata.",
+        "operationId": "getRoot",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is running",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RootResponse" },
+                "example": {
+                  "success": true,
+                  "message": "Auth service is running",
+                  "data": { "service": "auth-service", "version": "v1" }
+                }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "description": "Returns service liveness. Excluded from rate limiting and request logging.",
+        "operationId": "getHealth",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register a new user",
+        "description": "Creates an account. The password is hashed with bcrypt (cost 12). Duplicate emails are rejected.",
+        "operationId": "register",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Account created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UserResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "409": {
+            "description": "Email or username already registered",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "An account with this email already exists"
+                }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login",
+        "description": "Returns the user profile, a signed JWT access token (15 minutes by default) and an opaque refresh token. Invalid credentials always return the same generic message.",
+        "operationId": "login",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated",
+            "headers": {
+              "RateLimit": {
+                "description": "Rate limit state (draft-7)",
+                "schema": { "type": "string" },
+                "example": "limit=10, remaining=7, reset=860"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AuthResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": {
+            "description": "Invalid email or password",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Invalid email or password"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email not verified",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Email address is not verified" }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "500": { "$ref": "#/components/responses/InternalServerError" }
+        }
+      }
+    },
+    "/api/v1/auth/verify-email": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Verify email with OTP",
+        "description": "Marks the account's email as verified when the six-digit OTP matches.",
+        "operationId": "verifyEmail",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VerifyEmailRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Email verified",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserResponse" } } }
+          },
+          "400": {
+            "description": "Invalid or expired code",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Invalid or expired verification code" }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/auth/resend-otp": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Resend verification OTP",
+        "description": "Issues a new verification code for unverified accounts. Always returns the same generic message.",
+        "operationId": "resendOtp",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ResendOtpRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP resent (or account does not exist — response is identical)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "message": { "type": "string", "example": "If the account exists, a new verification code has been sent" },
+                    "data": { "type": "null" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Email already verified",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Email is already verified" }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Refresh access token",
+        "description": "Rotates the refresh token and returns a new access token plus a new refresh token.",
+        "operationId": "refresh",
+        "security": [],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RefreshRequest" } } } },
+        "responses": {
+          "200": { "description": "Token refreshed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResponse" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": {
+            "description": "Invalid or expired refresh token",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }, "example": { "success": false, "message": "Invalid or expired refresh token" } } }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Logout",
+        "description": "Revokes the provided refresh token. Idempotent — always returns success.",
+        "operationId": "logout",
+        "security": [],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RefreshRequest" } } } },
+        "responses": {
+          "200": { "description": "Logged out", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean", "example": true }, "message": { "type": "string", "example": "Logged out" }, "data": { "type": "null" } } } } } },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/auth/forgot-password": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Forgot password",
+        "description": "Issues a six-digit password reset code when the account exists. The response is identical either way.",
+        "operationId": "forgotPassword",
+        "security": [],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResendOtpRequest" } } } },
+        "responses": {
+          "200": { "description": "Reset code sent (or account does not exist)", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean", "example": true }, "message": { "type": "string", "example": "If the account exists, a password reset code has been sent" }, "data": { "type": "null" } } } } } },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/auth/reset-password": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Reset password",
+        "description": "Validates the reset code, updates the password hash and revokes all refresh tokens.",
+        "operationId": "resetPassword",
+        "security": [],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResetPasswordRequest" } } } },
+        "responses": {
+          "200": { "description": "Password reset", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean", "example": true }, "message": { "type": "string", "example": "Password has been reset" }, "data": { "type": "null" } } } } } },
+          "400": {
+            "description": "Invalid/expired code or validation failure",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }, "example": { "success": false, "message": "Invalid or expired reset code" } } }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Get current user",
+        "description": "Returns the profile of the authenticated user. Requires a Bearer access token.",
+        "operationId": "getCurrentUser",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Current user profile",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UserResponse" }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Account no longer exists",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Account not found" }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Paste the `accessToken` returned by `POST /api/v1/auth/login`."
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "description": "Public user representation. Sensitive fields such as passwordHash are never exposed.",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "firstName": { "type": "string", "example": "Ada" },
+          "middleName": { "type": "string", "nullable": true, "example": "Byron" },
+          "lastName": { "type": "string", "example": "Lovelace" },
+          "username": { "type": "string", "example": "ada_lovelace" },
+          "dateOfBirth": { "type": "string", "format": "date-time" },
+          "gender": { "type": "string", "example": "female" },
+          "phoneNumber": { "type": "string", "example": "+15551234567" },
+          "email": { "type": "string", "format": "email", "example": "ada@example.com" },
+          "role": { "type": "string", "example": "USER" },
+          "isEmailVerified": { "type": "boolean", "default": false },
+          "createdAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "firstName", "lastName", "username", "dateOfBirth", "gender", "phoneNumber", "email", "role", "isEmailVerified", "createdAt"]
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["firstName", "lastName", "username", "dateOfBirth", "gender", "phoneNumber", "email", "password", "confirmPassword", "securityQuestion", "securityAnswer", "acceptedTerms"],
+        "properties": {
+          "firstName": { "type": "string", "minLength": 2, "maxLength": 60, "pattern": "^[A-Za-zÀ-ÿ' -]+$", "example": "Ada" },
+          "middleName": { "type": "string", "minLength": 2, "maxLength": 60, "pattern": "^[A-Za-zÀ-ÿ' -]+$", "nullable": true, "example": "Byron" },
+          "lastName": { "type": "string", "minLength": 2, "maxLength": 60, "pattern": "^[A-Za-zÀ-ÿ' -]+$", "example": "Lovelace" },
+          "username": { "type": "string", "pattern": "^[A-Za-z0-9_]{3,30}$", "example": "ada_lovelace" },
+          "dateOfBirth": { "type": "string", "format": "date-time", "example": "1815-12-10" },
+          "gender": { "type": "string", "enum": ["male", "female", "other", "prefer_not_to_say"], "example": "female" },
+          "phoneNumber": { "type": "string", "pattern": "^\\+?[0-9]{7,15}$", "example": "+15551234567" },
+          "email": { "type": "string", "format": "email", "maxLength": 254, "example": "ada@example.com" },
+          "password": {
+            "type": "string", "format": "password", "minLength": 8, "maxLength": 72,
+            "pattern": "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).*$", "example": "Passw0rd1",
+            "description": "At least 8 characters with one uppercase letter, one lowercase letter and one number."
+          },
+          "confirmPassword": { "type": "string", "format": "password", "example": "Passw0rd1", "description": "Must match `password`." },
+          "securityQuestion": { "type": "string", "minLength": 5, "maxLength": 200, "example": "What was the name of your first school?" },
+          "securityAnswer": { "type": "string", "format": "password", "minLength": 2, "maxLength": 100, "example": "St Vincent" },
+          "acceptedTerms": { "type": "boolean", "enum": [true], "example": true, "description": "Must be `true` to register." }
+        }
+      },
+      "VerifyEmailRequest": {
+        "type": "object",
+        "required": ["email", "otp"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "example": "ada@example.com" },
+          "otp": { "type": "string", "pattern": "^\\d{6}$", "example": "123456", "description": "Six-digit code issued at registration (also logged by the service in development)." }
+        }
+      },
+      "ResendOtpRequest": {
+        "type": "object",
+        "required": ["email"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "example": "ada@example.com" }
+        }
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "required": ["refreshToken"],
+        "properties": {
+          "refreshToken": { "type": "string", "example": "9f2c...c71" }
+        }
+      },
+      "ResetPasswordRequest": {
+        "type": "object",
+        "required": ["email", "otp", "newPassword", "confirmNewPassword"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "example": "ada@example.com" },
+          "otp": { "type": "string", "pattern": "^\\d{6}$", "example": "123456" },
+          "newPassword": { "type": "string", "format": "password", "minLength": 8, "maxLength": 72, "example": "NewPassw0rd" },
+          "confirmNewPassword": { "type": "string", "format": "password", "example": "NewPassw0rd" }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "example": "ada@example.com" },
+          "password": { "type": "string", "format": "password", "example": "Passw0rd1" }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Profile fetched" },
+          "data": {
+            "type": "object",
+            "properties": { "user": { "$ref": "#/components/schemas/User" } }
+          }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Login successful" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "user": { "$ref": "#/components/schemas/User" },
+              "accessToken": {
+                "type": "string",
+                "description": "Signed JWT access token. Send as `Authorization: Bearer <token>`.",
+                "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+              },
+              "refreshToken": {
+                "type": "string",
+                "description": "Opaque refresh token. Use with `POST /api/v1/auth/refresh`; rotate on use.",
+                "example": "9f2c...c71"
+              }
+            }
+          }
+        }
+      },
+      "RootResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Auth service is running" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "service": { "type": "string", "example": "auth-service" },
+              "version": { "type": "string", "example": "v1" }
+            }
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Service is healthy" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "service": { "type": "string", "example": "auth-service" },
+              "status": { "type": "string", "example": "healthy" },
+              "uptime": { "type": "integer", "example": 42 },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "description": "Standard error response. `errors` is present only for validation failures (field -> message).",
+        "properties": {
+          "success": { "type": "boolean", "example": false },
+          "message": { "type": "string", "example": "Validation failed" },
+          "errors": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "example": { "email": "email must be a valid email address" }
+          }
+        },
+        "required": ["success", "message"]
+      }
+    },
+    "responses": {
+      "ValidationError": {
+        "description": "Request body failed zod validation",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+            "example": {
+              "success": false,
+              "message": "Validation failed",
+              "errors": {
+                "email": "email must be a valid email address",
+                "password": "password must be at least 8 characters"
+              }
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing, invalid or expired access token",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+            "examples": {
+              "missing": {
+                "value": { "success": false, "message": "Authentication token missing" }
+              },
+              "invalid": {
+                "value": { "success": false, "message": "Invalid access token" }
+              },
+              "expired": {
+                "value": { "success": false, "message": "Access token expired" }
+              }
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Rate limit exceeded",
+        "headers": {
+          "RateLimit": {
+            "description": "Rate limit state (draft-7)",
+            "schema": { "type": "string" }
+          },
+          "Retry-After": {
+            "description": "Seconds to wait before retrying",
+            "schema": { "type": "integer" }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+            "example": {
+              "success": false,
+              "message": "Too many authentication attempts, please try again later",
+              "errors": { "retryAfter": 860 }
+            }
+          }
+        }
+      },
+      "InternalServerError": {
+        "description": "Unexpected server error. Internal details are never exposed in production.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+            "example": { "success": false, "message": "Internal server error" }
+          }
+        }
+      }
+    }
+  }
+}
