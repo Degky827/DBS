@@ -14,7 +14,7 @@ RUN npm ci
 FROM dependencies AS build
 COPY prisma ./prisma
 COPY prisma.config.mjs ./
-RUN npx prisma generate
+RUN DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder" npx prisma generate
 COPY src ./src
 COPY docs ./docs
 COPY server.js ./
