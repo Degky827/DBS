@@ -1,3 +1,4 @@
+const prisma = require("../../config/database");
 const userRepository = require("../../repositories/user.repository");
 const otpRepository = require("../../repositories/otp.repository");
 const ApiError = require("../../utils/ApiError");
@@ -22,6 +23,7 @@ const {
   otpExpiry,
   OTP_PURPOSES,
 } = require("../../utils/otp.util");
+const { sendOtpEmail } = require("../../services/email.service");
 
 const toPublicUser = (user) => ({
   id: user.id,
@@ -47,8 +49,18 @@ const issueOtp = async (user, purpose) => {
     purpose,
     expiresAt: otpExpiry(),
   });
-  // No mail provider configured yet — OTP is logged so the flow can be tested.
-  logger.info({ email: user.email, purpose, otp }, "OTP issued");
+
+  try {
+    const { delivered } = await sendOtpEmail({ to: user.email, otp, purpose });
+    if (!delivered) {
+      // SMTP not configured (development) — OTP is logged so the flow can be tested.
+      logger.info({ email: user.email, purpose, otp }, "OTP issued (logged, email not configured)");
+    }
+  } catch (error) {
+    audit("OTP_EMAIL_FAILED", { userId: user.id, purpose });
+    throw ApiError.internal("Failed to send verification email. Please try again.");
+  }
+
   audit("OTP_ISSUED", { userId: user.id, purpose });
   return otp;
 };
@@ -78,23 +90,58 @@ const register = async (input) => {
   const passwordHash = await hashPassword(input.password);
   const securityAnswerHash = await hashPassword(input.securityAnswer.toLowerCase());
 
-  const user = await userRepository.create({
-    firstName: input.firstName,
-    middleName: input.middleName || null,
-    lastName: input.lastName,
-    username: input.username,
-    dateOfBirth: new Date(input.dateOfBirth),
-    gender: input.gender,
-    phoneNumber: input.phoneNumber,
-    email,
-    passwordHash,
-    securityQuestion: input.securityQuestion,
-    securityAnswerHash,
-    acceptedTerms: true,
-    acceptedTermsAt: new Date(),
+  const user = await prisma.$transaction(async (tx) => {
+    const newUser = await tx.user.create({
+      data: {
+        firstName: input.firstName,
+        middleName: input.middleName || null,
+        lastName: input.lastName,
+        username: input.username,
+        dateOfBirth: new Date(input.dateOfBirth),
+        gender: input.gender,
+        phoneNumber: input.phoneNumber,
+        email,
+        passwordHash,
+        securityQuestion: input.securityQuestion,
+        securityAnswerHash,
+        acceptedTerms: true,
+        acceptedTermsAt: new Date(),
+      },
+    });
+
+    const otp = generateOtp();
+    await tx.otpCode.create({
+      data: {
+        userId: newUser.id,
+        email: newUser.email,
+        codeHash: await hashOtp(otp),
+        purpose: OTP_PURPOSES.EMAIL_VERIFICATION,
+        expiresAt: otpExpiry(),
+      },
+    });
+
+    try {
+      const { delivered } = await sendOtpEmail({
+        to: newUser.email,
+        otp,
+        purpose: OTP_PURPOSES.EMAIL_VERIFICATION,
+      });
+      if (!delivered) {
+        logger.info(
+          { email: newUser.email, otp },
+          "OTP issued (logged, email not configured)"
+        );
+      }
+    } catch (error) {
+      audit("OTP_EMAIL_FAILED", { userId: newUser.id });
+      throw ApiError.internal(
+        "Failed to send verification email. Please try again."
+      );
+    }
+
+    return newUser;
   });
 
-  await issueEmailVerificationOtp(user);
   audit("REGISTER_SUCCESS", { userId: user.id });
 
   return { user: toPublicUser(user) };

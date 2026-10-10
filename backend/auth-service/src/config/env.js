@@ -44,6 +44,15 @@ const env = Object.freeze({
   REFRESH_TOKEN_TTL_MS: readNumber("REFRESH_TOKEN_TTL_MS", 7 * 24 * 60 * 60 * 1000),
   JWT_ISSUER: process.env.JWT_ISSUER || "auth-service",
   JWT_AUDIENCE: process.env.JWT_AUDIENCE || "banking-system",
+
+  // --- Email (Brevo SMTP) ---
+  // Leave BREVO_API_KEY empty in development to log OTPs instead of sending them.
+  BREVO_API_KEY: process.env.BREVO_API_KEY || "",
+  EMAIL_FROM: process.env.EMAIL_FROM || "Meridian Bank",
+  EMAIL_FROM_EMAIL: process.env.EMAIL_FROM_EMAIL || "no-reply@meridianbank.example",
+  EMAIL_SMTP_HOST: process.env.EMAIL_SMTP_HOST || "smtp-relay.brevo.com",
+  EMAIL_SMTP_PORT: readNumber("EMAIL_SMTP_PORT", 587),
+
   BCRYPT_ROUNDS: readNumber("BCRYPT_ROUNDS", 12),
   CORS_ORIGIN: process.env.CORS_ORIGIN || "*",
   LOG_LEVEL: process.env.LOG_LEVEL || "info",

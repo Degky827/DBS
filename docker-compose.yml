@@ -35,6 +35,12 @@ services:
       JWT_AUDIENCE: banking-system
       BCRYPT_ROUNDS: 12
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+
+      # --- Email (Brevo API) — OTP delivery ---
+      # Leave BREVO_API_KEY empty to log OTPs to the container logs (dev mode).
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Meridian Bank}
+      EMAIL_FROM_EMAIL: ${EMAIL_FROM_EMAIL:-no-reply@meridianbank.example}
       LOG_LEVEL: info
       RATE_LIMIT_WINDOW_MS: 900000
       RATE_LIMIT_MAX: 300
