@@ -56,6 +56,60 @@ const otpBlock = (otp) => `
   <p style="margin:0;font-size:13px;color:${BRAND.muted};">This code expires in 10 minutes and can be used once.</p>
 `;
 
+const resolveTransport = () => {
+  if (env.EMAIL_TRANSPORT) return env.EMAIL_TRANSPORT;
+  // xkeysib- keys are REST API keys; xsmtpsib- keys are SMTP keys.
+  return env.BREVO_API_KEY.startsWith("xkeysib") ? "api" : "smtp";
+};
+
+const sendViaApi = async ({ to, subject, html }) => {
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": env.BREVO_API_KEY,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender: { name: env.EMAIL_FROM, email: env.EMAIL_FROM_EMAIL },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Brevo API responded ${response.status}: ${detail.slice(0, 300)}`);
+  }
+
+  logger.info({ to }, "OTP email sent via Brevo API");
+};
+
+const sendViaSmtp = async ({ to, subject, html }) => {
+  const nodemailer = require("nodemailer");
+  const transporter = nodemailer.createTransport({
+    host: env.EMAIL_SMTP_HOST,
+    port: env.EMAIL_SMTP_PORT,
+    secure: env.EMAIL_SMTP_PORT === 465,
+    auth: {
+      user: env.EMAIL_SMTP_USER,
+      pass: env.BREVO_API_KEY,
+    },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+  });
+
+  await transporter.sendMail({
+    from: `"${env.EMAIL_FROM}" <${env.EMAIL_FROM_EMAIL}>`,
+    to,
+    subject,
+    html,
+  });
+
+  logger.info({ to }, "OTP email sent via SMTP");
+};
+
 const sendOtpEmail = async ({ to, otp, purpose }) => {
   const isVerification = purpose === "EMAIL_VERIFICATION";
   const subject = isVerification
@@ -73,30 +127,18 @@ const sendOtpEmail = async ({ to, otp, purpose }) => {
     return { delivered: false };
   }
 
+  const transport = resolveTransport();
+  const sender = transport === "api" ? sendViaApi : sendViaSmtp;
+
   try {
-    const nodemailer = require("nodemailer");
-    const transporter = nodemailer.createTransport({
-      host: env.EMAIL_SMTP_HOST,
-      port: env.EMAIL_SMTP_PORT,
-      secure: false,
-      auth: {
-        user: env.EMAIL_FROM_EMAIL,
-        pass: env.BREVO_API_KEY,
-      },
-    });
-
-    await transporter.sendMail({
-      from: `"${env.EMAIL_FROM}" <${env.EMAIL_FROM_EMAIL}>`,
-      to,
-      subject,
-      html,
-    });
-
-    logger.info({ to, purpose }, "OTP email sent via SMTP");
-    return { delivered: true };
+    await sender({ to, subject, html });
+    return { delivered: true, transport };
   } catch (error) {
-    logger.error({ to, purpose, error: error.message }, "Failed to send OTP email");
-    throw new Error("Failed to send verification email");
+    logger.error(
+      { to, purpose, transport, error: error.message },
+      "Failed to send OTP email"
+    );
+    throw new Error(`Failed to send verification email: ${error.message}`);
   }
 };
 

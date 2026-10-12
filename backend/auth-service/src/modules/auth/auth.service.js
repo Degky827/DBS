@@ -40,6 +40,24 @@ const toPublicUser = (user) => ({
   createdAt: user.createdAt,
 });
 
+const deliverOtp = async ({ userId, email, otp, purpose }) => {
+  try {
+    const { delivered } = await sendOtpEmail({ to: email, otp, purpose });
+    if (!delivered) {
+      logger.info({ email, purpose, otp }, "OTP issued (logged, email not configured)");
+    }
+    audit("OTP_ISSUED", { userId, purpose });
+    return delivered;
+  } catch (error) {
+    audit("OTP_EMAIL_FAILED", { userId, purpose });
+    logger.warn(
+      { email, purpose, otp, error: error.message },
+      "OTP email delivery failed — falling back to logging the code"
+    );
+    return false;
+  }
+};
+
 const issueOtp = async (user, purpose) => {
   const otp = generateOtp();
   await otpRepository.create({
@@ -50,18 +68,7 @@ const issueOtp = async (user, purpose) => {
     expiresAt: otpExpiry(),
   });
 
-  try {
-    const { delivered } = await sendOtpEmail({ to: user.email, otp, purpose });
-    if (!delivered) {
-      // SMTP not configured (development) — OTP is logged so the flow can be tested.
-      logger.info({ email: user.email, purpose, otp }, "OTP issued (logged, email not configured)");
-    }
-  } catch (error) {
-    audit("OTP_EMAIL_FAILED", { userId: user.id, purpose });
-    throw ApiError.internal("Failed to send verification email. Please try again.");
-  }
-
-  audit("OTP_ISSUED", { userId: user.id, purpose });
+  await deliverOtp({ userId: user.id, email: user.email, otp, purpose });
   return otp;
 };
 
@@ -90,7 +97,7 @@ const register = async (input) => {
   const passwordHash = await hashPassword(input.password);
   const securityAnswerHash = await hashPassword(input.securityAnswer.toLowerCase());
 
-  const user = await prisma.$transaction(async (tx) => {
+  const { user, otp } = await prisma.$transaction(async (tx) => {
     const newUser = await tx.user.create({
       data: {
         firstName: input.firstName,
@@ -109,37 +116,25 @@ const register = async (input) => {
       },
     });
 
-    const otp = generateOtp();
+    const code = generateOtp();
     await tx.otpCode.create({
       data: {
         userId: newUser.id,
         email: newUser.email,
-        codeHash: await hashOtp(otp),
+        codeHash: await hashOtp(code),
         purpose: OTP_PURPOSES.EMAIL_VERIFICATION,
         expiresAt: otpExpiry(),
       },
     });
 
-    try {
-      const { delivered } = await sendOtpEmail({
-        to: newUser.email,
-        otp,
-        purpose: OTP_PURPOSES.EMAIL_VERIFICATION,
-      });
-      if (!delivered) {
-        logger.info(
-          { email: newUser.email, otp },
-          "OTP issued (logged, email not configured)"
-        );
-      }
-    } catch (error) {
-      audit("OTP_EMAIL_FAILED", { userId: newUser.id });
-      throw ApiError.internal(
-        "Failed to send verification email. Please try again."
-      );
-    }
+    return { user: newUser, otp: code };
+  });
 
-    return newUser;
+  await deliverOtp({
+    userId: user.id,
+    email: user.email,
+    otp,
+    purpose: OTP_PURPOSES.EMAIL_VERIFICATION,
   });
 
   audit("REGISTER_SUCCESS", { userId: user.id });
