@@ -34,11 +34,8 @@ services:
       JWT_ISSUER: auth-service
       JWT_AUDIENCE: banking-system
       BCRYPT_ROUNDS: 12
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
 
-      # --- Email (Brevo) — OTP delivery ---
-      # xkeysib- keys use the REST API (HTTPS), xsmtpsib- keys use SMTP.
-      # Leave BREVO_API_KEY empty to log OTPs to the container logs (dev mode).
       BREVO_API_KEY: ${BREVO_API_KEY:-}
       EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-}
       EMAIL_FROM: ${EMAIL_FROM:-Meridian Bank}
@@ -51,6 +48,19 @@ services:
       ENABLE_API_DOCS: "true"
     ports:
       - "5001:5001"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_AUTH_API: ${VITE_AUTH_API:-http://localhost:5001/api/v1}
+        VITE_USER_API: ${VITE_USER_API:-http://localhost:5002/api/v1}
+    container_name: banking-frontend
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+    ports:
+      - "8080:80"
 
   pgadmin:
     image: dpage/pgadmin4:latest
