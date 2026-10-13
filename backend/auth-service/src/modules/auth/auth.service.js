@@ -113,6 +113,7 @@ const register = async (input) => {
         securityAnswerHash,
         acceptedTerms: true,
         acceptedTermsAt: new Date(),
+        isEmailVerified: true,
       },
     });
 

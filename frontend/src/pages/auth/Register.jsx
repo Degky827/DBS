@@ -116,7 +116,7 @@ export default function Register() {
 
     try {
       await registerUser(form);
-      navigate("/verify-email", { state: { email: form.email } });
+      navigate("/dashboard");
     } catch (err) {
       const msg = err.response?.data?.message || "Registration failed. Please try again.";
       setServerError(msg);
