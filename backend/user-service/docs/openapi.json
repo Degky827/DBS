@@ -1,0 +1,435 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Digital Banking - User Service (Phase 2, standalone)",
+    "version": "1.0.0",
+    "description": "Standalone user profile API for Phase 2 development. Uses opaque development sessions (AUTH_MODE=dev) so profile endpoints can be tested without auth-service. This authentication mode is NOT production-ready. See docs/INTEGRATION.md for the JWT integration plan. All responses use the envelope `{ success, message, data | errors }`. Password hashes are never returned.",
+    "contact": {
+      "name": "User Service Team"
+    },
+    "license": {
+      "name": "UNLICENSED",
+      "url": "https://example.com/license"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5002",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Service liveness"
+    },
+    {
+      "name": "DevAuth",
+      "description": "Development-only session authentication (not production-ready)"
+    },
+    {
+      "name": "Profile",
+      "description": "View, update profile and change password"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Service root",
+        "operationId": "getRoot",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is running",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RootResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "operationId": "getHealth",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/dev-login": {
+      "post": {
+        "tags": ["DevAuth"],
+        "summary": "Create a development session",
+        "description": "Authenticates a standalone UserProfile with email and password and returns an opaque Bearer token stored (hashed) in DevSession. Development only — not production-ready.",
+        "operationId": "devLogin",
+        "security": [
+          { "devApiKey": [] }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DevLoginRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DevLoginResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/auth/dev-logout": {
+      "post": {
+        "tags": ["DevAuth"],
+        "summary": "Revoke the current development session",
+        "operationId": "devLogout",
+        "security": [{ "devBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Session revoked",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MessageResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/profile/me": {
+      "get": {
+        "tags": ["Profile"],
+        "summary": "View the authenticated user's profile",
+        "operationId": "getMyProfile",
+        "security": [{ "devBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Profile fetched",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProfileResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Profile"],
+        "summary": "Update permitted profile fields",
+        "description": "Partial update. Allowed fields: firstName, middleName, lastName, phoneNumber, gender, dateOfBirth, addressLine1, addressLine2, city, state, postalCode, country, bio, avatarUrl. email, username, role and passwordHash are rejected.",
+        "operationId": "updateMyProfile",
+        "security": [{ "devBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateProfileRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profile updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProfileResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/profile/me/password": {
+      "patch": {
+        "tags": ["Profile"],
+        "summary": "Change password",
+        "description": "Verifies the current password, hashes the new password, updates passwordChangedAt, and revokes other development sessions for the user.",
+        "operationId": "changeMyPassword",
+        "security": [{ "devBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ChangePasswordRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password changed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MessageResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "devBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Opaque development session token from POST /api/v1/auth/dev-login. NOT a production JWT."
+      },
+      "devApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Dev-Api-Key",
+        "description": "Optional. Required only when DEV_API_KEY is configured."
+      }
+    },
+    "schemas": {
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["success", "message"],
+        "properties": {
+          "success": { "type": "boolean", "enum": [false] },
+          "message": { "type": "string" },
+          "errors": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      },
+      "SuccessEnvelope": {
+        "type": "object",
+        "required": ["success", "message", "data"],
+        "properties": {
+          "success": { "type": "boolean", "enum": [true] },
+          "message": { "type": "string" },
+          "data": {}
+        }
+      },
+      "RootResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "service": { "type": "string" },
+                  "version": { "type": "string" },
+                  "authMode": { "type": "string" },
+                  "warning": { "type": "string" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "HealthResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "service": { "type": "string" },
+                  "status": { "type": "string" },
+                  "uptime": { "type": "integer" },
+                  "timestamp": { "type": "string", "format": "date-time" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "MessageResponse": {
+        "type": "object",
+        "required": ["success", "message"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "message": { "type": "string" },
+          "data": { "type": "object", "nullable": true }
+        }
+      },
+      "DevLoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "format": "password" }
+        }
+      },
+      "DevLoginResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "token": { "type": "string" },
+                  "tokenType": { "type": "string", "example": "Bearer" },
+                  "expiresInMs": { "type": "integer" },
+                  "warning": { "type": "string" },
+                  "user": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "string", "format": "uuid" },
+                      "email": { "type": "string" },
+                      "role": { "type": "string" },
+                      "firstName": { "type": "string" },
+                      "lastName": { "type": "string" },
+                      "username": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "UserProfile": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "firstName": { "type": "string" },
+          "middleName": { "type": "string", "nullable": true },
+          "lastName": { "type": "string" },
+          "username": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "phoneNumber": { "type": "string" },
+          "dateOfBirth": { "type": "string", "format": "date-time" },
+          "gender": { "type": "string" },
+          "addressLine1": { "type": "string", "nullable": true },
+          "addressLine2": { "type": "string", "nullable": true },
+          "city": { "type": "string", "nullable": true },
+          "state": { "type": "string", "nullable": true },
+          "postalCode": { "type": "string", "nullable": true },
+          "country": { "type": "string", "nullable": true },
+          "bio": { "type": "string", "nullable": true },
+          "avatarUrl": { "type": "string", "nullable": true },
+          "role": { "type": "string" },
+          "passwordChangedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ProfileResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "user": { "$ref": "#/components/schemas/UserProfile" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "firstName": { "type": "string", "minLength": 2, "maxLength": 60 },
+          "middleName": { "type": "string", "minLength": 2, "maxLength": 60, "nullable": true },
+          "lastName": { "type": "string", "minLength": 2, "maxLength": 60 },
+          "phoneNumber": { "type": "string", "pattern": "^\\+?[0-9]{7,15}$" },
+          "gender": { "type": "string", "enum": ["male", "female", "other", "prefer_not_to_say"] },
+          "dateOfBirth": { "type": "string", "format": "date" },
+          "addressLine1": { "type": "string", "maxLength": 200 },
+          "addressLine2": { "type": "string", "maxLength": 200 },
+          "city": { "type": "string", "maxLength": 100 },
+          "state": { "type": "string", "maxLength": 100 },
+          "postalCode": { "type": "string", "maxLength": 20 },
+          "country": { "type": "string", "maxLength": 100 },
+          "bio": { "type": "string", "maxLength": 500 },
+          "avatarUrl": { "type": "string", "format": "uri", "maxLength": 500 }
+        }
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "required": ["currentPassword", "newPassword", "confirmNewPassword"],
+        "properties": {
+          "currentPassword": { "type": "string", "format": "password" },
+          "newPassword": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "maxLength": 72,
+            "description": "At least one uppercase, one lowercase and one digit"
+          },
+          "confirmNewPassword": { "type": "string", "format": "password" }
+        }
+      }
+    },
+    "responses": {
+      "ValidationError": {
+        "description": "Validation failed",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Unauthorized",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Rate limited",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      }
+    }
+  }
+}
