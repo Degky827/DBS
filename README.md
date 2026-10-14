@@ -88,7 +88,7 @@ docker compose up --build
 | Service | Base URL | Endpoints |
 |---|---|---|
 | Auth | `http://localhost:5001/api/v1` | register, login, refresh, logout, verify-email, forgot/reset password, `/me` |
-| User | `http://localhost:5002/api/v1` | dev-login, profile get/update, change password |
+| User | `http://localhost:5002/api/v1` | dev-login, `GET/PATCH /users/me`, `PATCH /users/me/password` |
 
 All APIs use the envelope `{ success, message, data | errors }`.
 
