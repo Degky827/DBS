@@ -1,18 +1,18 @@
-const profileService = require("./profile.service");
+const usersService = require("./users.service");
 const ApiResponse = require("../../utils/ApiResponse");
 
 const getMyProfile = async (req, res) => {
-  const result = await profileService.getMyProfile(req.user.id);
+  const result = await usersService.getMyProfile(req.user.id);
   return ApiResponse.success(res, result, "Profile fetched");
 };
 
 const updateMyProfile = async (req, res) => {
-  const result = await profileService.updateMyProfile(req.user.id, req.body);
+  const result = await usersService.updateMyProfile(req.user.id, req.body);
   return ApiResponse.success(res, result, "Profile updated");
 };
 
 const changeMyPassword = async (req, res) => {
-  const result = await profileService.changeMyPassword(
+  const result = await usersService.changeMyPassword(
     req.user.id,
     req.body,
     req.session

@@ -4,7 +4,7 @@ const env = require("../../config/env");
 const healthRoutes = require("./health.routes");
 const docsRoutes = require("./docs.routes");
 const authRoutes = require("../../modules/auth/auth.routes");
-const profileRoutes = require("../../modules/profile/profile.routes");
+const usersRoutes = require("../../modules/users/users.routes");
 
 router.use("/", healthRoutes);
 
@@ -13,6 +13,6 @@ if (env.ENABLE_API_DOCS) {
 }
 
 router.use("/", authRoutes);
-router.use("/", profileRoutes);
+router.use("/", usersRoutes);
 
 module.exports = router;

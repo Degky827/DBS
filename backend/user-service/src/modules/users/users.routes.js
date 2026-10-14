@@ -4,31 +4,27 @@ const ROUTES = require("../../constants/routes");
 const validate = require("../../middlewares/validate");
 const authenticate = require("../../middlewares/authenticate");
 const { authLimiter } = require("../../middlewares/rateLimiter");
-const profileController = require("./profile.controller");
+const usersController = require("./users.controller");
 const {
   updateProfileSchema,
   changePasswordSchema,
-} = require("./profile.validation");
+} = require("./users.validation");
 
-router.get(
-  ROUTES.PROFILE.ME,
-  authenticate,
-  profileController.getMyProfile
-);
+router.get(ROUTES.USERS.ME, authenticate, usersController.getMyProfile);
 
 router.patch(
-  ROUTES.PROFILE.ME,
+  ROUTES.USERS.ME,
   authenticate,
   validate(updateProfileSchema),
-  profileController.updateMyProfile
+  usersController.updateMyProfile
 );
 
 router.patch(
-  ROUTES.PROFILE.ME_PASSWORD,
+  ROUTES.USERS.ME_PASSWORD,
   authenticate,
   authLimiter,
   validate(changePasswordSchema),
-  profileController.changeMyPassword
+  usersController.changeMyPassword
 );
 
 module.exports = router;

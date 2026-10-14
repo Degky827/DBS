@@ -9,9 +9,9 @@ const ROUTES = Object.freeze({
     DEV_LOGIN: "/auth/dev-login",
     DEV_LOGOUT: "/auth/dev-logout",
   }),
-  PROFILE: Object.freeze({
-    ME: "/profile/me",
-    ME_PASSWORD: "/profile/me/password",
+  USERS: Object.freeze({
+    ME: "/users/me",
+    ME_PASSWORD: "/users/me/password",
   }),
 });
 
