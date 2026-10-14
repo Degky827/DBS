@@ -1,5 +1,6 @@
+import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
-import { useSelector } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import AuthLayout from "../layouts/AuthLayout";
 import MainLayout from "../layouts/MainLayout";
 import Login from "../pages/auth/Login";
@@ -10,6 +11,8 @@ import ResetPassword from "../pages/auth/ResetPassword";
 import Dashboard from "../pages/dashboard/Dashboard";
 import Profile from "../pages/dashboard/Profile";
 import ProtectedRoute from "../components/ProtectedRoute";
+import { getMe } from "../services/authService";
+import { setUser } from "../store/authSlice";
 
 function GuestRoute({ children }) {
   const { isAuthenticated } = useSelector((state) => state.auth);
@@ -18,6 +21,16 @@ function GuestRoute({ children }) {
 }
 
 function AppRoutes() {
+  const dispatch = useDispatch();
+  const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    getMe()
+      .then(({ user }) => dispatch(setUser(user)))
+      .catch(() => {});
+  }, [isAuthenticated, dispatch]);
+
   return (
     <BrowserRouter>
       <Routes>
