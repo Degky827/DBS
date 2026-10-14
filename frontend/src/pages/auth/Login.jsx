@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 import { loginUser } from "../../services/authService";
 
 export default function Login() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({ email: "", password: "", remember: true });
+  const location = useLocation();
+  const [form, setForm] = useState({ email: "", password: "" });
   const [errors, setErrors] = useState({});
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -46,6 +47,12 @@ export default function Login() {
       <p className="mt-2 text-[15px] text-ink-500">
         Use the email address registered with Meridian Bank.
       </p>
+
+      {location.state?.registered && !serverError && (
+        <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-[13px] font-medium text-emerald-700">
+          Your account was created. Sign in to continue.
+        </div>
+      )}
 
       {serverError && (
         <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
@@ -100,16 +107,6 @@ export default function Login() {
           </div>
           {errors.password && <p className="field-error">{errors.password}</p>}
         </div>
-
-        <label className="flex cursor-pointer items-center gap-2.5 text-[13px] font-medium text-ink-500">
-          <input
-            type="checkbox"
-            checked={form.remember}
-            onChange={update("remember")}
-            className="h-4 w-4 rounded border-ink-200 accent-navy-700"
-          />
-          Keep me signed in on this device
-        </label>
 
         <button type="submit" className="btn-primary" disabled={submitting}>
           {submitting ? (

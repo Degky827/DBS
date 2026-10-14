@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Check, Loader2, User, AtSign, ShieldCheck } from "lucide-react";
 import PasswordStrength from "../../components/PasswordStrength";
 import { scorePassword } from "../../utils/passwordScore";
-import { registerUser } from "../../services/authService";
+import { registerUser, loginUser } from "../../services/authService";
 
 const STEPS = [
   { key: "personal", label: "Personal", icon: User },
@@ -116,7 +116,12 @@ export default function Register() {
 
     try {
       await registerUser(form);
-      navigate("/dashboard");
+      try {
+        await loginUser(form.email, form.password);
+        navigate("/dashboard");
+      } catch {
+        navigate("/", { state: { registered: true } });
+      }
     } catch (err) {
       const msg = err.response?.data?.message || "Registration failed. Please try again.";
       setServerError(msg);
