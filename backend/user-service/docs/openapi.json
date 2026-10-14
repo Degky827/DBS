@@ -120,7 +120,7 @@
         }
       }
     },
-    "/api/v1/profile/me": {
+    "/api/v1/users/me": {
       "get": {
         "tags": ["Profile"],
         "summary": "View the authenticated user's profile",
@@ -174,7 +174,7 @@
         }
       }
     },
-    "/api/v1/profile/me/password": {
+    "/api/v1/users/me/password": {
       "patch": {
         "tags": ["Profile"],
         "summary": "Change password",

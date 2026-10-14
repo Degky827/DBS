@@ -97,9 +97,9 @@ These users exist **only** in `user_db`. They are not copied from auth-service.
 |---|---|---|---|
 | POST | `/api/v1/auth/dev-login` | email + password | Create dev session token |
 | POST | `/api/v1/auth/dev-logout` | Bearer | Revoke current session |
-| GET | `/api/v1/profile/me` | Bearer | View profile |
-| PATCH | `/api/v1/profile/me` | Bearer | Update permitted profile fields |
-| PATCH | `/api/v1/profile/me/password` | Bearer | Change password |
+| GET | `/api/v1/users/me` | Bearer | View profile |
+| PATCH | `/api/v1/users/me` | Bearer | Update permitted profile fields |
+| PATCH | `/api/v1/users/me/password` | Bearer | Change password |
 
 Password hashes are never returned.
 
@@ -128,14 +128,14 @@ curl -s -X POST http://localhost:5002/api/v1/auth/dev-login \
 # Use token from data.token
 TOKEN=...
 
-curl -s http://localhost:5002/api/v1/profile/me -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:5002/api/v1/users/me -H "Authorization: Bearer $TOKEN"
 
-curl -s -X PATCH http://localhost:5002/api/v1/profile/me \
+curl -s -X PATCH http://localhost:5002/api/v1/users/me \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"city":"Dire Dawa","bio":"Updated bio"}'
 
-curl -s -X PATCH http://localhost:5002/api/v1/profile/me/password \
+curl -s -X PATCH http://localhost:5002/api/v1/users/me/password \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"currentPassword":"Demo@1234","newPassword":"NewPass@123","confirmNewPassword":"NewPass@123"}'
