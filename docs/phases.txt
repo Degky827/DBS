@@ -1,0 +1,21 @@
+First Features to Build
+
+Build in this order:
+
+Phase 1
+Register Page
+Login Page
+Auth APIs
+JWT Authentication
+Phase 2
+Profile Page
+Update Profile
+Change Password
+Phase 3
+KYC Verification
+Document Upload
+Verification Status
+Phase 4
+Wallet
+Transactions
+Payments
