@@ -10,6 +10,37 @@ const userRepository = {
     return withRetry(() => prisma.userProfile.findUnique({ where: { id } }));
   },
 
+  findProfileById(id) {
+    return withRetry(() =>
+      prisma.userProfile.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          firstName: true,
+          middleName: true,
+          lastName: true,
+          username: true,
+          email: true,
+          phoneNumber: true,
+          dateOfBirth: true,
+          gender: true,
+          addressLine1: true,
+          addressLine2: true,
+          city: true,
+          state: true,
+          postalCode: true,
+          country: true,
+          bio: true,
+          avatarUrl: true,
+          role: true,
+          passwordChangedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+    );
+  },
+
   findByUsername(username) {
     return withRetry(() =>
       prisma.userProfile.findUnique({ where: { username } })

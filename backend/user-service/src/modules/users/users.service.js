@@ -50,7 +50,7 @@ const UPDATABLE_FIELDS = [
 ];
 
 const getMyProfile = async (userId) => {
-  const user = await userRepository.findById(userId);
+  const user = await userRepository.findProfileById(userId);
 
   if (!user) {
     throw ApiError.notFound("Account not found", "USER_NOT_FOUND");

@@ -251,10 +251,87 @@ test("request body cannot switch identity to another user", async () => {
   assert.notEqual(otherMe.body.data.user.city, "Hacker City");
 });
 
+test("view profile returns safe fields only", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  const res = await request(app)
+    .get("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`);
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.message, "Profile fetched");
+
+  const user = res.body.data.user;
+  assert.equal(user.id, userId);
+  assert.equal(user.email, TEST_EMAIL);
+  assert.equal(user.username, TEST_USERNAME);
+  assert.ok(user.firstName);
+  assert.ok(user.lastName);
+  assert.ok(user.phoneNumber);
+  assert.ok(user.dateOfBirth);
+  assert.ok(user.createdAt);
+  assert.ok(user.updatedAt);
+
+  const banned = [
+    "passwordHash",
+    "password",
+    "securityAnswerHash",
+    "refreshToken",
+    "accessToken",
+    "tokenHash",
+    "codeHash",
+  ];
+  for (const key of banned) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(user, key),
+      false,
+      `must not expose ${key}`
+    );
+  }
+});
+
+test("view profile ignores client-supplied user id", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+
+  const viaQuery = await request(app)
+    .get(`/api/v1/users/me?userId=${otherUserId}`)
+    .set("Authorization", `Bearer ${token}`);
+
+  assert.equal(viaQuery.status, 200);
+  assert.equal(viaQuery.body.data.user.id, userId);
+  assert.equal(viaQuery.body.data.user.email, TEST_EMAIL);
+
+  const viaBody = await request(app)
+    .get("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .send({ userId: otherUserId });
+
+  assert.equal(viaBody.status, 200);
+  assert.equal(viaBody.body.data.user.id, userId);
+});
+
+test("view profile returns 404 when user no longer exists", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  const original = userRepository.findProfileById;
+  userRepository.findProfileById = async () => null;
+
+  try {
+    const res = await request(app)
+      .get("/api/v1/users/me")
+      .set("Authorization", `Bearer ${token}`);
+
+    assert.equal(res.status, 404);
+    assert.equal(res.body.success, false);
+    assert.equal(res.body.message, "Account not found");
+  } finally {
+    userRepository.findProfileById = original;
+  }
+});
+
 test("database failure returns sanitized 500", async () => {
   const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
-  const original = userRepository.findById;
-  userRepository.findById = async () => {
+  const original = userRepository.findProfileById;
+  userRepository.findProfileById = async () => {
     throw new Error("connection reset by peer secret-dsn=postgres://x");
   };
 
@@ -269,7 +346,7 @@ test("database failure returns sanitized 500", async () => {
     assert.equal(String(res.body.message).includes("secret-dsn"), false);
     assert.equal(res.body.stack, undefined);
   } finally {
-    userRepository.findById = original;
+    userRepository.findProfileById = original;
   }
 });
 
