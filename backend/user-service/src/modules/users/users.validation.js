@@ -1,6 +1,5 @@
 const { z } = require("zod");
 
-const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/;
 const GENDERS = ["male", "female", "other", "prefer_not_to_say"];
 const NAME_PATTERN = /^[A-Za-zÀ-ÿ' -]+$/;
 const PHONE_PATTERN = /^\+?[0-9]{7,15}$/;
@@ -48,11 +47,27 @@ const updateProfileSchema = z
         error: `gender must be one of: ${GENDERS.join(", ")}`,
       })
       .optional(),
-    dateOfBirth: z.coerce
-      .date({ error: "dateOfBirth must be a valid date" })
+    dateOfBirth: requiredString("dateOfBirth")
+      .trim()
+      .refine((value) => {
+        const match = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(value);
+        if (!match) {
+          return true;
+        }
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) {
+          return false;
+        }
+        return (
+          parsed.getUTCFullYear() === Number(match[1]) &&
+          parsed.getUTCMonth() + 1 === Number(match[2]) &&
+          parsed.getUTCDate() === Number(match[3])
+        );
+      }, "dateOfBirth must be a valid calendar date")
+      .transform((value) => new Date(value))
       .refine(
-        (d) => d.getTime() < Date.now(),
-        "dateOfBirth must be in the past"
+        (d) => !Number.isNaN(d.getTime()) && d.getTime() < Date.now(),
+        "dateOfBirth must be a valid date in the past"
       )
       .optional(),
     addressLine1: optionalShortText("addressLine1", 200),
@@ -74,23 +89,19 @@ const updateProfileSchema = z
     "At least one profile field must be provided"
   );
 
-const passwordField = (label) =>
-  requiredString(label)
-    .min(8, `${label} must be at least 8 characters`)
-    .max(72, `${label} must not exceed 72 characters`)
-    .regex(
-      PASSWORD_PATTERN,
-      `${label} must contain at least one uppercase letter, one lowercase letter and one number`
-    );
+const newPasswordField = requiredString("newPassword")
+  .min(12, "newPassword must be at least 12 characters")
+  .max(72, "newPassword must not exceed 72 characters");
 
 const changePasswordSchema = z
   .object({
     currentPassword: requiredString("currentPassword")
       .min(1, "currentPassword is required")
       .max(72, "currentPassword must not exceed 72 characters"),
-    newPassword: passwordField("newPassword"),
+    newPassword: newPasswordField,
     confirmNewPassword: requiredString("confirmNewPassword"),
   })
+  .strict()
   .refine((data) => data.newPassword === data.confirmNewPassword, {
     message: "newPassword and confirmNewPassword must match",
     path: ["confirmNewPassword"],

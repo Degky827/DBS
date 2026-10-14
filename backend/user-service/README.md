@@ -86,8 +86,8 @@ OpenAPI JSON: `http://localhost:5002/api/v1/openapi.json`
 
 | Email | Username | Password |
 |---|---|---|
-| `demo.user@user.local` | `demo_user` | `Demo@1234` |
-| `profile.editor@user.local` | `profile_editor` | `Profile@1234` |
+| `demo.user@user.local` | `demo_user` | `DemoPass@1234` |
+| `profile.editor@user.local` | `profile_editor` | `ProfilePass@1234` |
 
 These users exist **only** in `user_db`. They are not copied from auth-service.
 
@@ -112,10 +112,21 @@ Password hashes are never returned.
 
 ### Change password rules
 
-- `currentPassword` must match the stored hash
-- `newPassword` ≥ 8 chars, upper + lower + digit
+- `currentPassword` must match the stored hash (wrong value → `401`, no DB write)
+- `newPassword` must be **12–72 characters** (no character-class composition rules)
 - `newPassword` must differ from `currentPassword`
-- Other development sessions for the user are revoked
+- `confirmNewPassword` must match `newPassword`
+- On success, other development sessions for the user are revoked
+- Passwords are never logged or returned in responses
+
+### Update profile rules
+
+- Identity comes only from the server-side session (`req.user.id`)
+- At least one permitted field is required (empty body → `400`)
+- Unexpected/protected fields (`email`, `username`, `role`, `id`, `passwordHash`, …) are rejected (`400`), not ignored
+- `dateOfBirth` must be a real past date; `middleName: ""` clears the value
+- A permitted body with unchanged values still returns `200` with the profile
+- Missing user → `404`
 
 ## Example session
 
@@ -123,7 +134,7 @@ Password hashes are never returned.
 # Login (dev)
 curl -s -X POST http://localhost:5002/api/v1/auth/dev-login \
   -H "Content-Type: application/json" \
-  -d '{"email":"demo.user@user.local","password":"Demo@1234"}'
+  -d '{"email":"demo.user@user.local","password":"DemoPass@1234"}'
 
 # Use token from data.token
 TOKEN=...
@@ -138,7 +149,7 @@ curl -s -X PATCH http://localhost:5002/api/v1/users/me \
 curl -s -X PATCH http://localhost:5002/api/v1/users/me/password \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"currentPassword":"Demo@1234","newPassword":"NewPass@123","confirmNewPassword":"NewPass@123"}'
+  -d '{"currentPassword":"DemoPass@1234","newPassword":"BrandNewPass@123","confirmNewPassword":"BrandNewPass@123"}'
 ```
 
 ## Tests

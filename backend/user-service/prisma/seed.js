@@ -10,7 +10,7 @@ const SEED_USERS = [
     phoneNumber: "+15550100",
     gender: "prefer_not_to_say",
     role: "USER",
-    password: "Demo@1234",
+    password: "DemoPass@1234",
     city: "Addis Ababa",
     country: "Ethiopia",
     bio: "Standalone development user for Phase 2 profile APIs.",
@@ -23,7 +23,7 @@ const SEED_USERS = [
     phoneNumber: "+15550101",
     gender: "female",
     role: "USER",
-    password: "Profile@1234",
+    password: "ProfilePass@1234",
     city: "Nairobi",
     country: "Kenya",
     bio: "Used to exercise profile update flows.",
@@ -36,7 +36,7 @@ async function seed() {
 
     const user = await prisma.userProfile.upsert({
       where: { email: entry.email },
-      update: {},
+      update: { passwordHash },
       create: {
         email: entry.email,
         username: entry.username,

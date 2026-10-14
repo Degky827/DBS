@@ -208,28 +208,98 @@
       "patch": {
         "tags": ["Profile"],
         "summary": "Update permitted profile fields",
-        "description": "Partial update. Allowed fields: firstName, middleName, lastName, phoneNumber, gender, dateOfBirth, addressLine1, addressLine2, city, state, postalCode, country, bio, avatarUrl. email, username, role and passwordHash are rejected.",
+        "description": "Partial update of the authenticated user's own profile. Authentication uses the temporary standalone development Bearer session (POST /api/v1/auth/dev-login) and is not yet integrated with Phase 1 auth-service. Allowed fields: firstName, middleName, lastName, phoneNumber, gender, dateOfBirth, addressLine1, addressLine2, city, state, postalCode, country, bio, avatarUrl. email, username, role, id, passwordHash and timestamps are rejected. Empty body or body with only unknown/protected fields returns 400. A body with at least one permitted field returns 200 even when values are unchanged. Target user id always comes from the server-side session, never from the client.",
         "operationId": "updateMyProfile",
         "security": [{ "devBearer": [] }],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/UpdateProfileRequest" }
+              "schema": { "$ref": "#/components/schemas/UpdateProfileRequest" },
+              "examples": {
+                "basic": {
+                  "summary": "Update name and contact",
+                  "value": {
+                    "firstName": "Demo",
+                    "lastName": "Customer",
+                    "phoneNumber": "+15550100",
+                    "city": "Addis Ababa"
+                  }
+                },
+                "clearMiddleName": {
+                  "summary": "Clear middle name with empty string",
+                  "value": { "middleName": "" }
+                }
+              }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Profile updated",
+            "description": "Profile updated (or unchanged permitted fields written successfully)",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ProfileResponse" }
+                "schema": { "$ref": "#/components/schemas/ProfileResponse" },
+                "example": {
+                  "success": true,
+                  "message": "Profile updated",
+                  "data": {
+                    "user": {
+                      "id": "3f1c2a8e-0000-4000-8000-000000000001",
+                      "firstName": "Demo",
+                      "lastName": "Customer",
+                      "username": "demo_user",
+                      "email": "demo.user@user.local",
+                      "city": "Addis Ababa",
+                      "role": "USER"
+                    }
+                  }
+                }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/ValidationError" },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "400": {
+            "description": "Validation failed: empty body, no permitted fields, protected/unexpected field, malformed date, future dateOfBirth, or invalid field values",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Validation failed",
+                  "errors": [
+                    { "field": "dateOfBirth", "message": "dateOfBirth must be a valid date in the past" }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": {
+            "description": "Authenticated user no longer exists",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Account not found" }
+              }
+            }
+          },
+          "409": {
+            "description": "Reserved for future uniqueness conflicts (email/username are not editable here, so not currently returned)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error (details not exposed)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Internal server error" }
+              }
+            }
+          }
         }
       }
     },
@@ -237,14 +307,24 @@
       "patch": {
         "tags": ["Profile"],
         "summary": "Change password",
-        "description": "Verifies the current password, hashes the new password, updates passwordChangedAt, and revokes other development sessions for the user.",
+        "description": "Changes the password of the authenticated user in the independent User Service database only (not auth-service). Authentication uses the temporary standalone development Bearer session and has not yet been integrated with Phase 1. Policy: newPassword must be 12-72 characters (no character-class composition rules) and must differ from currentPassword; confirmation must match. Wrong currentPassword returns 401 and does not modify the stored hash. On success, passwordChangedAt is updated and other development sessions for the user are revoked. Passwords are never logged or returned.",
         "operationId": "changeMyPassword",
         "security": [{ "devBearer": [] }],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/ChangePasswordRequest" }
+              "schema": { "$ref": "#/components/schemas/ChangePasswordRequest" },
+              "examples": {
+                "change": {
+                  "summary": "Change password",
+                  "value": {
+                    "currentPassword": "CurrentPass@123",
+                    "newPassword": "BrandNewPass@123",
+                    "confirmNewPassword": "BrandNewPass@123"
+                  }
+                }
+              }
             }
           }
         },
@@ -253,13 +333,60 @@
             "description": "Password changed",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                "schema": { "$ref": "#/components/schemas/MessageResponse" },
+                "example": {
+                  "success": true,
+                  "message": "Password has been changed. Other development sessions were revoked."
+                }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/ValidationError" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/TooManyRequests" }
+          "400": {
+            "description": "Validation failed (missing/empty/unexpected fields, newPassword under 12 chars, confirmation mismatch, new password identical to current) or unsafe request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Validation failed",
+                  "errors": [
+                    { "field": "newPassword", "message": "newPassword must be at least 12 characters" }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized or incorrect current password",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Current password is incorrect"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Authenticated user no longer exists",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Account not found" }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "500": {
+            "description": "Internal server error (details not exposed; no false success)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Internal server error" }
+              }
+            }
+          }
         }
       }
     }
@@ -451,14 +578,15 @@
       "ChangePasswordRequest": {
         "type": "object",
         "required": ["currentPassword", "newPassword", "confirmNewPassword"],
+        "additionalProperties": false,
         "properties": {
           "currentPassword": { "type": "string", "format": "password" },
           "newPassword": {
             "type": "string",
             "format": "password",
-            "minLength": 8,
+            "minLength": 12,
             "maxLength": 72,
-            "description": "At least one uppercase, one lowercase and one digit"
+            "description": "12-72 characters. No uppercase/lowercase/digit composition rules. Must differ from currentPassword."
           },
           "confirmNewPassword": { "type": "string", "format": "password" }
         }

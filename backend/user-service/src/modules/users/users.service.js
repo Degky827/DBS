@@ -87,7 +87,13 @@ const updateMyProfile = async (userId, input) => {
     );
   }
 
-  const updated = await userRepository.updateProfile(userId, data);
+  await userRepository.updateProfile(userId, data);
+  const updated = await userRepository.findProfileById(userId);
+
+  if (!updated) {
+    throw ApiError.notFound("Account not found", "USER_NOT_FOUND");
+  }
+
   audit("PROFILE_UPDATED", { userId, fields: Object.keys(data) });
 
   return { user: toPublicProfile(updated) };

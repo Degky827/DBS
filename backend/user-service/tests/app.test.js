@@ -16,7 +16,7 @@ const { hashPassword } = require("../src/utils/password.util");
 const TEST_EMAIL = "integration.user@user.local";
 const TEST_USERNAME = "integration_user";
 const TEST_PASSWORD = "Integration@123";
-const TEST_NEW_PASSWORD = "Changed@1234";
+const TEST_NEW_PASSWORD = "changedpass1234";
 
 const OTHER_EMAIL = "other.user@user.local";
 const OTHER_USERNAME = "other_user";
@@ -227,6 +227,271 @@ test("full profile + password change flow", async () => {
   assert.equal(change.body.success, true);
 
   accessToken = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+});
+
+test("update profile rejects empty body and bad dates", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+
+  const empty = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .send({});
+
+  assert.equal(empty.status, 400);
+  assert.equal(empty.body.success, false);
+
+  const future = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .send({ dateOfBirth: "2999-01-01" });
+
+  assert.equal(future.status, 400);
+  assert.ok(future.body.errors);
+
+  const malformed = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .send({ dateOfBirth: "not-a-date" });
+
+  assert.equal(malformed.status, 400);
+
+  const impossible = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .send({ dateOfBirth: "2026-02-31" });
+
+  assert.equal(impossible.status, 400);
+});
+
+test("update profile returns safe fields only", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+
+  const res = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .send({ firstName: "Integration", city: "Adama" });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.message, "Profile updated");
+  assert.equal(res.body.data.user.city, "Adama");
+
+  const banned = [
+    "passwordHash",
+    "password",
+    "securityAnswerHash",
+    "refreshToken",
+    "tokenHash",
+    "codeHash",
+  ];
+  for (const key of banned) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(res.body.data.user, key),
+      false,
+      `must not expose ${key}`
+    );
+  }
+
+  const unchanged = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .send({ city: "Adama" });
+
+  assert.equal(unchanged.status, 200);
+  assert.equal(unchanged.body.data.user.city, "Adama");
+});
+
+test("update profile returns 404 when user no longer exists", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  const originalFind = userRepository.findById;
+  userRepository.findById = async () => null;
+
+  try {
+    const res = await request(app)
+      .patch("/api/v1/users/me")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ city: "Ghost" });
+
+    assert.equal(res.status, 404);
+    assert.equal(res.body.message, "Account not found");
+  } finally {
+    userRepository.findById = originalFind;
+  }
+});
+
+test("change password enforces 12-char policy and strict body", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+
+  const tooShort = await request(app)
+    .patch("/api/v1/users/me/password")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      currentPassword: TEST_NEW_PASSWORD,
+      newPassword: "abcdefghijk",
+      confirmNewPassword: "abcdefghijk",
+    });
+
+  assert.equal(tooShort.status, 400);
+  assert.ok(
+    JSON.stringify(tooShort.body.errors).includes("at least 12 characters")
+  );
+
+  const mismatch = await request(app)
+    .patch("/api/v1/users/me/password")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      currentPassword: TEST_NEW_PASSWORD,
+      newPassword: "BrandNewPass@123",
+      confirmNewPassword: "DifferentPass@123",
+    });
+
+  assert.equal(mismatch.status, 400);
+
+  const unexpected = await request(app)
+    .patch("/api/v1/users/me/password")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      currentPassword: TEST_NEW_PASSWORD,
+      newPassword: "BrandNewPass@123",
+      confirmNewPassword: "BrandNewPass@123",
+      userId: otherUserId,
+    });
+
+  assert.equal(unexpected.status, 400);
+
+  const noAuth = await request(app)
+    .patch("/api/v1/users/me/password")
+    .send({
+      currentPassword: "x",
+      newPassword: "BrandNewPass@123",
+      confirmNewPassword: "BrandNewPass@123",
+    });
+
+  assert.equal(noAuth.status, 401);
+});
+
+test("change password rejects same password without modifying hash", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+
+  const reuse = await request(app)
+    .patch("/api/v1/users/me/password")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      currentPassword: TEST_NEW_PASSWORD,
+      newPassword: TEST_NEW_PASSWORD,
+      confirmNewPassword: TEST_NEW_PASSWORD,
+    });
+
+  assert.equal(reuse.status, 400);
+
+  const stillWorks = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  assert.ok(stillWorks);
+});
+
+test("wrong current password does not change stored password", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+
+  const wrong = await request(app)
+    .patch("/api/v1/users/me/password")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      currentPassword: "TotallyWrong@1",
+      newPassword: "NeverSaved@1234",
+      confirmNewPassword: "NeverSaved@1234",
+    });
+
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.body.success, false);
+  assert.ok(!JSON.stringify(wrong.body).includes("NeverSaved@1234"));
+
+  const oldStillWorks = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  assert.ok(oldStillWorks);
+
+  const cannotLogin = await request(app)
+    .post("/api/v1/auth/dev-login")
+    .send({ email: TEST_EMAIL, password: "NeverSaved@1234" });
+  assert.equal(cannotLogin.status, 401);
+});
+
+test("change password returns 404 when user no longer exists", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  const original = userRepository.findById;
+  userRepository.findById = async () => null;
+
+  try {
+    const res = await request(app)
+      .patch("/api/v1/users/me/password")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        currentPassword: TEST_NEW_PASSWORD,
+        newPassword: "BrandNewPass@123",
+        confirmNewPassword: "BrandNewPass@123",
+      });
+
+    assert.equal(res.status, 404);
+    assert.equal(res.body.message, "Account not found");
+  } finally {
+    userRepository.findById = original;
+  }
+});
+
+test("change password DB failure returns sanitized 500 without false success", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  const original = userRepository.updatePassword;
+  userRepository.updatePassword = async () => {
+    throw new Error("write failed dsn=postgres://user:pass@db");
+  };
+
+  try {
+    const res = await request(app)
+      .patch("/api/v1/users/me/password")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        currentPassword: TEST_NEW_PASSWORD,
+        newPassword: "BrandNewPass@123",
+        confirmNewPassword: "BrandNewPass@123",
+      });
+
+    assert.equal(res.status, 500);
+    assert.equal(res.body.success, false);
+    assert.equal(res.body.message, "Internal server error");
+    assert.equal(String(res.body.message).includes("dsn"), false);
+    assert.equal(res.body.stack, undefined);
+  } finally {
+    userRepository.updatePassword = original;
+  }
+
+  const oldStillWorks = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  assert.ok(oldStillWorks);
+});
+
+test("password change response never includes password material", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+
+  const change = await request(app)
+    .patch("/api/v1/users/me/password")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      currentPassword: TEST_NEW_PASSWORD,
+      newPassword: "AnotherNewPass@1",
+      confirmNewPassword: "AnotherNewPass@1",
+    });
+
+  assert.equal(change.status, 200);
+  const raw = JSON.stringify(change.body);
+  assert.equal(raw.includes("AnotherNewPass@1"), false);
+  assert.equal(raw.includes("passwordHash"), false);
+
+  accessToken = await login(TEST_EMAIL, "AnotherNewPass@1");
+  const changeBack = await request(app)
+    .patch("/api/v1/users/me/password")
+    .set("Authorization", `Bearer ${accessToken}`)
+    .send({
+      currentPassword: "AnotherNewPass@1",
+      newPassword: TEST_NEW_PASSWORD,
+      confirmNewPassword: TEST_NEW_PASSWORD,
+    });
+
+  assert.equal(changeBack.status, 200);
 });
 
 test("request body cannot switch identity to another user", async () => {
