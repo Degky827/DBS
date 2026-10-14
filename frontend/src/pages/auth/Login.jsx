@@ -1,13 +1,16 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Eye, EyeOff, ArrowRight, Loader2, Info } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
+import { loginUser } from "../../services/authService";
 
 export default function Login() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({ email: "", password: "", remember: true });
+  const location = useLocation();
+  const [form, setForm] = useState({ email: "", password: "" });
   const [errors, setErrors] = useState({});
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState("");
 
   const update = (key) => (e) =>
     setForm((f) => ({ ...f, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
@@ -20,12 +23,21 @@ export default function Login() {
     return Object.keys(next).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
     setSubmitting(true);
-    // UI-only demo: no backend call. Routes straight into the dashboard.
-    setTimeout(() => navigate("/dashboard"), 700);
+    setServerError("");
+
+    try {
+      await loginUser(form.email, form.password);
+      navigate("/dashboard");
+    } catch (err) {
+      const msg = err.response?.data?.message || "Sign-in failed. Please try again.";
+      setServerError(msg);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -36,12 +48,17 @@ export default function Login() {
         Use the email address registered with Meridian Bank.
       </p>
 
-      <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-navy-100 bg-navy-50 px-3.5 py-3 text-[13px] leading-relaxed text-navy-700">
-        <Info size={15} className="mt-0.5 shrink-0 text-navy-500" />
-        <span>
-          Demo interface — submitting signs you in locally without contacting any server.
-        </span>
-      </div>
+      {location.state?.registered && !serverError && (
+        <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-[13px] font-medium text-emerald-700">
+          Your account was created. Sign in to continue.
+        </div>
+      )}
+
+      {serverError && (
+        <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
+          {serverError}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-5">
         <div>
@@ -90,16 +107,6 @@ export default function Login() {
           </div>
           {errors.password && <p className="field-error">{errors.password}</p>}
         </div>
-
-        <label className="flex cursor-pointer items-center gap-2.5 text-[13px] font-medium text-ink-500">
-          <input
-            type="checkbox"
-            checked={form.remember}
-            onChange={update("remember")}
-            className="h-4 w-4 rounded border-ink-200 accent-navy-700"
-          />
-          Keep me signed in on this device
-        </label>
 
         <button type="submit" className="btn-primary" disabled={submitting}>
           {submitting ? (

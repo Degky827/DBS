@@ -1,3 +1,4 @@
+const prisma = require("../../config/database");
 const userRepository = require("../../repositories/user.repository");
 const otpRepository = require("../../repositories/otp.repository");
 const ApiError = require("../../utils/ApiError");
@@ -22,6 +23,7 @@ const {
   otpExpiry,
   OTP_PURPOSES,
 } = require("../../utils/otp.util");
+const { sendOtpEmail } = require("../../services/email.service");
 
 const toPublicUser = (user) => ({
   id: user.id,
@@ -38,6 +40,24 @@ const toPublicUser = (user) => ({
   createdAt: user.createdAt,
 });
 
+const deliverOtp = async ({ userId, email, otp, purpose }) => {
+  try {
+    const { delivered } = await sendOtpEmail({ to: email, otp, purpose });
+    if (!delivered) {
+      logger.info({ email, purpose, otp }, "OTP issued (logged, email not configured)");
+    }
+    audit("OTP_ISSUED", { userId, purpose });
+    return delivered;
+  } catch (error) {
+    audit("OTP_EMAIL_FAILED", { userId, purpose });
+    logger.warn(
+      { email, purpose, otp, error: error.message },
+      "OTP email delivery failed — falling back to logging the code"
+    );
+    return false;
+  }
+};
+
 const issueOtp = async (user, purpose) => {
   const otp = generateOtp();
   await otpRepository.create({
@@ -47,9 +67,8 @@ const issueOtp = async (user, purpose) => {
     purpose,
     expiresAt: otpExpiry(),
   });
-  // No mail provider configured yet — OTP is logged so the flow can be tested.
-  logger.info({ email: user.email, purpose, otp }, "OTP issued");
-  audit("OTP_ISSUED", { userId: user.id, purpose });
+
+  await deliverOtp({ userId: user.id, email: user.email, otp, purpose });
   return otp;
 };
 
@@ -78,23 +97,47 @@ const register = async (input) => {
   const passwordHash = await hashPassword(input.password);
   const securityAnswerHash = await hashPassword(input.securityAnswer.toLowerCase());
 
-  const user = await userRepository.create({
-    firstName: input.firstName,
-    middleName: input.middleName || null,
-    lastName: input.lastName,
-    username: input.username,
-    dateOfBirth: new Date(input.dateOfBirth),
-    gender: input.gender,
-    phoneNumber: input.phoneNumber,
-    email,
-    passwordHash,
-    securityQuestion: input.securityQuestion,
-    securityAnswerHash,
-    acceptedTerms: true,
-    acceptedTermsAt: new Date(),
+  const { user, otp } = await prisma.$transaction(async (tx) => {
+    const newUser = await tx.user.create({
+      data: {
+        firstName: input.firstName,
+        middleName: input.middleName || null,
+        lastName: input.lastName,
+        username: input.username,
+        dateOfBirth: new Date(input.dateOfBirth),
+        gender: input.gender,
+        phoneNumber: input.phoneNumber,
+        email,
+        passwordHash,
+        securityQuestion: input.securityQuestion,
+        securityAnswerHash,
+        acceptedTerms: true,
+        acceptedTermsAt: new Date(),
+        isEmailVerified: true,
+      },
+    });
+
+    const code = generateOtp();
+    await tx.otpCode.create({
+      data: {
+        userId: newUser.id,
+        email: newUser.email,
+        codeHash: await hashOtp(code),
+        purpose: OTP_PURPOSES.EMAIL_VERIFICATION,
+        expiresAt: otpExpiry(),
+      },
+    });
+
+    return { user: newUser, otp: code };
   });
 
-  await issueEmailVerificationOtp(user);
+  await deliverOtp({
+    userId: user.id,
+    email: user.email,
+    otp,
+    purpose: OTP_PURPOSES.EMAIL_VERIFICATION,
+  });
+
   audit("REGISTER_SUCCESS", { userId: user.id });
 
   return { user: toPublicUser(user) };

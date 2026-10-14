@@ -34,7 +34,13 @@ services:
       JWT_ISSUER: auth-service
       JWT_AUDIENCE: banking-system
       BCRYPT_ROUNDS: 12
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Meridian Bank}
+      EMAIL_FROM_EMAIL: ${EMAIL_FROM_EMAIL:-no-reply@meridianbank.example}
+      EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
       LOG_LEVEL: info
       RATE_LIMIT_WINDOW_MS: 900000
       RATE_LIMIT_MAX: 300
@@ -43,5 +49,35 @@ services:
     ports:
       - "5001:5001"
 
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_AUTH_API: ${VITE_AUTH_API:-http://localhost:5001/api/v1}
+        VITE_USER_API: ${VITE_USER_API:-http://localhost:5002/api/v1}
+    container_name: banking-frontend
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+    ports:
+      - "8080:80"
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: banking-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@meridianbank.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: "false"
+    ports:
+      - "5051:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
 volumes:
   postgres_data:
+  pgadmin_data:
