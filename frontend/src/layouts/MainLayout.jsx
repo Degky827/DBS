@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useSelector } from "react-redux";
 import {
   LayoutDashboard,
   Wallet,
@@ -10,6 +11,7 @@ import {
   LifeBuoy,
 } from "lucide-react";
 import Logo from "../components/Logo";
+import { logoutUser } from "../services/authService";
 
 const NAV = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
@@ -22,14 +24,18 @@ const COMING_SOON = [
   { label: "Transactions", icon: Receipt },
 ];
 
-const USER = {
-  name: "Ada Lovelace",
-  role: "Personal · Checking",
-  initials: "AL",
-};
-
 export default function MainLayout() {
   const navigate = useNavigate();
+  const { user } = useSelector((state) => state.auth);
+
+  const firstName = user?.firstName || "User";
+  const lastName = user?.lastName || "";
+  const initials = ((firstName[0] || "") + (lastName[0] || "")).toUpperCase() || "U";
+
+  const handleLogout = async () => {
+    await logoutUser();
+    navigate("/");
+  };
 
   return (
     <div className="min-h-screen bg-ink-50">
@@ -90,7 +96,7 @@ export default function MainLayout() {
 
           <button
             type="button"
-            onClick={() => navigate("/")}
+            onClick={handleLogout}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-navy-100/60 transition hover:bg-white/5 hover:text-white"
           >
             <LogOut size={17} /> Sign out
@@ -106,7 +112,7 @@ export default function MainLayout() {
 
           <div className="hidden lg:block">
             <p className="text-sm font-bold text-navy-900">Personal banking</p>
-            <p className="text-xs text-ink-400">Wednesday, 7 October 2026</p>
+            <p className="text-xs text-ink-400">{new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
           </div>
 
           <div className="ml-auto flex items-center gap-3">
@@ -121,11 +127,11 @@ export default function MainLayout() {
 
             <div className="flex items-center gap-3 rounded-lg border border-ink-200 py-1.5 pl-1.5 pr-3.5">
               <span className="flex h-8 w-8 items-center justify-center rounded-md bg-navy-800 text-xs font-bold text-white">
-                {USER.initials}
+                {initials}
               </span>
               <div className="leading-tight">
-                <p className="text-[13px] font-bold text-navy-900">{USER.name}</p>
-                <p className="text-[11px] text-ink-400">{USER.role}</p>
+                <p className="text-[13px] font-bold text-navy-900">{firstName} {lastName}</p>
+                <p className="text-[11px] text-ink-400">Personal · Checking</p>
               </div>
             </div>
           </div>

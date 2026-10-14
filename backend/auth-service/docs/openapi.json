@@ -407,7 +407,7 @@
         "required": ["email", "otp"],
         "properties": {
           "email": { "type": "string", "format": "email", "example": "ada@example.com" },
-          "otp": { "type": "string", "pattern": "^\\d{6}$", "example": "123456", "description": "Six-digit code issued at registration (also logged by the service in development)." }
+          "otp": { "type": "string", "pattern": "^\\d{6}$", "example": "123456", "description": "Six-digit code sent to your email (logged to the console when SMTP is not configured)." }
         }
       },
       "ResendOtpRequest": {

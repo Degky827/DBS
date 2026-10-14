@@ -4,6 +4,7 @@ import { ArrowLeft, KeyRound, Loader2 } from "lucide-react";
 import OtpInput from "../../components/OtpInput";
 import PasswordStrength from "../../components/PasswordStrength";
 import { scorePassword } from "../../utils/passwordScore";
+import { resetPassword } from "../../services/authService";
 
 export default function ResetPassword() {
   const navigate = useNavigate();
@@ -14,8 +15,9 @@ export default function ResetPassword() {
   const [confirm, setConfirm] = useState("");
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState("");
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const next = {};
     if (!/^\S+@\S+\.\S+$/.test(email)) next.email = "Enter a valid email address";
@@ -27,8 +29,16 @@ export default function ResetPassword() {
     if (Object.keys(next).length) return;
 
     setSubmitting(true);
-    // UI-only demo: no backend call.
-    setTimeout(() => navigate("/"), 800);
+    setServerError("");
+
+    try {
+      await resetPassword(email, otp, password, confirm);
+      navigate("/");
+    } catch (err) {
+      const msg = err.response?.data?.message || "Reset failed. Please try again.";
+      setServerError(msg);
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -39,6 +49,12 @@ export default function ResetPassword() {
         Paste the code from your email and choose a new password. All active sessions
         will be signed out.
       </p>
+
+      {serverError && (
+        <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
+          {serverError}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-5">
         <div>

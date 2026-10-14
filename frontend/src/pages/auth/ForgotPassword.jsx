@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Loader2, MailCheck } from "lucide-react";
+import { forgotPassword } from "../../services/authService";
 
 export default function ForgotPassword() {
   const navigate = useNavigate();
@@ -9,7 +10,7 @@ export default function ForgotPassword() {
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!/^\S+@\S+\.\S+$/.test(email)) {
       setError("Enter a valid email address");
@@ -17,11 +18,15 @@ export default function ForgotPassword() {
     }
     setError("");
     setSubmitting(true);
-    // UI-only demo: pretends the reset code was issued.
-    setTimeout(() => {
-      setSubmitting(false);
+
+    try {
+      await forgotPassword(email);
       setSent(true);
-    }, 700);
+    } catch (err) {
+      setError(err.response?.data?.message || "Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (sent) {

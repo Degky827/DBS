@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, Loader2, MailCheck, RotateCw } from "lucide-react";
 import OtpInput from "../../components/OtpInput";
+import { verifyEmail, resendOtp } from "../../services/authService";
 
 export default function VerifyEmail() {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ export default function VerifyEmail() {
   const [submitting, setSubmitting] = useState(false);
   const [countdown, setCountdown] = useState(30);
   const [resent, setResent] = useState(false);
+  const [serverError, setServerError] = useState("");
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -19,16 +21,29 @@ export default function VerifyEmail() {
     return () => clearTimeout(t);
   }, [countdown]);
 
-  const verify = (code) => {
+  const verify = async (code) => {
     if (code.length < 6) return;
     setSubmitting(true);
-    // UI-only demo: any 6 digits "verify" locally.
-    setTimeout(() => navigate("/dashboard"), 700);
+    setServerError("");
+
+    try {
+      await verifyEmail(email, code);
+      navigate("/dashboard");
+    } catch (err) {
+      const msg = err.response?.data?.message || "Verification failed. Please try again.";
+      setServerError(msg);
+      setSubmitting(false);
+    }
   };
 
-  const resend = () => {
+  const resend = async () => {
     setResent(true);
     setCountdown(30);
+    try {
+      await resendOtp(email);
+    } catch {
+      // silently fail - don't reveal if email exists
+    }
     setTimeout(() => setResent(false), 2500);
   };
 
@@ -41,6 +56,12 @@ export default function VerifyEmail() {
         <span className="font-semibold text-navy-900">{email}</span>. Enter it below to
         activate your account.
       </p>
+
+      {serverError && (
+        <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
+          {serverError}
+        </div>
+      )}
 
       <div className="mt-7">
         <OtpInput value={otp} onChange={setOtp} onComplete={verify} />
@@ -80,7 +101,7 @@ export default function VerifyEmail() {
 
       {resent && (
         <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] font-medium text-emerald-800">
-          A new code has been issued — check the service logs for the demo code.
+          A new code has been sent to your email.
         </p>
       )}
 

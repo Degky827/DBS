@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Check, Loader2, User, AtSign, ShieldCheck } from "lucide-react";
 import PasswordStrength from "../../components/PasswordStrength";
 import { scorePassword } from "../../utils/passwordScore";
+import { registerUser, loginUser } from "../../services/authService";
 
 const STEPS = [
   { key: "personal", label: "Personal", icon: User },
@@ -52,6 +53,7 @@ export default function Register() {
   const [form, setForm] = useState(INITIAL);
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState("");
 
   const update = (key) => (e) =>
     setForm((f) => ({
@@ -76,12 +78,12 @@ export default function Register() {
         else if (age < 18) e.dateOfBirth = "You must be at least 18 years old";
       }
       if (!f.gender) e.gender = "Select an option";
-      if (!PHONE_RE.test(f.phoneNumber.trim())) e.phoneNumber = "Enter 7–15 digits, optionally starting with +";
+      if (!PHONE_RE.test(f.phoneNumber.trim())) e.phoneNumber = "Enter 7-15 digits, optionally starting with +";
     }
 
     if (index === 1) {
       if (!USERNAME_RE.test(f.username.trim()))
-        e.username = "3–30 characters: letters, numbers and underscores only";
+        e.username = "3-30 characters: letters, numbers and underscores only";
       if (!/^\S+@\S+\.\S+$/.test(f.email)) e.email = "Enter a valid email address";
       if (scorePassword(f.password) < 1)
         e.password = "Use 8+ characters with uppercase, lowercase and a number";
@@ -107,11 +109,24 @@ export default function Register() {
     setStep((s) => Math.max(s - 1, 0));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    setServerError("");
     setSubmitting(true);
-    // UI-only demo: routes to OTP verification without contacting any server.
-    setTimeout(() => navigate("/verify-email", { state: { email: form.email } }), 800);
+
+    try {
+      await registerUser(form);
+      try {
+        await loginUser(form.email, form.password);
+        navigate("/dashboard");
+      } catch {
+        navigate("/", { state: { registered: true } });
+      }
+    } catch (err) {
+      const msg = err.response?.data?.message || "Registration failed. Please try again.";
+      setServerError(msg);
+      setSubmitting(false);
+    }
   };
 
   const review = useMemo(
@@ -170,6 +185,12 @@ export default function Register() {
           );
         })}
       </ol>
+
+      {serverError && (
+        <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
+          {serverError}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} noValidate className="mt-7">
         {step === 0 && (
