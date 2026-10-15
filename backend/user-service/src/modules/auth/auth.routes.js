@@ -7,10 +7,9 @@ const { authLimiter } = require("../../middlewares/rateLimiter");
 const authController = require("./auth.controller");
 const { devLoginSchema } = require("./auth.validation");
 
-router.use(authLimiter);
-
 router.post(
   ROUTES.AUTH.DEV_LOGIN,
+  authLimiter,
   validate(devLoginSchema),
   authController.devLogin
 );

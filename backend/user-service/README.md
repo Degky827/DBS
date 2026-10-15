@@ -160,6 +160,24 @@ npm test
 
 Tests use an isolated in-process app instance. Ensure `DATABASE_URL` points at `user_db` (not `auth_db`) before running.
 
+**Last verified:** 24/24 passing (2026-10-15, Step 8 review)
+
+## Verification Status (Step 8)
+
+| Area | Status |
+|---|---|
+| Schema & migrations | Consistent — `UserProfile` + `DevSession` |
+| Endpoints | All 6 verified live (health, dev-login, dev-logout, view, update, password) |
+| Auth (dev mode) | Opaque Bearer tokens, SHA-256 hashed, 8h TTL |
+| Mass assignment | Blocked — strict Zod rejects unknown/protected fields |
+| Password storage | bcryptjs (12 rounds), never returned or logged |
+| Error leakage | Sanitized in production; field errors in dev |
+| Rate limiting | Global (300/15min) + auth (20/15min on login & password change) |
+| Sensitive data in logs | Redacted via pino (authorization, cookies, passwords, tokens) |
+| Production auth bypass | Blocked — `AUTH_MODE=dev` exits in production |
+| Linter | Not configured (no ESLint) |
+| Docker Compose | Not added (standalone service) |
+
 ## Response envelope
 
 Success:
