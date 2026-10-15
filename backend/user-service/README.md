@@ -4,7 +4,21 @@ Independent Express service for **profile viewing**, **profile updating**, and *
 
 > **Not production-ready.** Authentication uses opaque development sessions (`AUTH_MODE=dev`). See [docs/INTEGRATION.md](docs/INTEGRATION.md) for the JWT integration plan.
 
-## Stack
+## Service Overview
+
+The User Service manages user profile information for the Digital Banking and Identity Verification Platform. It operates independently from `auth-service` with its own dedicated database (`user_db`).
+
+**Responsibilities:**
+- View authenticated user profiles
+- Update permitted profile fields
+- Change passwords (standalone development workflow)
+
+**Separations:**
+- Does NOT own authentication tokens or sessions in production
+- Does NOT integrate with `auth-service` JWT yet
+- Does NOT share a database with `auth-service`
+
+## Technology Stack
 
 - Node.js (CommonJS), Express 5
 - PostgreSQL + Prisma 7 (`@prisma/adapter-pg`)
@@ -12,7 +26,16 @@ Independent Express service for **profile viewing**, **profile updating**, and *
 - Swagger UI, pino, helmet, express-rate-limit
 - Tests: Node.js built-in test runner + supertest
 
-## Port & database
+## Prerequisites
+
+| Requirement | Version |
+|---|---|
+| Node.js | >= 18.x |
+| PostgreSQL | >= 14 |
+| npm | >= 9 |
+| Docker (optional) | For local Postgres via `banking-postgres` |
+
+## Port & Database
 
 | Item | Value |
 |---|---|
@@ -45,15 +68,15 @@ Do **not** run this against `auth_db`.
 ```bash
 cd backend/user-service
 cp .env.example .env
-# edit DATABASE_URL if needed; defaults assume postgres auth:auth@localhost:5432/user_db
+# edit DATABASE_URL if needed
 ```
 
-Key variables:
+Key variables (see `.env.example` for placeholders):
 
 | Variable | Default | Notes |
 |---|---|---|
 | `PORT` | `5002` | |
-| `DATABASE_URL` | `.../user_db` | Dedicated DB |
+| `DATABASE_URL` | `postgresql://DB_USER:DB_PASSWORD@localhost:5432/user_db?schema=public` | Dedicated DB |
 | `AUTH_MODE` | `dev` | Must stay `dev` for standalone work |
 | `DEV_SESSION_TTL_MS` | `28800000` (8h) | Dev session lifetime |
 | `DEV_API_KEY` | empty | If set, require header `X-Dev-Api-Key` |
@@ -65,7 +88,7 @@ Key variables:
 ```bash
 npm install
 npx prisma generate
-npx prisma migrate dev --name init   # or: npm run prisma:migrate:dev -- --name init
+npx prisma migrate deploy
 npm run db:seed
 ```
 
@@ -91,17 +114,18 @@ OpenAPI JSON: `http://localhost:5002/api/v1/openapi.json`
 
 These users exist **only** in `user_db`. They are not copied from auth-service.
 
-## API summary
+## API Endpoints
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
+| GET | `/api/v1/health` | None | Liveness probe |
 | POST | `/api/v1/auth/dev-login` | email + password | Create dev session token |
 | POST | `/api/v1/auth/dev-logout` | Bearer | Revoke current session |
 | GET | `/api/v1/users/me` | Bearer | View profile |
 | PATCH | `/api/v1/users/me` | Bearer | Update permitted profile fields |
 | PATCH | `/api/v1/users/me/password` | Bearer | Change password |
 
-Password hashes are never returned.
+The authoritative machine-readable contract is the OpenAPI specification at `GET /api/v1/openapi.json`.
 
 ### Permitted profile update fields
 
@@ -160,23 +184,14 @@ npm test
 
 Tests use an isolated in-process app instance. Ensure `DATABASE_URL` points at `user_db` (not `auth_db`) before running.
 
-**Last verified:** 24/24 passing (2026-10-15, Step 8 review)
+### Previously reported results
 
-## Verification Status (Step 8)
+| Suite | Tests | Result | Date |
+|---|---|---|---|
+| Automated regression (`npm test`) | 24 | 24 passed | 2026-10-15 (Step 9) |
+| Live HTTP integration (E2E) | 64 | 64 passed | 2026-10-15 (Step 9) |
 
-| Area | Status |
-|---|---|
-| Schema & migrations | Consistent — `UserProfile` + `DevSession` |
-| Endpoints | All 6 verified live (health, dev-login, dev-logout, view, update, password) |
-| Auth (dev mode) | Opaque Bearer tokens, SHA-256 hashed, 8h TTL |
-| Mass assignment | Blocked — strict Zod rejects unknown/protected fields |
-| Password storage | bcryptjs (12 rounds), never returned or logged |
-| Error leakage | Sanitized in production; field errors in dev |
-| Rate limiting | Global (300/15min) + auth (20/15min on login & password change) |
-| Sensitive data in logs | Redacted via pino (authorization, cookies, passwords, tokens) |
-| Production auth bypass | Blocked — `AUTH_MODE=dev` exits in production |
-| Linter | Not configured (no ESLint) |
-| Docker Compose | Not added (standalone service) |
+These are previously reported results from Step 9. They were not re-executed during Step 10.
 
 ## Response envelope
 
