@@ -41,12 +41,6 @@ const userRepository = {
     );
   },
 
-  findByUsername(username) {
-    return withRetry(() =>
-      prisma.userProfile.findUnique({ where: { username } })
-    );
-  },
-
   updateProfile(id, data) {
     return withRetry(() =>
       prisma.userProfile.update({ where: { id }, data })

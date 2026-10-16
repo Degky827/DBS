@@ -37,4 +37,4 @@ const withRetry = async (operation, { retries = 3, baseDelayMs = 250 } = {}) => 
   throw lastError;
 };
 
-module.exports = { withRetry, isRetryableError };
+module.exports = { withRetry };

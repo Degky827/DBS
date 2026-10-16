@@ -24,15 +24,6 @@ const devSessionRepository = {
     );
   },
 
-  revokeAllForUser(userId) {
-    return withRetry(() =>
-      prisma.devSession.updateMany({
-        where: { userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      })
-    );
-  },
-
   revokeAllForUserExcept(userId, keepSessionId) {
     return withRetry(() =>
       prisma.devSession.updateMany({

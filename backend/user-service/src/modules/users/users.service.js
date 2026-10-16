@@ -145,5 +145,4 @@ module.exports = {
   getMyProfile,
   updateMyProfile,
   changeMyPassword,
-  toPublicProfile,
 };

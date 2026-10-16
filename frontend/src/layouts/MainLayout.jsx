@@ -24,7 +24,7 @@ const COMING_SOON = [
   { label: "Transactions", icon: Receipt },
 ];
 
-export default function MainLayout() {
+export default function MainLayout({ children }) {
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
 
@@ -138,7 +138,7 @@ export default function MainLayout() {
         </header>
 
         <main className="px-5 py-7 lg:px-8">
-          <Outlet />
+          {children || <Outlet />}
         </main>
       </div>
     </div>
