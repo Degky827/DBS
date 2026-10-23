@@ -36,6 +36,9 @@ services:
       BCRYPT_ROUNDS: 12
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
 
+      # Shared key guarding internal service-to-service endpoints.
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key}
+
       BREVO_API_KEY: ${BREVO_API_KEY:-}
       EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-}
       EMAIL_FROM: ${EMAIL_FROM:-Meridian Bank}
@@ -49,6 +52,40 @@ services:
     ports:
       - "5001:5001"
 
+  user-service:
+    build: ./backend/user-service
+    container_name: user-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 5002
+      DB_ADAPTER: pg
+      DATABASE_URL: postgresql://auth:auth@postgres:5432/user_db?schema=public
+      AUTH_MODE: ${USER_AUTH_MODE:-jwt}
+      DEV_SESSION_TTL_MS: 28800000
+      DEV_API_KEY: ${DEV_API_KEY:-}
+      # auth-service integration (shared HS256 secret + issuer + audience).
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-string}
+      JWT_ISSUER: ${JWT_ISSUER:-auth-service}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-banking-system}
+      AUTH_SERVICE_URL: http://auth-service:5001/api/v1
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key}
+      AVATAR_UPLOAD_DIR: /app/uploads/avatars
+      BCRYPT_ROUNDS: 12
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      LOG_LEVEL: info
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX: 300
+      AUTH_RATE_LIMIT_MAX: 20
+      ENABLE_API_DOCS: "true"
+    ports:
+      - "5002:5002"
+    volumes:
+      - user_uploads:/app/uploads
+
   frontend:
     build:
       context: ./frontend
@@ -59,6 +96,7 @@ services:
     restart: unless-stopped
     depends_on:
       - auth-service
+      - user-service
     ports:
       - "8080:80"
 
@@ -81,3 +119,4 @@ services:
 volumes:
   postgres_data:
   pgadmin_data:
+  user_uploads:

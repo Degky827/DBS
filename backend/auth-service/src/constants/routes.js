@@ -17,6 +17,9 @@ const ROUTES = Object.freeze({
     FORGOT_PASSWORD: "/forgot-password",
     RESET_PASSWORD: "/reset-password",
   }),
+  INTERNAL: Object.freeze({
+    CHANGE_PASSWORD: "/users/change-password",
+  }),
 });
 
 module.exports = ROUTES;
