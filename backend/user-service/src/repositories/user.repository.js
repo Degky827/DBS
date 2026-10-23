@@ -10,6 +10,12 @@ const userRepository = {
     return withRetry(() => prisma.userProfile.findUnique({ where: { id } }));
   },
 
+  findByUsername(username) {
+    return withRetry(() =>
+      prisma.userProfile.findUnique({ where: { username }, select: { id: true } })
+    );
+  },
+
   findProfileById(id) {
     return withRetry(() =>
       prisma.userProfile.findUnique({
@@ -54,6 +60,14 @@ const userRepository = {
         data: { passwordHash, passwordChangedAt: new Date() },
       })
     );
+  },
+
+  create(data) {
+    return withRetry(() => prisma.userProfile.create({ data }));
+  },
+
+  countAll() {
+    return withRetry(() => prisma.userProfile.count());
   },
 };
 

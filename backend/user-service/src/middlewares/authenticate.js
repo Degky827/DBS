@@ -1,5 +1,6 @@
 const env = require("../config/env");
 const ApiError = require("../utils/ApiError");
+const { verifyAccessToken } = require("../utils/jwt.util");
 const { hashDevSessionToken } = require("../utils/token.util");
 const devSessionRepository = require("../repositories/devSession.repository");
 
@@ -15,44 +16,70 @@ function requireDevApiKey(req) {
   }
 }
 
+function readBearer(req) {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+
+  if (scheme !== "Bearer" || !token) {
+    throw ApiError.unauthorized("Authentication token missing", "TOKEN_MISSING");
+  }
+
+  return token.trim();
+}
+
+async function authenticateDev(req) {
+  requireDevApiKey(req);
+
+  const token = readBearer(req);
+  const tokenHash = hashDevSessionToken(token);
+  const session = await devSessionRepository.findActiveByHash(tokenHash);
+
+  if (
+    !session ||
+    !session.user ||
+    session.expiresAt.getTime() <= Date.now()
+  ) {
+    throw ApiError.unauthorized(
+      "Invalid or expired development session",
+      "INVALID_SESSION"
+    );
+  }
+
+  req.user = {
+    id: session.user.id,
+    email: session.user.email,
+    role: session.user.role,
+    sessionId: session.id,
+    authMode: "dev",
+  };
+  req.session = session;
+}
+
+function authenticateJwt(req) {
+  const token = readBearer(req);
+  const payload = verifyAccessToken(token);
+
+  // Only the verified JWT is trusted for identity — never client input.
+  req.user = {
+    id: payload.sub,
+    email: payload.email,
+    role: payload.role,
+    authMode: "jwt",
+  };
+}
+
 module.exports = async function authenticate(req, res, next) {
   try {
+    if (env.AUTH_MODE === "jwt") {
+      authenticateJwt(req);
+      return next();
+    }
+
     if (env.AUTH_MODE !== "dev") {
       throw ApiError.forbidden(DEV_ONLY_MESSAGE, "AUTH_MODE_UNSUPPORTED");
     }
 
-    requireDevApiKey(req);
-
-    const header = req.headers.authorization || "";
-    const [scheme, token] = header.split(" ");
-
-    if (scheme !== "Bearer" || !token) {
-      throw ApiError.unauthorized("Authentication token missing", "TOKEN_MISSING");
-    }
-
-    const tokenHash = hashDevSessionToken(token.trim());
-    const session = await devSessionRepository.findActiveByHash(tokenHash);
-
-    if (
-      !session ||
-      !session.user ||
-      session.expiresAt.getTime() <= Date.now()
-    ) {
-      throw ApiError.unauthorized(
-        "Invalid or expired development session",
-        "INVALID_SESSION"
-      );
-    }
-
-    req.user = {
-      id: session.user.id,
-      email: session.user.email,
-      role: session.user.role,
-      sessionId: session.id,
-      authMode: "dev",
-    };
-    req.session = session;
-
+    await authenticateDev(req);
     return next();
   } catch (error) {
     return next(error);

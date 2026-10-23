@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
-
 const env = require("./config/env");
+
 const ROUTES = require("./constants/routes");
 const v1Routes = require("./routes/v1");
 const securityMiddlewares = require("./middlewares/security");
@@ -34,6 +34,15 @@ app.use(
 
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+app.use(
+  "/uploads/avatars",
+  express.static(env.AVATAR_UPLOAD_DIR, {
+    dotfiles: "deny",
+    index: false,
+    maxAge: "1d",
+    immutable: true,
+  })
+);
 
 app.use(globalLimiter);
 

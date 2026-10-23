@@ -90,7 +90,7 @@ const updateProfileSchema = z
   );
 
 const newPasswordField = requiredString("newPassword")
-  .min(12, "newPassword must be at least 12 characters")
+  .min(8, "newPassword must be at least 8 characters")
   .max(72, "newPassword must not exceed 72 characters");
 
 const changePasswordSchema = z

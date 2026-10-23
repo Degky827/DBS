@@ -40,9 +40,20 @@ if (isProduction && authMode === "dev") {
   process.exit(1);
 }
 
-if (authMode === "jwt") {
+const readOptional = (key) => {
+  const value = process.env[key];
+  return value === undefined ? "" : String(value).trim();
+};
+
+// JWT verification settings are only required when AUTH_MODE=jwt.
+const jwtSecret = readOptional("JWT_SECRET");
+const jwtIssuer = readOptional("JWT_ISSUER") || "auth-service";
+const jwtAudience = readOptional("JWT_AUDIENCE") || "banking-system";
+const avatarUploadDir = readOptional("AVATAR_UPLOAD_DIR");
+
+if (authMode === "jwt" && !jwtSecret) {
   console.error(
-    "[config] AUTH_MODE=jwt is reserved for future auth-service integration and is not implemented yet."
+    "[config] AUTH_MODE=jwt requires JWT_SECRET (must match auth-service)."
   );
   process.exit(1);
 }
@@ -66,6 +77,17 @@ const env = Object.freeze({
   AUTH_MODE: authMode,
   DEV_SESSION_TTL_MS: readNumber("DEV_SESSION_TTL_MS", 8 * 60 * 60 * 1000),
   DEV_API_KEY: process.env.DEV_API_KEY || "",
+
+  // --- auth-service integration (AUTH_MODE=jwt) ---
+  JWT_SECRET: jwtSecret,
+  JWT_ISSUER: jwtIssuer,
+  JWT_AUDIENCE: jwtAudience,
+  AUTH_SERVICE_URL: readOptional("AUTH_SERVICE_URL").replace(/\/+$/, ""),
+  INTERNAL_SERVICE_KEY: readOptional("INTERNAL_SERVICE_KEY"),
+  AVATAR_UPLOAD_DIR:
+    path.resolve(
+      avatarUploadDir || path.resolve(__dirname, "../../uploads/avatars")
+    ),
 
   BCRYPT_ROUNDS: readNumber("BCRYPT_ROUNDS", 12),
   CORS_ORIGIN: process.env.CORS_ORIGIN || "*",

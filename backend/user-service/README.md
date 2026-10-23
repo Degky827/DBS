@@ -10,7 +10,7 @@ The User Service manages user profile information for the Digital Banking and Id
 
 **Responsibilities:**
 - View authenticated user profiles
-- Update permitted profile fields
+- Update profile fields and optionally upload a profile photo
 - Change passwords (standalone development workflow)
 
 **Separations:**
@@ -122,7 +122,7 @@ These users exist **only** in `user_db`. They are not copied from auth-service.
 | POST | `/api/v1/auth/dev-login` | email + password | Create dev session token |
 | POST | `/api/v1/auth/dev-logout` | Bearer | Revoke current session |
 | GET | `/api/v1/users/me` | Bearer | View profile |
-| PATCH | `/api/v1/users/me` | Bearer | Update permitted profile fields |
+| PATCH | `/api/v1/users/me` | Bearer | Update profile fields and optionally upload a profile photo |
 | PATCH | `/api/v1/users/me/password` | Bearer | Change password |
 
 The authoritative machine-readable contract is the OpenAPI specification at `GET /api/v1/openapi.json`.
@@ -137,7 +137,7 @@ The authoritative machine-readable contract is the OpenAPI specification at `GET
 ### Change password rules
 
 - `currentPassword` must match the stored hash (wrong value → `401`, no DB write)
-- `newPassword` must be **12–72 characters** (no character-class composition rules)
+- `newPassword` must be **8–72 characters** (no character-class composition rules)
 - `newPassword` must differ from `currentPassword`
 - `confirmNewPassword` must match `newPassword`
 - On success, other development sessions for the user are revoked
@@ -149,8 +149,12 @@ The authoritative machine-readable contract is the OpenAPI specification at `GET
 - At least one permitted field is required (empty body → `400`)
 - Unexpected/protected fields (`email`, `username`, `role`, `id`, `passwordHash`, …) are rejected (`400`), not ignored
 - `dateOfBirth` must be a real past date; `middleName: ""` clears the value
+- `avatar` may be uploaded as multipart form data (PNG, JPEG, or WebP; maximum 5 MB)
 - A permitted body with unchanged values still returns `200` with the profile
 - Missing user → `404`
+
+Uploaded avatars are saved under `AVATAR_UPLOAD_DIR` and served from
+`/uploads/avatars/`. Docker Compose mounts this directory to a persistent volume.
 
 ## Example session
 
@@ -169,6 +173,11 @@ curl -s -X PATCH http://localhost:5002/api/v1/users/me \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"city":"Dire Dawa","bio":"Updated bio"}'
+
+# Upload a profile photo (can be combined with profile fields in the same request)
+curl -s -X PATCH http://localhost:5002/api/v1/users/me \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "avatar=@profile.png"
 
 curl -s -X PATCH http://localhost:5002/api/v1/users/me/password \
   -H "Authorization: Bearer $TOKEN" \

@@ -1,16 +1,23 @@
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 process.env.NODE_ENV = process.env.NODE_ENV || "test";
 process.env.AUTH_MODE = "dev";
 process.env.ENABLE_API_DOCS = "true";
 process.env.AUTH_RATE_LIMIT_MAX = "1000";
 process.env.RATE_LIMIT_MAX = "10000";
+process.env.AVATAR_UPLOAD_DIR = fs.mkdtempSync(
+  path.join(os.tmpdir(), "user-service-avatar-tests-")
+);
 
 const app = require("../src/app");
 const prisma = require("../src/config/database");
 const userRepository = require("../src/repositories/user.repository");
+const { changeAuthPassword } = require("../src/services/authClient");
 const { hashPassword } = require("../src/utils/password.util");
 
 const TEST_EMAIL = "integration.user@user.local";
@@ -82,13 +89,17 @@ before(async () => {
 });
 
 after(async () => {
-  await prisma.devSession.deleteMany({
-    where: { userId: { in: [userId, otherUserId].filter(Boolean) } },
-  });
-  await prisma.userProfile.deleteMany({
-    where: { email: { in: [TEST_EMAIL, OTHER_EMAIL] } },
-  });
-  await prisma.$disconnect();
+  try {
+    await prisma.devSession.deleteMany({
+      where: { userId: { in: [userId, otherUserId].filter(Boolean) } },
+    });
+    await prisma.userProfile.deleteMany({
+      where: { email: { in: [TEST_EMAIL, OTHER_EMAIL] } },
+    });
+  } finally {
+    await prisma.$disconnect();
+    fs.rmSync(process.env.AVATAR_UPLOAD_DIR, { recursive: true, force: true });
+  }
 });
 
 test("GET / returns service metadata", async () => {
@@ -318,7 +329,7 @@ test("update profile returns 404 when user no longer exists", async () => {
   }
 });
 
-test("change password enforces 12-char policy and strict body", async () => {
+test("change password enforces 8-char policy and strict body", async () => {
   const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
 
   const tooShort = await request(app)
@@ -326,13 +337,13 @@ test("change password enforces 12-char policy and strict body", async () => {
     .set("Authorization", `Bearer ${token}`)
     .send({
       currentPassword: TEST_NEW_PASSWORD,
-      newPassword: "abcdefghijk",
-      confirmNewPassword: "abcdefghijk",
+      newPassword: "abcdefg",
+      confirmNewPassword: "abcdefg",
     });
 
   assert.equal(tooShort.status, 400);
   assert.ok(
-    JSON.stringify(tooShort.body.errors).includes("at least 12 characters")
+    tooShort.body.errors.newPassword.includes("at least 8 characters")
   );
 
   const mismatch = await request(app)
@@ -345,6 +356,32 @@ test("change password enforces 12-char policy and strict body", async () => {
     });
 
   assert.equal(mismatch.status, 400);
+  assert.equal(
+    mismatch.body.errors.confirmNewPassword,
+    "newPassword and confirmNewPassword must match"
+  );
+
+  const exactlyEight = await request(app)
+    .patch("/api/v1/users/me/password")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      currentPassword: TEST_NEW_PASSWORD,
+      newPassword: "Passw0rd",
+      confirmNewPassword: "Passw0rd",
+    });
+
+  assert.equal(exactlyEight.status, 200);
+  assert.ok(await login(TEST_EMAIL, "Passw0rd"));
+
+  const restorePassword = await request(app)
+    .patch("/api/v1/users/me/password")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      currentPassword: "Passw0rd",
+      newPassword: TEST_NEW_PASSWORD,
+      confirmNewPassword: TEST_NEW_PASSWORD,
+    });
+  assert.equal(restorePassword.status, 200);
 
   const unexpected = await request(app)
     .patch("/api/v1/users/me/password")
@@ -367,6 +404,119 @@ test("change password enforces 12-char policy and strict body", async () => {
     });
 
   assert.equal(noAuth.status, 401);
+});
+
+test("profile photo upload stores and serves an authenticated image", async () => {
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6tEAAAAASUVORK5CYII=",
+    "base64"
+  );
+
+  const uploaded = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .attach("avatar", png, {
+      filename: "profile.png",
+      contentType: "image/png",
+    });
+
+  assert.equal(uploaded.status, 200);
+  const avatarUrl = uploaded.body.data.user.avatarUrl;
+  assert.match(avatarUrl, /^\/uploads\/avatars\/[a-f0-9-]+\.png$/);
+
+  const served = await request(app).get(avatarUrl);
+  assert.equal(served.status, 200);
+  assert.match(served.headers["content-type"], /image\/png/);
+  assert.deepEqual(served.body, png);
+
+  const replaced = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .attach("avatar", png, {
+      filename: "replacement.png",
+      contentType: "image/png",
+    });
+  assert.equal(replaced.status, 200);
+  assert.notEqual(replaced.body.data.user.avatarUrl, avatarUrl);
+  assert.equal((await request(app).get(avatarUrl)).status, 404);
+});
+
+test("profile photo upload rejects unauthenticated, unsupported, and spoofed files", async () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6tEAAAAASUVORK5CYII=",
+    "base64"
+  );
+
+  const unauthenticated = await request(app)
+    .patch("/api/v1/users/me")
+    .attach("avatar", png, {
+      filename: "profile.png",
+      contentType: "image/png",
+    });
+  assert.equal(unauthenticated.status, 401);
+
+  const token = await login(TEST_EMAIL, TEST_NEW_PASSWORD);
+  const unsupported = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .attach("avatar", Buffer.from("<svg/>"), {
+      filename: "profile.svg",
+      contentType: "image/svg+xml",
+    });
+  assert.equal(unsupported.status, 400);
+  assert.equal(unsupported.body.message, "Avatar must be a PNG, JPEG, or WebP image");
+
+  const spoofed = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .attach("avatar", Buffer.from("<script>alert(1)</script>"), {
+      filename: "profile.png",
+      contentType: "image/png",
+    });
+  assert.equal(spoofed.status, 400);
+  assert.equal(spoofed.body.code, undefined);
+  assert.match(spoofed.body.message, /content does not match/);
+
+  const tooLarge = await request(app)
+    .patch("/api/v1/users/me")
+    .set("Authorization", `Bearer ${token}`)
+    .attach(
+      "avatar",
+      Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024)]),
+      { filename: "large.png", contentType: "image/png" }
+    );
+  assert.equal(tooLarge.status, 400);
+  assert.equal(tooLarge.body.message, "Avatar image must be 5 MB or smaller");
+});
+
+test("auth-service password validation details remain specific", async () => {
+  const originalFetch = global.fetch;
+  const errors = {
+    newPassword: "newPassword must contain an uppercase letter",
+  };
+  global.fetch = async () =>
+    new Response(
+      JSON.stringify({ success: false, message: "Validation failed", errors }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+
+  try {
+    await assert.rejects(
+      changeAuthPassword({
+        email: TEST_EMAIL,
+        currentPassword: TEST_PASSWORD,
+        newPassword: "password8",
+      }),
+      (error) => {
+        assert.equal(error.message, errors.newPassword);
+        assert.deepEqual(error.details, errors);
+        return true;
+      }
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("change password rejects same password without modifying hash", async () => {

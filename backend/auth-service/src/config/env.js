@@ -45,6 +45,9 @@ const env = Object.freeze({
   JWT_ISSUER: process.env.JWT_ISSUER || "auth-service",
   JWT_AUDIENCE: process.env.JWT_AUDIENCE || "banking-system",
 
+  // Shared key guarding internal service-to-service endpoints (X-Internal-Service-Key).
+  INTERNAL_SERVICE_KEY: process.env.INTERNAL_SERVICE_KEY || "",
+
   // --- Email (Brevo) ---
   // Leave BREVO_API_KEY empty in development to log OTPs instead of sending them.
   // xkeysib- keys use the REST API (HTTPS/443), xsmtpsib- keys use SMTP.
