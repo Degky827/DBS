@@ -87,13 +87,14 @@ const ENDPOINTS = [
     path: "/api/v1/users/me",
     auth: "Bearer (dev)",
     authType: "bearer",
-    description: "Updates mutable profile fields for the authenticated user.",
+    description: "Updates profile fields and optionally uploads a PNG, JPEG, or WebP avatar (maximum 5 MB).",
     request: [
       ["Authorization", "header", "Bearer <dev token>"],
       ["firstName", "string?", "New given name"],
       ["lastName", "string?", "New family name"],
       ["phoneNumber", "string?", "New phone number"],
       ["bio", "string?", "New biography"],
+      ["avatar", "file?", "Profile photo (PNG, JPEG, or WebP; up to 5 MB)"],
     ],
     response: [
       ["success", "boolean", "Always true on 200"],
@@ -110,7 +111,7 @@ const ENDPOINTS = [
     request: [
       ["Authorization", "header", "Bearer <dev token>"],
       ["currentPassword", "string", "Existing password"],
-      ["newPassword", "string", "New password (min 12 chars)"],
+      ["newPassword", "string", "New password (8-72 characters)"],
     ],
     response: [
       ["success", "boolean", "Always true on 200"],
