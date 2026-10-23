@@ -1,0 +1,642 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Digital Banking - User Service (Phase 2, standalone)",
+    "version": "1.0.0",
+    "description": "Standalone user profile API for Phase 2 development. Uses opaque development sessions (AUTH_MODE=dev) so profile endpoints can be tested without auth-service. This authentication mode is NOT production-ready. See docs/INTEGRATION.md for the JWT integration plan. All responses use the envelope `{ success, message, data | errors }`. Password hashes are never returned.",
+    "contact": {
+      "name": "User Service Team"
+    },
+    "license": {
+      "name": "UNLICENSED",
+      "url": "https://example.com/license"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5002",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Service liveness"
+    },
+    {
+      "name": "DevAuth",
+      "description": "Development-only session authentication (not production-ready)"
+    },
+    {
+      "name": "Profile",
+      "description": "View, update profile and change password"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Service root",
+        "operationId": "getRoot",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is running",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RootResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "operationId": "getHealth",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/dev-login": {
+      "post": {
+        "tags": ["DevAuth"],
+        "summary": "Create a development session",
+        "description": "Authenticates a standalone UserProfile with email and password and returns an opaque Bearer token stored (hashed) in DevSession. Development only — not production-ready.",
+        "operationId": "devLogin",
+        "security": [
+          { "devApiKey": [] }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DevLoginRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DevLoginResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/api/v1/auth/dev-logout": {
+      "post": {
+        "tags": ["DevAuth"],
+        "summary": "Revoke the current development session",
+        "operationId": "devLogout",
+        "security": [{ "devBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Session revoked",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MessageResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/users/me": {
+      "get": {
+        "tags": ["Profile"],
+        "summary": "View the authenticated user's profile",
+        "description": "Returns the safe profile for the user bound to the current development session token. The user id is taken only from the verified session — never from the query string or body. Development Bearer auth is temporary and for local testing only; it is not production JWT integration with auth-service. Sensitive fields (passwordHash, tokens) are never returned.",
+        "operationId": "getMyProfile",
+        "security": [{ "devBearer": [] }],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Ignored. Present only to document that client-supplied user ids cannot select another profile."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile fetched",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProfileResponse" },
+                "example": {
+                  "success": true,
+                  "message": "Profile fetched",
+                  "data": {
+                    "user": {
+                      "id": "3f1c2a8e-0000-4000-8000-000000000001",
+                      "firstName": "Demo",
+                      "middleName": null,
+                      "lastName": "Customer",
+                      "username": "demo_user",
+                      "email": "demo.user@user.local",
+                      "phoneNumber": "+15550100",
+                      "dateOfBirth": "1995-06-15T00:00:00.000Z",
+                      "gender": "prefer_not_to_say",
+                      "city": "Addis Ababa",
+                      "country": "Ethiopia",
+                      "role": "USER",
+                      "createdAt": "2026-10-14T08:12:37.131Z",
+                      "updatedAt": "2026-10-14T08:12:37.131Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired development session",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Authentication token missing"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Identified user does not exist",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Account not found"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error (details not exposed)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Internal server error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Profile"],
+        "summary": "Update permitted profile fields",
+        "description": "Updates the authenticated user profile using JSON or multipart/form-data. Multipart requests may include a verified PNG, JPEG, or WebP avatar up to 5 MB; files are stored on the persistent user-service volume. Permitted profile fields are firstName, middleName, lastName, phoneNumber, gender, dateOfBirth, addressLine1, addressLine2, city, state, postalCode, country, bio, and avatarUrl. Protected identity fields are rejected.",
+        "operationId": "updateMyProfile",
+        "security": [{ "devBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateProfileRequest" },
+              "examples": {
+                "basic": {
+                  "summary": "Update name and contact",
+                  "value": {
+                    "firstName": "Demo",
+                    "lastName": "Customer",
+                    "phoneNumber": "+15550100",
+                    "city": "Addis Ababa"
+                  }
+                },
+                "clearMiddleName": {
+                  "summary": "Clear middle name with empty string",
+                  "value": { "middleName": "" }
+                }
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "avatar": { "type": "string", "format": "binary", "description": "Optional PNG, JPEG, or WebP image up to 5 MB." },
+                  "firstName": { "type": "string" },
+                  "middleName": { "type": "string" },
+                  "lastName": { "type": "string" },
+                  "phoneNumber": { "type": "string" },
+                  "gender": { "type": "string" },
+                  "dateOfBirth": { "type": "string", "format": "date" },
+                  "addressLine1": { "type": "string" },
+                  "addressLine2": { "type": "string" },
+                  "city": { "type": "string" },
+                  "state": { "type": "string" },
+                  "postalCode": { "type": "string" },
+                  "country": { "type": "string" },
+                  "bio": { "type": "string" },
+                  "avatarUrl": { "type": "string", "format": "uri" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profile updated (or unchanged permitted fields written successfully)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProfileResponse" },
+                "example": {
+                  "success": true,
+                  "message": "Profile updated",
+                  "data": {
+                    "user": {
+                      "id": "3f1c2a8e-0000-4000-8000-000000000001",
+                      "firstName": "Demo",
+                      "lastName": "Customer",
+                      "username": "demo_user",
+                      "email": "demo.user@user.local",
+                      "city": "Addis Ababa",
+                      "role": "USER"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+                        "description": "Validation failed: empty body, invalid profile fields, protected fields, or an invalid, unsupported, or oversized avatar image.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Validation failed",
+                  "errors": [
+                    { "field": "dateOfBirth", "message": "dateOfBirth must be a valid date in the past" }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": {
+            "description": "Authenticated user no longer exists",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Account not found" }
+              }
+            }
+          },
+          "409": {
+            "description": "Reserved for future uniqueness conflicts (email/username are not editable here, so not currently returned)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error (details not exposed)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Internal server error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me/password": {
+      "patch": {
+        "tags": ["Profile"],
+        "summary": "Change password",
+        "description": "Changes the authenticated user password. The new password must be 8-72 characters and differ from the current password; confirmation must match. Validation responses include field-specific messages.",
+        "operationId": "changeMyPassword",
+        "security": [{ "devBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ChangePasswordRequest" },
+              "examples": {
+                "change": {
+                  "summary": "Change password",
+                  "value": {
+                    "currentPassword": "CurrentPass@123",
+                    "newPassword": "BrandNewPass@123",
+                    "confirmNewPassword": "BrandNewPass@123"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password changed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MessageResponse" },
+                "example": {
+                  "success": true,
+                  "message": "Password has been changed. Other development sessions were revoked."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed (missing/empty/unexpected fields, newPassword under 8 characters, confirmation mismatch, new password identical to current) or unsafe request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Validation failed",
+                  "errors": { "newPassword": "newPassword must be at least 8 characters" }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized or incorrect current password",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": {
+                  "success": false,
+                  "message": "Current password is incorrect"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Authenticated user no longer exists",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Account not found" }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "500": {
+            "description": "Internal server error (details not exposed; no false success)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+                "example": { "success": false, "message": "Internal server error" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "devBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Opaque development session token from POST /api/v1/auth/dev-login. NOT a production JWT."
+      },
+      "devApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Dev-Api-Key",
+        "description": "Optional. Required only when DEV_API_KEY is configured."
+      }
+    },
+    "schemas": {
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["success", "message"],
+        "properties": {
+          "success": { "type": "boolean", "enum": [false] },
+          "message": { "type": "string" },
+          "errors": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      },
+      "SuccessEnvelope": {
+        "type": "object",
+        "required": ["success", "message", "data"],
+        "properties": {
+          "success": { "type": "boolean", "enum": [true] },
+          "message": { "type": "string" },
+          "data": {}
+        }
+      },
+      "RootResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "service": { "type": "string" },
+                  "version": { "type": "string" },
+                  "authMode": { "type": "string" },
+                  "warning": { "type": "string" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "HealthResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "service": { "type": "string" },
+                  "status": { "type": "string" },
+                  "uptime": { "type": "integer" },
+                  "timestamp": { "type": "string", "format": "date-time" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "MessageResponse": {
+        "type": "object",
+        "required": ["success", "message"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "message": { "type": "string" },
+          "data": { "type": "object", "nullable": true }
+        }
+      },
+      "DevLoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "format": "password" }
+        }
+      },
+      "DevLoginResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "token": { "type": "string" },
+                  "tokenType": { "type": "string", "example": "Bearer" },
+                  "expiresInMs": { "type": "integer" },
+                  "warning": { "type": "string" },
+                  "user": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "string", "format": "uuid" },
+                      "email": { "type": "string" },
+                      "role": { "type": "string" },
+                      "firstName": { "type": "string" },
+                      "lastName": { "type": "string" },
+                      "username": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "UserProfile": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "firstName": { "type": "string" },
+          "middleName": { "type": "string", "nullable": true },
+          "lastName": { "type": "string" },
+          "username": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "phoneNumber": { "type": "string" },
+          "dateOfBirth": { "type": "string", "format": "date-time" },
+          "gender": { "type": "string" },
+          "addressLine1": { "type": "string", "nullable": true },
+          "addressLine2": { "type": "string", "nullable": true },
+          "city": { "type": "string", "nullable": true },
+          "state": { "type": "string", "nullable": true },
+          "postalCode": { "type": "string", "nullable": true },
+          "country": { "type": "string", "nullable": true },
+          "bio": { "type": "string", "nullable": true },
+          "avatarUrl": { "type": "string", "nullable": true },
+          "role": { "type": "string" },
+          "passwordChangedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ProfileResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "user": { "$ref": "#/components/schemas/UserProfile" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "firstName": { "type": "string", "minLength": 2, "maxLength": 60 },
+          "middleName": { "type": "string", "minLength": 2, "maxLength": 60, "nullable": true },
+          "lastName": { "type": "string", "minLength": 2, "maxLength": 60 },
+          "phoneNumber": { "type": "string", "pattern": "^\\+?[0-9]{7,15}$" },
+          "gender": { "type": "string", "enum": ["male", "female", "other", "prefer_not_to_say"] },
+          "dateOfBirth": { "type": "string", "format": "date" },
+          "addressLine1": { "type": "string", "maxLength": 200 },
+          "addressLine2": { "type": "string", "maxLength": 200 },
+          "city": { "type": "string", "maxLength": 100 },
+          "state": { "type": "string", "maxLength": 100 },
+          "postalCode": { "type": "string", "maxLength": 20 },
+          "country": { "type": "string", "maxLength": 100 },
+          "bio": { "type": "string", "maxLength": 500 },
+          "avatarUrl": { "type": "string", "format": "uri", "maxLength": 500 }
+        }
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "required": ["currentPassword", "newPassword", "confirmNewPassword"],
+        "additionalProperties": false,
+        "properties": {
+          "currentPassword": { "type": "string", "format": "password" },
+          "newPassword": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "maxLength": 72,
+            "description": "8-72 characters. Must differ from currentPassword."
+          },
+          "confirmNewPassword": { "type": "string", "format": "password" }
+        }
+      }
+    },
+    "responses": {
+      "ValidationError": {
+        "description": "Validation failed",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Unauthorized",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Rate limited",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      }
+    }
+  }
+}

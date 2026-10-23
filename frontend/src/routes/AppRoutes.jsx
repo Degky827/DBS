@@ -10,6 +10,15 @@ import ForgotPassword from "../pages/auth/ForgotPassword";
 import ResetPassword from "../pages/auth/ResetPassword";
 import Dashboard from "../pages/dashboard/Dashboard";
 import Profile from "../pages/dashboard/Profile";
+import ServiceDashboard from "../pages/dashboard/ServiceDashboard";
+import ViewProfile from "../pages/profile/ViewProfile";
+import EditProfile from "../pages/profile/EditProfile";
+import ChangePassword from "../pages/profile/ChangePassword";
+import ApiDocs from "../pages/docs/ApiDocs";
+import SessionManagement from "../pages/sessions/SessionManagement";
+import HealthMonitor from "../pages/health/HealthMonitor";
+import ErrorDemo from "../pages/errors/ErrorDemo";
+import IntegrationStatus from "../pages/integration/IntegrationStatus";
 import ProtectedRoute from "../components/ProtectedRoute";
 import { getMe } from "../services/authService";
 import { setUser } from "../store/authSlice";
@@ -47,7 +56,16 @@ function AppRoutes() {
         <Route element={<ProtectedRoute />}>
           <Route element={<MainLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/service-dashboard" element={<ServiceDashboard />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/profile/view" element={<ViewProfile />} />
+            <Route path="/profile/edit" element={<EditProfile />} />
+            <Route path="/profile/security" element={<ChangePassword />} />
+            <Route path="/docs" element={<ApiDocs />} />
+            <Route path="/sessions" element={<SessionManagement />} />
+            <Route path="/health" element={<HealthMonitor />} />
+            <Route path="/errors/demo" element={<ErrorDemo />} />
+            <Route path="/integration" element={<IntegrationStatus />} />
           </Route>
         </Route>
 
