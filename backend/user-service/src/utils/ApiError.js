@@ -33,6 +33,13 @@ class ApiError extends Error {
     return new ApiError(409, message, code, details);
   }
 
+  static notImplemented(
+    message = "This operation is not implemented",
+    code = "NOT_IMPLEMENTED"
+  ) {
+    return new ApiError(501, message, code);
+  }
+
   static tooManyRequests(message = "Too many requests", code = "RATE_LIMITED") {
     return new ApiError(429, message, code);
   }
