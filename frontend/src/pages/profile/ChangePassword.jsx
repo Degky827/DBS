@@ -1,14 +1,23 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { KeyRound, Check, X, Save, ArrowLeft, Loader2, ShieldCheck } from "lucide-react";
+import { KeyRound, Check, X, Save, ShieldCheck } from "lucide-react";
 import FieldInput from "../../components/FieldInput";
 import { changePassword } from "../../services/userService";
+import { normalizeApiError } from "../../utils/apiError";
+import PageTransition, { StaggerGroup, StaggerItem } from "../../components/ui/PageTransition";
+import PageHeader from "../../components/ui/PageHeader";
+import Alert from "../../components/ui/Alert";
+import { Spinner } from "../../components/ui/Spinner";
 
+// Mirrors the auth-service password policy (enforced when user-service
+// proxies the change to auth-service in JWT mode).
 const PASSWORD_RULES = [
   { label: "At least 8 characters long", test: (pw) => pw.length >= 8 },
   { label: "No more than 72 characters", test: (pw) => pw.length <= 72 },
+  { label: "An uppercase and a lowercase letter", test: (pw) => /[a-z]/.test(pw) && /[A-Z]/.test(pw) },
+  { label: "At least one number", test: (pw) => /\d/.test(pw) },
   {
-    label: "Must differ from current password",
+    label: "Different from your current password",
     test: (pw, current) => pw.length > 0 && pw !== current,
   },
 ];
@@ -36,25 +45,18 @@ export default function ChangePassword() {
   const validate = () => {
     const next = {};
 
-    if (!form.currentPassword) {
-      next.currentPassword = "Current password is required";
-    }
+    if (!form.currentPassword) next.currentPassword = "Current password is required";
 
-    if (!form.newPassword) {
-      next.newPassword = "New password is required";
-    } else if (form.newPassword.length < 8) {
-      next.newPassword = "Password must be at least 8 characters";
-    } else if (form.newPassword.length > 72) {
-      next.newPassword = "Password must not exceed 72 characters";
-    } else if (form.newPassword === form.currentPassword) {
+    if (!form.newPassword) next.newPassword = "New password is required";
+    else if (form.newPassword.length < 8) next.newPassword = "Password must be at least 8 characters";
+    else if (form.newPassword.length > 72) next.newPassword = "Password must not exceed 72 characters";
+    else if (!/[a-z]/.test(form.newPassword) || !/[A-Z]/.test(form.newPassword) || !/\d/.test(form.newPassword))
+      next.newPassword = "Use uppercase, lowercase and a number";
+    else if (form.newPassword === form.currentPassword)
       next.newPassword = "New password must differ from current password";
-    }
 
-    if (!form.confirmPassword) {
-      next.confirmPassword = "Please confirm your new password";
-    } else if (form.newPassword !== form.confirmPassword) {
-      next.confirmPassword = "Passwords do not match";
-    }
+    if (!form.confirmPassword) next.confirmPassword = "Please confirm your new password";
+    else if (form.newPassword !== form.confirmPassword) next.confirmPassword = "Passwords do not match";
 
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -75,141 +77,135 @@ export default function ChangePassword() {
       });
       setSuccess(data?.message || "Password updated successfully. Other sessions were signed out.");
       setForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-      setTimeout(() => navigate("/profile/view"), 900);
     } catch (err) {
-      const data = err.response?.data;
-      let validationMessage;
-      if (data?.errors && typeof data.errors === "object") {
-        const fieldErrors = { ...data.errors };
-        if (fieldErrors.confirmNewPassword) {
-          fieldErrors.confirmPassword = fieldErrors.confirmNewPassword;
-        }
-        validationMessage = Object.values(fieldErrors).find(
-          (message) => typeof message === "string"
-        );
-        setErrors((prev) => ({ ...prev, ...fieldErrors }));
+      const { message, fields } = normalizeApiError(err);
+      const mapped = { ...fields };
+      if (mapped.confirmNewPassword) {
+        mapped.confirmPassword = mapped.confirmNewPassword;
+        delete mapped.confirmNewPassword;
       }
-      setServerError(
-        data?.message === "Validation failed" && validationMessage
-          ? validationMessage
-          : data?.message || "Unable to change your password. Please try again."
-      );
+      if (Object.keys(mapped).length) {
+        setErrors((prev) => ({ ...prev, ...mapped }));
+        const firstFieldError = Object.values(mapped)[0];
+        setServerError(
+          message === "Validation failed" && firstFieldError ? firstFieldError : message
+        );
+      } else {
+        setServerError(message);
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="mx-auto max-w-lg space-y-6">
-        <div>
-          <h1 className="text-2xl font-extrabold text-navy-900">Change Password</h1>
-          <p className="mt-1 text-sm text-ink-500">Update your password to keep your account secure.</p>
-        </div>
+    <PageTransition className="mx-auto max-w-lg space-y-6">
+      <PageHeader
+        backTo="/profile"
+        backLabel="Profile"
+        eyebrow="Security"
+        title="Change password"
+        description="Choose a strong password. Changing it signs out every other active session."
+      />
 
-        {serverError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
-            {serverError}
-          </div>
-        )}
+      <Alert tone="error">{serverError}</Alert>
+      <Alert tone="success">{success}</Alert>
 
-        {success && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-[13px] font-medium text-emerald-700">
-            {success}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} noValidate className="space-y-6">
-          <section className="card p-6">
-            <h2 className="mb-5 text-[15px] font-extrabold text-navy-900">Password</h2>
-            <div className="space-y-5">
-              <FieldInput
-                label="Current Password"
-                name="currentPassword"
-                type="password"
-                value={form.currentPassword}
-                onChange={handleChange}
-                required
-                error={errors.currentPassword}
-              />
-              <FieldInput
-                label="New Password"
-                name="newPassword"
-                type="password"
-                value={form.newPassword}
-                onChange={handleChange}
-                required
-                error={errors.newPassword}
-              />
-              <FieldInput
-                label="Confirm New Password"
-                name="confirmPassword"
-                type="password"
-                value={form.confirmPassword}
-                onChange={handleChange}
-                required
-                error={errors.confirmPassword}
-              />
-            </div>
-          </section>
-
-          <section className="card p-6">
-            <div className="flex items-center gap-2">
-              <KeyRound size={16} className="text-navy-600" />
-              <h2 className="text-[15px] font-extrabold text-navy-900">Password Policy</h2>
-            </div>
-            <p className="mt-2 text-[13px] text-ink-500">
-              Your password must meet the following requirements:
-            </p>
-            <ul className="mt-3 space-y-2">
-              {PASSWORD_RULES.map((rule) => {
-                const passed =
-                  form.newPassword.length > 0 && rule.test(form.newPassword, form.currentPassword);
-                return (
-                  <li key={rule.label} className="flex items-center gap-2.5 text-sm">
-                    {passed ? (
-                      <Check size={16} className="shrink-0 text-emerald-600" />
-                    ) : (
-                      <X size={16} className="shrink-0 text-ink-200" />
-                    )}
-                    <span className={passed ? "font-medium text-navy-900" : "text-ink-500"}>
-                      {rule.label}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-
-            <div className="mt-4 flex items-start gap-2 rounded-lg bg-navy-50 px-3 py-2.5 text-[12px] leading-relaxed text-navy-700">
-              <ShieldCheck size={15} className="mt-0.5 shrink-0" />
-              <span>
-                For your security, changing your password signs you out of all other active
-                sessions and devices.
-              </span>
-            </div>
-          </section>
-
-          <div className="flex items-center justify-end gap-3 pb-4">
-            <button
-              type="button"
-              onClick={() => navigate("/profile/view")}
-              className="btn-ghost"
+      <StaggerGroup as="form" onSubmit={handleSubmit} noValidate className="space-y-6">
+        <StaggerItem className="card p-6">
+          <h2 className="mb-5 text-[15px] font-extrabold text-navy-900">Password</h2>
+          <div className="space-y-5">
+            <FieldInput
+              label="Current password"
+              name="currentPassword"
+              type="password"
+              value={form.currentPassword}
+              onChange={handleChange}
+              required
+              autoComplete="current-password"
+              error={errors.currentPassword}
               disabled={submitting}
-            >
-              <ArrowLeft size={15} /> Cancel
-            </button>
-            <button type="submit" className="btn-primary w-auto! px-6!" disabled={submitting}>
-              {submitting ? (
-                <>
-                  <Loader2 size={15} className="animate-spin" /> Updating…
-                </>
-              ) : (
-                <>
-                  <Save size={15} /> Update Password
-                </>
-              )}
-            </button>
+            />
+            <FieldInput
+              label="New password"
+              name="newPassword"
+              type="password"
+              value={form.newPassword}
+              onChange={handleChange}
+              required
+              autoComplete="new-password"
+              error={errors.newPassword}
+              disabled={submitting}
+            />
+            <FieldInput
+              label="Confirm new password"
+              name="confirmPassword"
+              type="password"
+              value={form.confirmPassword}
+              onChange={handleChange}
+              required
+              autoComplete="new-password"
+              error={errors.confirmPassword}
+              disabled={submitting}
+            />
           </div>
-        </form>
-      </div>
+        </StaggerItem>
+
+        <StaggerItem className="card p-6">
+          <div className="flex items-center gap-2">
+            <KeyRound size={16} className="text-navy-600" />
+            <h2 className="text-[15px] font-extrabold text-navy-900">Password policy</h2>
+          </div>
+          <ul className="mt-4 space-y-2">
+            {PASSWORD_RULES.map((rule) => {
+              const passed =
+                form.newPassword.length > 0 && rule.test(form.newPassword, form.currentPassword);
+              return (
+                <li key={rule.label} className="flex items-center gap-2.5 text-sm">
+                  {passed ? (
+                    <Check size={16} className="shrink-0 text-emerald-600" />
+                  ) : (
+                    <X size={16} className="shrink-0 text-ink-200" />
+                  )}
+                  <span className={passed ? "font-medium text-navy-900" : "text-ink-500"}>
+                    {rule.label}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="mt-4 flex items-start gap-2 rounded-lg bg-navy-50 px-3 py-2.5 text-[12px] leading-relaxed text-navy-700">
+            <ShieldCheck size={15} className="mt-0.5 shrink-0" />
+            <span>
+              For your security, changing your password revokes all other refresh tokens
+              and signs out other devices.
+            </span>
+          </div>
+        </StaggerItem>
+
+        <StaggerItem className="flex items-center justify-end gap-3 pb-4">
+          <button
+            type="button"
+            onClick={() => navigate("/profile")}
+            className="btn-ghost"
+            disabled={submitting}
+          >
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary px-6" disabled={submitting}>
+            {submitting ? (
+              <>
+                <Spinner size={15} /> Updating…
+              </>
+            ) : (
+              <>
+                <Save size={15} /> Update password
+              </>
+            )}
+          </button>
+        </StaggerItem>
+      </StaggerGroup>
+    </PageTransition>
   );
 }

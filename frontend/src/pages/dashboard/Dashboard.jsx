@@ -1,215 +1,288 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useSelector } from "react-redux";
 import {
   ArrowUpRight,
-  ArrowDownLeft,
-  Plus,
-  Send,
-  CreditCard,
-  MoreHorizontal,
-  TrendingUp,
+  BadgeCheck,
+  CircleDashed,
+  FileSearch,
+  KeyRound,
+  Pencil,
+  ShieldCheck,
+  Activity,
 } from "lucide-react";
+import { getMyProfile, GENDER_LABELS } from "../../services/userService";
+import { getKycStatus } from "../../services/kycService";
+import { formatDate, displayValue, greetingForNow, titleCase } from "../../utils/format";
+import { isOfficer, roleLabel } from "../../utils/roles";
+import PageTransition, { StaggerGroup, StaggerItem } from "../../components/ui/PageTransition";
+import StatusBadge from "../../components/ui/StatusBadge";
+import Alert from "../../components/ui/Alert";
+import { Skeleton } from "../../components/ui/Spinner";
 
-const BALANCES = [
-  { label: "Total balance", value: 128450.75, delta: "+2.4% this month", tone: "navy" },
-  { label: "Savings", value: 84200.0, delta: "+$1,200 on 1 Oct", tone: "white" },
-  { label: "Checking", value: 44250.75, delta: "12 payments pending", tone: "white" },
-];
-
-const QUICK_ACTIONS = [
-  { label: "Transfer", icon: Send },
-  { label: "Deposit", icon: Plus },
-  { label: "Pay card", icon: CreditCard },
-  { label: "More", icon: MoreHorizontal },
-];
-
-const TRANSACTIONS = [
-  { name: "Whole Foods Market", date: "7 Oct, 09:14", amount: -86.42, category: "Groceries", status: "Completed" },
-  { name: "Salary — Ashbourne Ltd", date: "1 Oct, 00:02", amount: 6400.0, category: "Income", status: "Completed" },
-  { name: "Spotify Premium", date: "6 Oct, 18:40", amount: -11.99, category: "Subscriptions", status: "Completed" },
-  { name: "Transfer to Savings", date: "5 Oct, 12:05", amount: -1000.0, category: "Internal", status: "Completed" },
-  { name: "Con Edison", date: "4 Oct, 08:30", amount: -142.3, category: "Utilities", status: "Pending" },
-  { name: "Refund — Nordstrom", date: "3 Oct, 15:55", amount: 219.0, category: "Shopping", status: "Completed" },
-];
-
-const SPEND = [
-  { day: "Mon", value: 45 },
-  { day: "Tue", value: 72 },
-  { day: "Wed", value: 38 },
-  { day: "Thu", value: 90 },
-  { day: "Fri", value: 64 },
-  { day: "Sat", value: 120 },
-  { day: "Sun", value: 55 },
-];
-
-const money = (n) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+const kycCopy = (status) => {
+  switch (status) {
+    case "APPROVED":
+      return "Your identity has been verified.";
+    case "PENDING_REVIEW":
+      return "Your information is with our team for review.";
+    case "REJECTED":
+      return "Your verification was not approved. Review the details and resubmit.";
+    case "NEEDS_RESUBMISSION":
+      return "Please upload a clearer identity document to continue.";
+    case "IN_PROGRESS":
+      return "Finish your secure identity check to continue.";
+    default:
+      return "Verify your identity to finish setting up your account.";
+  }
+};
 
 export default function Dashboard() {
+  const authUser = useSelector((state) => state.auth.user);
+  const [profile, setProfile] = useState(null);
+  const [kyc, setKyc] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const [profileResult, kycResult] = await Promise.allSettled([
+        getMyProfile(),
+        getKycStatus(),
+      ]);
+      if (!active) return;
+      if (profileResult.status === "fulfilled") setProfile(profileResult.value);
+      else setError(profileResult.value?.response?.data?.message || "Unable to load your account data.");
+      if (kycResult.status === "fulfilled") setKyc(kycResult.value);
+      else if (kycResult.value?.response?.status !== 404) setKyc({ unavailable: true });
+      setLoading(false);
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const name = [profile?.firstName || authUser?.firstName, profile?.lastName || authUser?.lastName]
+    .filter(Boolean)
+    .join(" ");
+  const role = profile?.role || authUser?.role || "USER";
+  const emailVerified = Boolean(authUser?.isEmailVerified);
+  const profileComplete = Boolean(
+    profile?.firstName &&
+      profile?.lastName &&
+      profile?.phoneNumber &&
+      profile?.dateOfBirth &&
+      !String(profile.dateOfBirth).startsWith("1970")
+  );
+
+  const checklist = [
+    {
+      label: "Complete your profile",
+      done: profileComplete,
+      to: "/profile/edit",
+      pending: "Add your address and contact details",
+    },
+    {
+      label: "Email verified",
+      done: emailVerified,
+      to: "/verify-email",
+      pending: "Confirm your email address",
+    },
+    {
+      label: "Identity verification",
+      done: kyc?.status === "APPROVED",
+      to: "/kyc",
+      pending: kyc?.status ? `Current status: ${titleCase(kyc.status)}` : "Start your KYC check",
+    },
+  ];
+  const doneCount = checklist.filter((item) => item.done).length;
+
   return (
-    <div className="space-y-6">
+    <PageTransition className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="eyebrow">Good morning</p>
-          <h1 className="mt-1 text-2xl font-extrabold">Overview</h1>
+          <p className="eyebrow">{greetingForNow()}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-extrabold text-navy-900">
+              {name || "Your account"}
+            </h1>
+            <span className="badge-info">{roleLabel(role)}</span>
+          </div>
+          <p className="mt-1.5 text-sm text-ink-500">
+            {profile?.email || authUser?.email || ""}
+          </p>
         </div>
-        <div className="flex gap-3">
-          <button type="button" className="btn-ghost">
-            <ArrowDownLeft size={16} /> Receive
-          </button>
-          <button type="button" className="btn-primary w-auto! px-4! py-2.5! text-sm">
-            <ArrowUpRight size={16} /> Send money
-          </button>
+        <div className="flex flex-wrap gap-3">
+          <Link to="/profile/edit" className="btn-ghost">
+            <Pencil size={15} /> Edit profile
+          </Link>
+          {isOfficer({ role }) && (
+            <Link to="/officer/reviews" className="btn-primary">
+              <FileSearch size={16} /> Review queue
+            </Link>
+          )}
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        {BALANCES.map((b) => (
-          <div
-            key={b.label}
-            className={
-              b.tone === "navy"
-                ? "rounded-xl bg-navy-800 p-5 text-white shadow-[0_12px_32px_-20px_rgba(5,13,26,.8)]"
-                : "card p-5"
-            }
-          >
-            <p className={`text-[11px] font-bold uppercase tracking-[0.14em] ${b.tone === "navy" ? "text-gold-400" : "text-ink-400"}`}>
-              {b.label}
-            </p>
-            <p className={`num mt-2 text-2xl font-extrabold ${b.tone === "navy" ? "text-white" : "text-navy-900"}`}>
-              {money(b.value)}
-            </p>
-            <p className={`mt-1 text-xs font-medium ${b.tone === "navy" ? "text-navy-100/70" : "text-ink-400"}`}>
-              {b.delta}
-            </p>
-          </div>
-        ))}
-      </div>
+      {error && <Alert tone="warning">{error}</Alert>}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {QUICK_ACTIONS.map(({ label, icon: Icon }) => (
-          <button
-            key={label}
-            type="button"
-            className="card group flex items-center gap-3 px-4 py-3.5 text-left transition hover:border-navy-500/40 hover:shadow-[0_8px_24px_-16px_rgba(5,13,26,.45)]"
-          >
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-navy-50 text-navy-700 transition group-hover:bg-navy-800 group-hover:text-white">
-              <Icon size={17} />
-            </span>
-            <span className="text-sm font-bold text-navy-900">{label}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="card lg:col-span-2">
-          <div className="flex items-center justify-between border-b border-ink-100 px-5 py-4">
-            <h2 className="text-[15px] font-extrabold">Recent activity</h2>
-            <button type="button" className="link text-[13px]!">View all</button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink-400">
-                  <th className="px-5 py-3">Transaction</th>
-                  <th className="px-5 py-3">Category</th>
-                  <th className="px-5 py-3">Status</th>
-                  <th className="px-5 py-3 text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-ink-100">
-                {TRANSACTIONS.map((t) => (
-                  <tr key={t.name} className="transition hover:bg-ink-50">
-                    <td className="px-5 py-3.5">
-                      <p className="text-sm font-bold text-navy-900">{t.name}</p>
-                      <p className="text-xs text-ink-400">{t.date}</p>
-                    </td>
-                    <td className="px-5 py-3.5 text-[13px] text-ink-500">{t.category}</td>
-                    <td className="px-5 py-3.5">
-                      <span
-                        className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                          t.status === "Pending"
-                            ? "bg-gold-100 text-gold-600"
-                            : "bg-emerald-50 text-emerald-700"
-                        }`}
-                      >
-                        {t.status}
-                      </span>
-                    </td>
-                    <td
-                      className={`num px-5 py-3.5 text-right text-sm font-extrabold ${
-                        t.amount < 0 ? "text-navy-900" : "text-emerald-600"
-                      }`}
-                    >
-                      {t.amount < 0 ? "" : "+"}
-                      {money(t.amount)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-navy-800 via-navy-900 to-navy-950 p-5 text-white shadow-[0_16px_40px_-24px_rgba(5,13,26,.9)]">
-            <div className="brand-texture absolute inset-0 opacity-40" />
-            <div className="relative">
-              <div className="flex items-start justify-between">
-                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-gold-400">
-                  Meridian Platinum
-                </p>
-                <CreditCard size={20} className="text-navy-100/70" />
-              </div>
-              <p className="num mt-8 text-lg font-bold tracking-[0.25em]">
-                •••• •••• •••• 4192
-              </p>
-              <div className="mt-5 flex items-end justify-between">
-                <div>
-                  <p className="text-[10px] uppercase tracking-widest text-navy-100/50">Card holder</p>
-                  <p className="text-sm font-bold">ADA LOVELACE</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] uppercase tracking-widest text-navy-100/50">Expires</p>
-                  <p className="num text-sm font-bold">08/29</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-[15px] font-extrabold">Spending this week</h2>
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
-                <TrendingUp size={12} /> 8%
+      <StaggerGroup className="grid gap-4 lg:grid-cols-3">
+        <StaggerItem className="card p-5 lg:col-span-2">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-navy-800 text-white">
+                <ShieldCheck size={20} />
               </span>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-ink-400">
+                  Identity verification
+                </p>
+                <h2 className="mt-1 text-lg font-extrabold text-navy-900">
+                  {loading ? (
+                    <Skeleton className="h-6 w-44" />
+                  ) : kyc?.unavailable ? (
+                    "Verification status unavailable"
+                  ) : (
+                    titleCase(kyc?.status || "Not started")
+                  )}
+                </h2>
+                <p className="mt-1 text-sm leading-relaxed text-ink-500">
+                  {loading
+                    ? "Checking your verification status…"
+                    : kyc?.unavailable
+                      ? "We couldn't reach the verification service. Try again from the verification page."
+                      : kycCopy(kyc?.status)}
+                </p>
+              </div>
             </div>
+            <Link to="/kyc" className="btn-ghost shrink-0">
+              {kyc?.status === "APPROVED" ? "View details" : "Go to verification"}
+              <ArrowUpRight size={15} />
+            </Link>
+          </div>
 
-            <div className="mt-5 flex h-28 items-end gap-2.5">
-              {SPEND.map((s) => (
-                <div key={s.day} className="flex flex-1 flex-col items-center gap-2">
-                  <div
-                    className={`w-full rounded-t transition ${
-                      s.day === "Sat" ? "bg-gold-500" : "bg-navy-800/85"
+          {!loading && !kyc?.unavailable && kyc?.status ? (
+            <div className="mt-5 grid gap-3 border-t border-ink-100 pt-4 sm:grid-cols-2">
+              <div className="flex items-center justify-between rounded-lg bg-ink-50 px-3 py-2.5 text-sm">
+                <span className="text-ink-500">Provider check</span>
+                <StatusBadge value={kyc.providerStatus} fallback="Not started" />
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-ink-50 px-3 py-2.5 text-sm">
+                <span className="text-ink-500">Document check</span>
+                <StatusBadge value={kyc.documentVerificationStatus} fallback="Pending" />
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-ink-50 px-3 py-2.5 text-sm">
+                <span className="text-ink-500">Data comparison</span>
+                <StatusBadge value={kyc.dataComparisonStatus} fallback="Pending" />
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-ink-50 px-3 py-2.5 text-sm">
+                <span className="text-ink-500">Face & liveness</span>
+                <StatusBadge
+                  value={kyc.faceMatchStatus || kyc.livenessStatus}
+                  fallback="Pending"
+                />
+              </div>
+            </div>
+          ) : null}
+        </StaggerItem>
+
+        <StaggerItem className="card p-5">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-ink-400">
+              Setup progress
+            </p>
+            <span className="badge-info num">
+              {doneCount}/{checklist.length}
+            </span>
+          </div>
+          <ul className="mt-4 space-y-3">
+            {checklist.map((item) => (
+              <li key={item.label}>
+                <Link
+                  to={item.to}
+                  className="group flex items-start gap-3 rounded-lg px-2 py-1.5 transition hover:bg-ink-50"
+                >
+                  <span
+                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+                      item.done ? "bg-emerald-50 text-emerald-600" : "bg-ink-100 text-ink-400"
                     }`}
-                    style={{ height: `${(s.value / 120) * 100}%` }}
-                    title={money(s.value)}
-                  />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-ink-400">
-                    {s.day}
+                  >
+                    {item.done ? <BadgeCheck size={13} /> : <CircleDashed size={12} />}
                   </span>
+                  <span>
+                    <span className="block text-sm font-bold text-navy-900">{item.label}</span>
+                    <span className="block text-xs text-ink-400">
+                      {item.done ? "Completed" : item.pending}
+                    </span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </StaggerItem>
+      </StaggerGroup>
+
+      <StaggerGroup className="grid gap-4 lg:grid-cols-3">
+        <StaggerItem className="card lg:col-span-2">
+          <div className="border-b border-ink-100 px-5 py-4">
+            <h2 className="text-[15px] font-extrabold">Account summary</h2>
+          </div>
+          {loading ? (
+            <div className="space-y-3 px-5 py-5">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          ) : (
+            <dl className="divide-y divide-ink-100 px-5">
+              {[
+                ["Full name", name || "—"],
+                ["Username", displayValue(profile?.username)],
+                ["Email", displayValue(profile?.email)],
+                ["Phone", displayValue(profile?.phoneNumber)],
+                ["Gender", GENDER_LABELS[profile?.gender] || displayValue(profile?.gender)],
+                ["Member since", formatDate(profile?.createdAt)],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-baseline justify-between gap-4 py-3">
+                  <dt className="text-[13px] font-medium text-ink-400">{label}</dt>
+                  <dd className="text-right text-sm font-bold text-navy-900">{value}</dd>
                 </div>
               ))}
-            </div>
-
-            <p className="mt-4 border-t border-ink-100 pt-3 text-xs text-ink-400">
-              Weekly total{" "}
-              <span className="num font-bold text-navy-900">
-                {money(SPEND.reduce((a, s) => a + s.value, 0))}
-              </span>
-            </p>
+            </dl>
+          )}
+          <div className="border-t border-ink-100 px-5 py-3.5">
+            <Link to="/profile/view" className="link text-[13px]">
+              Open full profile
+            </Link>
           </div>
-        </div>
-      </div>
-    </div>
+        </StaggerItem>
+
+        <StaggerItem className="space-y-4">
+          <div className="card p-5">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-ink-400">
+              Quick actions
+            </p>
+            <div className="mt-4 space-y-2">
+              <Link to="/kyc" className="group flex items-center gap-3 rounded-lg border border-ink-100 px-3 py-2.5 transition hover:border-navy-500/40 hover:bg-navy-50">
+                <ShieldCheck size={17} className="text-navy-600" />
+                <span className="text-sm font-bold text-navy-900">Identity verification</span>
+                <ArrowUpRight size={14} className="ml-auto text-ink-300 transition group-hover:text-navy-600" />
+              </Link>
+              <Link to="/profile/security" className="group flex items-center gap-3 rounded-lg border border-ink-100 px-3 py-2.5 transition hover:border-navy-500/40 hover:bg-navy-50">
+                <KeyRound size={17} className="text-navy-600" />
+                <span className="text-sm font-bold text-navy-900">Change password</span>
+                <ArrowUpRight size={14} className="ml-auto text-ink-300 transition group-hover:text-navy-600" />
+              </Link>
+              <Link to="/health" className="group flex items-center gap-3 rounded-lg border border-ink-100 px-3 py-2.5 transition hover:border-navy-500/40 hover:bg-navy-50">
+                <Activity size={17} className="text-navy-600" />
+                <span className="text-sm font-bold text-navy-900">System health</span>
+                <ArrowUpRight size={14} className="ml-auto text-ink-300 transition group-hover:text-navy-600" />
+              </Link>
+            </div>
+          </div>
+        </StaggerItem>
+      </StaggerGroup>
+    </PageTransition>
   );
 }
