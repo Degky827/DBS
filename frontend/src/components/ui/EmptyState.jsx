@@ -9,6 +9,7 @@ export default function EmptyState({
   actionLabel,
   actionTo,
   onAction,
+  actionDisabled = false,
   className = "",
 }) {
   const reduceMotion = useReducedMotion();
@@ -20,7 +21,12 @@ export default function EmptyState({
           {actionLabel}
         </Link>
       ) : (
-        <button type="button" onClick={onAction} className="btn-primary mt-5">
+        <button
+          type="button"
+          onClick={onAction}
+          disabled={actionDisabled}
+          className="btn-primary mt-5"
+        >
           {actionLabel}
         </button>
       )
