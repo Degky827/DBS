@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
+import { Eye, EyeOff, ArrowRight } from "lucide-react";
 import { loginUser } from "../../services/authService";
+import { normalizeApiError } from "../../utils/apiError";
+import Alert from "../../components/ui/Alert";
+import { Spinner } from "../../components/ui/Spinner";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -13,7 +16,7 @@ export default function Login() {
   const [serverError, setServerError] = useState("");
 
   const update = (key) => (e) =>
-    setForm((f) => ({ ...f, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
+    setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const validate = () => {
     const next = {};
@@ -31,10 +34,12 @@ export default function Login() {
 
     try {
       await loginUser(form.email, form.password);
-      navigate("/dashboard");
+      const from = location.state?.from?.pathname;
+      navigate(from && from !== "/" ? from : "/dashboard", { replace: true });
     } catch (err) {
-      const msg = err.response?.data?.message || "Sign-in failed. Please try again.";
-      setServerError(msg);
+      const { message, fields } = normalizeApiError(err);
+      setServerError(message);
+      if (Object.keys(fields).length) setErrors(fields);
     } finally {
       setSubmitting(false);
     }
@@ -49,16 +54,20 @@ export default function Login() {
       </p>
 
       {location.state?.registered && !serverError && (
-        <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-[13px] font-medium text-emerald-700">
+        <Alert tone="success" className="mt-5">
           Your account was created. Sign in to continue.
-        </div>
+        </Alert>
       )}
 
-      {serverError && (
-        <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
-          {serverError}
-        </div>
+      {location.state?.verified && !serverError && (
+        <Alert tone="success" className="mt-5">
+          Your email has been verified. Sign in to continue.
+        </Alert>
       )}
+
+      <Alert tone="error" className="mt-5">
+        {serverError}
+      </Alert>
 
       <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-5">
         <div>
@@ -73,6 +82,7 @@ export default function Login() {
             placeholder="you@example.com"
             value={form.email}
             onChange={update("email")}
+            aria-invalid={errors.email ? "true" : undefined}
           />
           {errors.email && <p className="field-error">{errors.email}</p>}
         </div>
@@ -82,7 +92,10 @@ export default function Login() {
             <label htmlFor="password" className="field-label">
               Password
             </label>
-            <Link to="/forgot-password" className="text-[13px] font-semibold text-navy-600 hover:underline">
+            <Link
+              to="/forgot-password"
+              className="text-[13px] font-semibold text-navy-600 hover:underline"
+            >
               Forgot password?
             </Link>
           </div>
@@ -95,6 +108,7 @@ export default function Login() {
               placeholder="••••••••"
               value={form.password}
               onChange={update("password")}
+              aria-invalid={errors.password ? "true" : undefined}
             />
             <button
               type="button"
@@ -108,10 +122,10 @@ export default function Login() {
           {errors.password && <p className="field-error">{errors.password}</p>}
         </div>
 
-        <button type="submit" className="btn-primary" disabled={submitting}>
+        <button type="submit" className="btn-primary w-full" disabled={submitting}>
           {submitting ? (
             <>
-              <Loader2 size={17} className="animate-spin" /> Signing in…
+              <Spinner size={17} /> Signing in…
             </>
           ) : (
             <>

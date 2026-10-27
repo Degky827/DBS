@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, KeyRound, Loader2 } from "lucide-react";
+import { ArrowLeft, KeyRound } from "lucide-react";
 import OtpInput from "../../components/OtpInput";
 import PasswordStrength from "../../components/PasswordStrength";
 import { scorePassword } from "../../utils/passwordScore";
 import { resetPassword } from "../../services/authService";
+import { normalizeApiError } from "../../utils/apiError";
+import Alert from "../../components/ui/Alert";
+import { Spinner } from "../../components/ui/Spinner";
 
 export default function ResetPassword() {
   const navigate = useNavigate();
@@ -33,10 +36,20 @@ export default function ResetPassword() {
 
     try {
       await resetPassword(email, otp, password, confirm);
-      navigate("/");
+      navigate("/", { state: { reset: true }, replace: true });
     } catch (err) {
-      const msg = err.response?.data?.message || "Reset failed. Please try again.";
-      setServerError(msg);
+      const { message, fields } = normalizeApiError(err);
+      setServerError(message);
+      const mapped = { ...fields };
+      if (mapped.confirmNewPassword) {
+        mapped.confirm = mapped.confirmNewPassword;
+        delete mapped.confirmNewPassword;
+      }
+      if (mapped.newPassword) {
+        mapped.password = mapped.newPassword;
+        delete mapped.newPassword;
+      }
+      if (Object.keys(mapped).length) setErrors(mapped);
       setSubmitting(false);
     }
   };
@@ -50,11 +63,9 @@ export default function ResetPassword() {
         will be signed out.
       </p>
 
-      {serverError && (
-        <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
-          {serverError}
-        </div>
-      )}
+      <Alert tone="error" className="mt-5">
+        {serverError}
+      </Alert>
 
       <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-5">
         <div>
@@ -67,6 +78,7 @@ export default function ResetPassword() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
+            aria-invalid={errors.email ? "true" : undefined}
           />
           {errors.email && <p className="field-error">{errors.email}</p>}
         </div>
@@ -87,6 +99,7 @@ export default function ResetPassword() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="new-password"
+            aria-invalid={errors.password ? "true" : undefined}
           />
           <PasswordStrength password={password} />
           {errors.password && <p className="field-error">{errors.password}</p>}
@@ -102,14 +115,15 @@ export default function ResetPassword() {
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             autoComplete="new-password"
+            aria-invalid={errors.confirm ? "true" : undefined}
           />
           {errors.confirm && <p className="field-error">{errors.confirm}</p>}
         </div>
 
-        <button type="submit" className="btn-primary" disabled={submitting}>
+        <button type="submit" className="btn-primary w-full" disabled={submitting}>
           {submitting ? (
             <>
-              <Loader2 size={17} className="animate-spin" /> Updating password…
+              <Spinner size={17} /> Updating password…
             </>
           ) : (
             <>

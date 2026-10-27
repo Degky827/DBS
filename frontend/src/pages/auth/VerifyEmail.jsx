@@ -1,14 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2, MailCheck, RotateCw } from "lucide-react";
+import { ArrowLeft, MailCheck, RotateCw } from "lucide-react";
 import OtpInput from "../../components/OtpInput";
 import { verifyEmail, resendOtp } from "../../services/authService";
+import { normalizeApiError } from "../../utils/apiError";
+import Alert from "../../components/ui/Alert";
+import { Spinner } from "../../components/ui/Spinner";
+import { useSelector } from "react-redux";
 
 export default function VerifyEmail() {
   const navigate = useNavigate();
   const location = useLocation();
-  const email = location.state?.email || "your registered email";
+  const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
 
+  const [email, setEmail] = useState(location.state?.email || "");
+  const [emailAsked] = useState(Boolean(location.state?.email));
   const [otp, setOtp] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [countdown, setCountdown] = useState(30);
@@ -22,27 +28,33 @@ export default function VerifyEmail() {
   }, [countdown]);
 
   const verify = async (code) => {
-    if (code.length < 6) return;
+    if (code.length < 6 || !/^\S+@\S+\.\S+$/.test(email)) return;
     setSubmitting(true);
     setServerError("");
 
     try {
       await verifyEmail(email, code);
-      navigate("/dashboard");
+      if (isAuthenticated) navigate("/dashboard", { replace: true });
+      else navigate("/", { state: { verified: true }, replace: true });
     } catch (err) {
-      const msg = err.response?.data?.message || "Verification failed. Please try again.";
-      setServerError(msg);
+      const { message } = normalizeApiError(err);
+      setServerError(message);
       setSubmitting(false);
     }
   };
 
   const resend = async () => {
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setServerError("Enter a valid email address before requesting a new code.");
+      return;
+    }
     setResent(true);
     setCountdown(30);
     try {
       await resendOtp(email);
-    } catch {
-      // silently fail - don't reveal if email exists
+    } catch (err) {
+      const { message } = normalizeApiError(err);
+      setServerError(message);
     }
     setTimeout(() => setResent(false), 2500);
   };
@@ -52,16 +64,34 @@ export default function VerifyEmail() {
       <p className="eyebrow">Verification</p>
       <h1 className="mt-2 text-3xl font-extrabold">Confirm your email</h1>
       <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
-        We sent a 6-digit code to{" "}
-        <span className="font-semibold text-navy-900">{email}</span>. Enter it below to
-        activate your account.
+        {emailAsked ? (
+          <>
+            Enter the 6-digit code sent to{" "}
+            <span className="font-semibold text-navy-900">{email}</span>.
+          </>
+        ) : (
+          "Enter your email address and the 6-digit code we sent you."
+        )}
       </p>
 
-      {serverError && (
-        <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
-          {serverError}
+      {!emailAsked && (
+        <div className="mt-6">
+          <label htmlFor="email" className="field-label">Email address</label>
+          <input
+            id="email"
+            type="email"
+            className="field-input"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+          />
         </div>
       )}
+
+      <Alert tone="error" className="mt-5">
+        {serverError}
+      </Alert>
 
       <div className="mt-7">
         <OtpInput value={otp} onChange={setOtp} onComplete={verify} />
@@ -69,13 +99,13 @@ export default function VerifyEmail() {
 
       <button
         type="button"
-        className="btn-primary mt-6"
-        disabled={otp.length < 6 || submitting}
+        className="btn-primary mt-6 w-full"
+        disabled={otp.length < 6 || submitting || !/^\S+@\S+\.\S+$/.test(email)}
         onClick={() => verify(otp)}
       >
         {submitting ? (
           <>
-            <Loader2 size={17} className="animate-spin" /> Verifying…
+            <Spinner size={17} /> Verifying…
           </>
         ) : (
           <>
@@ -86,7 +116,7 @@ export default function VerifyEmail() {
 
       <div className="mt-5 flex items-center justify-between text-[13px]">
         <Link to="/" className="inline-flex items-center gap-1.5 font-semibold text-ink-400 hover:text-navy-600">
-          <ArrowLeft size={14} /> Change email
+          <ArrowLeft size={14} /> Back to sign in
         </Link>
         <button
           type="button"
@@ -99,15 +129,13 @@ export default function VerifyEmail() {
         </button>
       </div>
 
-      {resent && (
-        <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] font-medium text-emerald-800">
-          A new code has been sent to your email.
-        </p>
-      )}
+      <Alert tone="success" className="mt-4">
+        {resent ? "A new code has been requested for your email." : ""}
+      </Alert>
 
       <div className="mt-8 rounded-lg border border-ink-200 bg-ink-50 px-4 py-3 text-[13px] leading-relaxed text-ink-500">
-        Code expired? Request a new one above — codes are valid for 10 minutes and can
-        be used once.
+        Codes are valid for 10 minutes and can be used once. Request a new one if
+        yours has expired.
       </div>
     </div>
   );
