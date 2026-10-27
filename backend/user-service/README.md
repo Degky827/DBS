@@ -1,6 +1,6 @@
 # User Service (Phase 2 — standalone)
 
-Independent Express service for **profile viewing**, **profile updating**, and **password change**. Built for standalone development without connecting to `auth-service`.
+Independent Express service for **profile management** and **authenticated wallet transfers**. Built for standalone development without connecting to `auth-service`.
 
 > **Not production-ready.** Authentication uses opaque development sessions (`AUTH_MODE=dev`). See [docs/INTEGRATION.md](docs/INTEGRATION.md) for the JWT integration plan.
 
@@ -12,6 +12,8 @@ The User Service manages user profile information for the Digital Banking and Id
 - View authenticated user profiles
 - Update profile fields and optionally upload a profile photo
 - Change passwords (standalone development workflow)
+- Create and retrieve one ETB wallet per profile
+- Transfer wallet funds atomically and retrieve authorized transfer history
 
 **Separations:**
 - Does NOT own authentication tokens or sessions in production
@@ -82,6 +84,11 @@ Key variables (see `.env.example` for placeholders):
 | `DEV_API_KEY` | empty | If set, require header `X-Dev-Api-Key` |
 | `BCRYPT_ROUNDS` | `12` | |
 | `ENABLE_API_DOCS` | `true` | Swagger at `/api/v1/docs` |
+| `CHAPA_SECRET_KEY` | empty | Optional; must be a Chapa `CHAPA_TEST_...` private key |
+| `CHAPA_WEBHOOK_SECRET` | empty | Required with the test key; HMAC secret configured for Chapa webhooks |
+| `CHAPA_BASE_URL` | `https://api.chapa.global` | Chapa API v2 host; the service rejects other hosts |
+| `CHAPA_CALLBACK_URL` | empty | Required to enable test deposits; public HTTPS webhook URL |
+| `CHAPA_RETURN_URL` | empty | Required with the test key; frontend return page verifies status through the API |
 
 ### 3. Install, migrate, seed
 
@@ -126,6 +133,46 @@ These users exist **only** in `user_db`. They are not copied from auth-service.
 | PATCH | `/api/v1/users/me/password` | Bearer | Change password |
 
 The authoritative machine-readable contract is the OpenAPI specification at `GET /api/v1/openapi.json`.
+
+Wallet and transaction endpoints:
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/wallets` | Create the authenticated user's zero-balance ETB wallet |
+| GET | `/api/v1/wallets/me` | Retrieve the authenticated user's wallet and balance |
+| GET | `/api/v1/wallets/:walletId` | Retrieve a wallet only when owned by the authenticated user |
+| POST | `/api/v1/transactions/transfers` | Transfer funds between same-currency wallets |
+| GET | `/api/v1/transactions` | Retrieve up to 100 recent transfers involving the user's wallet |
+| GET | `/api/v1/transactions/:reference` | Retrieve a transaction visible to the authenticated user |
+
+Transfers require a positive decimal **string** with at most two fractional digits and a unique `Idempotency-Key` header. Reusing the key with the same request returns the original transaction; reusing it for different details returns `409`. Transfers lock both wallet rows in a deterministic order, run at serializable isolation, and update balances and the transaction record in one database transaction.
+
+Wallets start at `0.00 ETB` and active; each profile can create one wallet. Transfers reject inactive source or destination wallets. There is not yet a customer or admin API to change wallet activity.
+
+Transaction history supports cursor pagination (`limit` 1–100, default 25), `direction=all|incoming|outgoing`, and inclusive ISO 8601 `from`/`to` timestamp filters. The next page uses the returned `page.nextCursor`; cursors are checked against the authenticated wallet and active filters.
+
+Internal transfers and transaction history continue to work independently from payments. ETB is the only supported wallet currency.
+
+Chapa Hosted Checkout is implemented in **Test Mode only**. Deposits are disabled unless all of `CHAPA_SECRET_KEY` (must begin `CHAPA_TEST_`), `CHAPA_WEBHOOK_SECRET`, `CHAPA_CALLBACK_URL`, and `CHAPA_RETURN_URL` are configured. The adapter uses the documented Chapa v2 hosted checkout and verification APIs, sends ETB amounts as integer cents, and uses the internal merchant reference as Chapa's idempotency key. A browser return only triggers authenticated server-side verification; it never confirms payment by itself. A signed webhook triggers the same verification, which must match the merchant reference, ETB currency, and exact amount before a single wallet credit and linked `DEPOSIT` ledger transaction are atomically committed. Raw webhook bytes are authenticated using Chapa's documented lowercase-hex HMAC-SHA256 `x-chapa-signature`.
+
+Use only a Chapa Test Mode private key. Live keys and arbitrary API hosts are rejected by configuration validation. Do not use real money in these flows. Chapa's current API host is `https://api.chapa.global`; test/live selection is determined by the key. Chapa must be able to reach the configured callback URL, which must be HTTPS outside local development. Do not enable deposits until webhook delivery and a complete signed test checkout are verified in the Chapa merchant dashboard.
+
+`POST /api/v1/payments/deposits` requires authentication and an `Idempotency-Key`; it accepts positive ETB decimal strings of at least `1.00`. Reusing a key with identical parameters returns the same payment; changing the amount returns `409`. `GET /api/v1/payments/deposits/{reference}/verify` requires the payment owner and checks the provider directly. `POST /api/v1/payments/webhook` is unauthenticated but rejects unsigned/invalid raw-body signatures and processes payment events only after server-side verification. Duplicate delivery hashes are stored and repeated processing cannot double-credit. Pending verification remains pending; stale pending events cannot revert a completed or failed state, while a later successful authoritative verification can complete a formerly failed payment. Amount, currency, or merchant-reference mismatches never credit funds.
+
+Withdrawals remain disabled and return `501`; no payout has been implemented. Refunds, reversals, disputes, and production/live payments are also out of scope. Provider status reconciliation and administrative review for mismatches remain operational requirements before any live-money rollout.
+
+### Phase 4 migration and test setup
+
+The additive `20261027100000_wallet_transactions` migration creates the ETB wallet and internal transfer tables. The `20261027110000_payments_chapa` migration adds payment records, transaction-to-payment linkage for deposits, and deduplicated webhook-delivery records. Both migrations must be applied to the user-service database before deploying this code; do not apply them to a permanent database without approval:
+
+```bash
+npx prisma generate
+npx prisma migrate deploy
+```
+
+Wallet integration tests require a separate PostgreSQL database whose name ends in `_test`. Set `WALLET_TEST_DATABASE_URL` only in the test process (for example, `postgresql://auth:auth@localhost:5432/user_service_test?schema=public`), apply migrations to it with `npx prisma migrate deploy`, and run `npm run test:wallets`. The test file refuses database names without the `_test` suffix. The existing user-service regression suite runs with `npm test`.
+
+Payment integration tests use `WALLET_TEST_DATABASE_URL` and refuse database names without the `_test` suffix. After deploying migrations to that isolated database, run `npm run test:payments`. `npm run test:payments-adapter` runs mocked Chapa v2 request and webhook-signature tests without database or network access.
 
 ### Permitted profile update fields
 
@@ -192,6 +239,8 @@ npm test
 ```
 
 Tests use an isolated in-process app instance. Ensure `DATABASE_URL` points at `user_db` (not `auth_db`) before running.
+
+The wallet integration suite must use a separate database whose name ends in `_test`. Set `WALLET_TEST_DATABASE_URL` to that database's connection string, deploy migrations to it, then run `npm run test:wallets`; the suite refuses to run without this explicit test-database URL.
 
 ### Previously reported results
 
