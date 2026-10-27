@@ -11,6 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./backend/kyc-service/docker/init-database.sql:/docker-entrypoint-initdb.d/20-kyc-database.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U auth -d auth_db"]
       interval: 10s
@@ -34,7 +35,7 @@ services:
       JWT_ISSUER: auth-service
       JWT_AUDIENCE: banking-system
       BCRYPT_ROUNDS: 12
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173}
 
       # Shared key guarding internal service-to-service endpoints.
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key}
@@ -75,7 +76,7 @@ services:
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key}
       AVATAR_UPLOAD_DIR: /app/uploads/avatars
       BCRYPT_ROUNDS: 12
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173}
       LOG_LEVEL: info
       RATE_LIMIT_WINDOW_MS: 900000
       RATE_LIMIT_MAX: 300
@@ -86,17 +87,66 @@ services:
     volumes:
       - user_uploads:/app/uploads
 
+  kyc-service:
+    build: ./backend/kyc-service
+    container_name: kyc-service
+    restart: unless-stopped
+    env_file:
+      - ./backend/kyc-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      PORT: 5003
+      DB_ADAPTER: pg
+      DATABASE_URL: ${KYC_DATABASE_URL:-postgresql://auth:auth@postgres:5432/kyc_db?schema=public}
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-string}
+      JWT_ISSUER: ${JWT_ISSUER:-auth-service}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-banking-system}
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key}
+      USER_SERVICE_URL: http://user-service:5002/api/v1
+      AUTH_SERVICE_URL: http://auth-service:5001/api/v1
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173}
+      LOG_LEVEL: info
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX: 300
+      ENABLE_API_DOCS: "true"
+      STORAGE_DIR: /app/storage
+      MAX_FILE_SIZE_BYTES: 10485760
+      DIDIT_API_BASE_URL: ${DIDIT_API_BASE_URL:-https://verification.didit.me}
+    ports:
+      - "5003:5003"
+    volumes:
+      - kyc_storage:/app/storage
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5003/api/v1/kyc/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   frontend:
     build:
       context: ./frontend
       args:
         VITE_AUTH_API: ${VITE_AUTH_API:-http://localhost:5001/api/v1}
         VITE_USER_API: ${VITE_USER_API:-http://localhost:5002/api/v1}
+        VITE_KYC_API: ${VITE_KYC_API:-http://localhost:5003/api/v1/kyc}
     container_name: banking-frontend
     restart: unless-stopped
     depends_on:
       - auth-service
       - user-service
+      - kyc-service
     ports:
       - "8080:80"
 
@@ -120,3 +170,4 @@ volumes:
   postgres_data:
   pgadmin_data:
   user_uploads:
+  kyc_storage:
