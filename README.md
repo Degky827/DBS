@@ -116,7 +116,7 @@ environment only when intentionally using a different database.
 | Service | Base URL | Endpoints |
 |---|---|---|
 | Auth | `http://localhost:5001/api/v1` | register, login, refresh, logout, verify-email, forgot/reset password, `/me` |
-| User | `http://localhost:5002/api/v1` | dev-login, `GET/PATCH /users/me`, `PATCH /users/me/password` |
+| User | `http://localhost:5002/api/v1` | profiles, wallets, same-currency transfers, transaction history; external payments disabled pending provider configuration |
 | KYC | `http://localhost:5003/api/v1/kyc` | submissions, documents/OCR, provider sessions, webhooks, review |
 
 All APIs use the envelope `{ success, message, data | errors }`.
@@ -128,7 +128,7 @@ All APIs use the envelope `{ success, message, data | errors }`.
 | 1 | Registration, login, JWT | Done |
 | 2 | Profile, update profile, change password | Done (user-service standalone) |
 | 3 | KYC submissions, identity checks, and officer review | In progress |
-| 4 | Wallet, transactions, payments | Planned |
+| 4 | Wallets and transactions | Wallet creation, balance retrieval, and atomic transfers implemented; deposits, withdrawals, and provider-backed payments require trusted integrations |
 
 ## Security notes
 
