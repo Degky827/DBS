@@ -11,8 +11,10 @@ COPY . .
 
 ARG VITE_AUTH_API=http://localhost:5001/api/v1
 ARG VITE_USER_API=http://localhost:5002/api/v1
+ARG VITE_KYC_API=http://localhost:5003/api/v1/kyc
 ENV VITE_AUTH_API=$VITE_AUTH_API
 ENV VITE_USER_API=$VITE_USER_API
+ENV VITE_KYC_API=$VITE_KYC_API
 
 RUN npm run build
 

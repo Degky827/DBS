@@ -7,11 +7,25 @@ export default function FieldInput({
   placeholder,
   required = false,
   error,
+  hint,
   options,
   rows,
   disabled = false,
+  autoComplete,
+  min,
+  max,
 }) {
-  const baseClasses = "field-input";
+  const shared = {
+    id: name,
+    name,
+    value,
+    onChange,
+    disabled,
+    required,
+    "aria-invalid": error ? "true" : undefined,
+    "aria-describedby": error ? `${name}-error` : hint ? `${name}-hint` : undefined,
+    className: "field-input",
+  };
 
   return (
     <div>
@@ -23,14 +37,7 @@ export default function FieldInput({
       )}
 
       {options ? (
-        <select
-          id={name}
-          name={name}
-          value={value}
-          onChange={onChange}
-          disabled={disabled}
-          className={baseClasses}
-        >
+        <select {...shared}>
           {options.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
@@ -38,30 +45,28 @@ export default function FieldInput({
           ))}
         </select>
       ) : rows ? (
-        <textarea
-          id={name}
-          name={name}
-          value={value}
-          onChange={onChange}
-          placeholder={placeholder}
-          rows={rows}
-          disabled={disabled}
-          className={`${baseClasses} resize-y`}
-        />
+        <textarea {...shared} placeholder={placeholder} rows={rows} className={`${shared.className} resize-y`} />
       ) : (
         <input
-          id={name}
-          name={name}
+          {...shared}
           type={type}
-          value={value}
-          onChange={onChange}
           placeholder={placeholder}
-          disabled={disabled}
-          className={baseClasses}
+          autoComplete={autoComplete}
+          min={min}
+          max={max}
         />
       )}
 
-      {error && <p className="field-error">{error}</p>}
+      {hint && !error && (
+        <p id={`${name}-hint`} className="mt-1.5 text-xs text-ink-400">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={`${name}-error`} className="field-error">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

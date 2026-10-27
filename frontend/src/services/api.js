@@ -10,6 +10,10 @@ export const userApi = axios.create({
   baseURL: import.meta.env.VITE_USER_API,
 });
 
+export const kycApi = axios.create({
+  baseURL: import.meta.env.VITE_KYC_API,
+});
+
 let refreshPromise = null;
 
 const refreshAccessToken = async () => {
@@ -51,7 +55,7 @@ const attachAuthInterceptors = (instance) => {
     async (error) => {
       const originalRequest = error.config;
 
-      if (error.response?.status === 401 && !originalRequest._retry) {
+      if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
         const { accessToken } = store.getState().auth.tokens || {};
         if (!accessToken) return Promise.reject(error);
 
@@ -75,3 +79,4 @@ const attachAuthInterceptors = (instance) => {
 
 attachAuthInterceptors(authApi);
 attachAuthInterceptors(userApi);
+attachAuthInterceptors(kycApi);
