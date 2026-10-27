@@ -12,7 +12,10 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "db:seed": "node prisma/seed.js",
     "db:reset": "prisma migrate reset",
-    "test": "node --test tests/**/*.test.js"
+    "test": "node --test tests/app.test.js",
+    "test:wallets": "node --test tests/wallets.test.js",
+    "test:payments": "node --test tests/payments.test.js",
+    "test:payments-adapter": "node --test tests/chapa.adapter.test.js"
   },
   "keywords": [
     "user",

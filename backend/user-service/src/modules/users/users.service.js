@@ -166,6 +166,14 @@ const resolveProfile = async (authCtx) => {
   return provisionProfile({ email, role: authCtx.role });
 };
 
+const getResolvedUserId = async (authCtx) => {
+  const profile = await resolveProfile(authCtx);
+  if (!profile) {
+    throw ApiError.notFound("Account not found", "USER_NOT_FOUND");
+  }
+  return profile.id;
+};
+
 const getMyProfile = async (authCtx) => {
   const resolved = await resolveProfile(authCtx);
 
@@ -322,6 +330,7 @@ const changeMyPassword = async (authCtx, input, session) => {
 };
 
 module.exports = {
+  getResolvedUserId,
   getMyProfile,
   updateMyProfile,
   changeMyPassword,
