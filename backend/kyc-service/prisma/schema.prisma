@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model KycSubmission {
+  id                          String    @id @default(uuid())
+  userId                      String
+  status                      String    @default("DRAFT")
+  documentType                String?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+  submittedAt                 DateTime?
+  reviewedAt                  DateTime?
+  verificationScore           Float?
+  decisionReason              String?
+  comparisonResults           Json?
+  documentVerificationStatus  String?
+  dataComparisonStatus        String?
+  faceMatchStatus             String?
+  livenessStatus              String?
+  providerStatus              String?
+  providerSessionId           String?   @unique
+  providerSessionUrlEncrypted String?
+
+  documents      KycDocument[]
+  events         KycAuditEvent[]
+  reviews        KycReview[]
+  providerEvents KycProviderEvent[]
+
+  @@index([userId, createdAt])
+}
+
+model KycDocument {
+  id             String        @id @default(uuid())
+  submissionId   String
+  submission     KycSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  documentType   String
+  storageKey     String
+  mimeType       String
+  fileName       String
+  fileSizeBytes  Int
+  checksumSha256 String?
+  side           String?
+  ocrText        String?
+  ocrConfidence  Float?
+  extractedData  String?
+  status         String        @default("UPLOADED")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([submissionId])
+}
+
+model KycReview {
+  id           String        @id @default(uuid())
+  submissionId String
+  submission   KycSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  reviewerId   String
+  decision     String
+  reason       String?
+  createdAt    DateTime      @default(now())
+
+  @@index([submissionId])
+}
+
+model KycAuditEvent {
+  id           String         @id @default(uuid())
+  submissionId String?
+  submission   KycSubmission? @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  eventType    String
+  actorId      String?
+  payload      Json?
+  createdAt    DateTime       @default(now())
+
+  @@index([submissionId, eventType])
+}
+
+model KycProviderEvent {
+  id               String         @id @default(uuid())
+  eventId          String         @unique
+  submissionId     String?
+  submission       KycSubmission? @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  eventType        String
+  providerStatus   String?
+  providerObjectId String?
+  eventTimestamp   DateTime
+  createdAt        DateTime       @default(now())
+
+  @@index([submissionId, createdAt])
+  @@index([providerObjectId, eventTimestamp])
+}

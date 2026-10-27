@@ -45,11 +45,76 @@ const readOptional = (key) => {
   return value === undefined ? "" : String(value).trim();
 };
 
+const validateChapaUrl = (key, value, { allowLocalHttp = false } = {}) => {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    console.error(`[config] ${key} must be a valid URL.`);
+    process.exit(1);
+  }
+
+  const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+  if (
+    url.username ||
+    url.password ||
+    url.hash ||
+    (url.protocol !== "https:" &&
+      !(allowLocalHttp && isLocalhost && url.protocol === "http:"))
+  ) {
+    console.error(`[config] ${key} must use HTTPS${allowLocalHttp ? " (except localhost)" : ""}.`);
+    process.exit(1);
+  }
+  return url.toString().replace(/\/+$/, "");
+};
+
 // JWT verification settings are only required when AUTH_MODE=jwt.
 const jwtSecret = readOptional("JWT_SECRET");
 const jwtIssuer = readOptional("JWT_ISSUER") || "auth-service";
 const jwtAudience = readOptional("JWT_AUDIENCE") || "banking-system";
 const avatarUploadDir = readOptional("AVATAR_UPLOAD_DIR");
+const chapaSecretKey = readOptional("CHAPA_SECRET_KEY");
+const chapaWebhookSecret = readOptional("CHAPA_WEBHOOK_SECRET");
+const chapaBaseUrl = readOptional("CHAPA_BASE_URL") || "https://api.chapa.global";
+const chapaCallbackUrl = readOptional("CHAPA_CALLBACK_URL");
+const chapaReturnUrl = readOptional("CHAPA_RETURN_URL");
+
+if (chapaSecretKey && !/^CHAPA_TEST_[A-Za-z0-9_-]+$/.test(chapaSecretKey)) {
+  console.error("[config] CHAPA_SECRET_KEY must be a Chapa Test Mode private key (CHAPA_TEST_...).");
+  process.exit(1);
+}
+
+if (
+  chapaSecretKey &&
+  (!chapaWebhookSecret || chapaWebhookSecret.length < 16 || !chapaCallbackUrl || !chapaReturnUrl)
+) {
+  console.error(
+    "[config] Configuring Chapa Test Mode requires CHAPA_WEBHOOK_SECRET (at least 16 characters), CHAPA_CALLBACK_URL, and CHAPA_RETURN_URL."
+  );
+  process.exit(1);
+}
+
+let validatedChapaBaseUrl = "https://api.chapa.global";
+let validatedChapaCallbackUrl = "";
+let validatedChapaReturnUrl = "";
+if (chapaSecretKey) {
+  validatedChapaBaseUrl = validateChapaUrl("CHAPA_BASE_URL", chapaBaseUrl);
+  const parsedBaseUrl = new URL(validatedChapaBaseUrl);
+  if (
+    parsedBaseUrl.hostname !== "api.chapa.global" ||
+    parsedBaseUrl.pathname !== "/" ||
+    parsedBaseUrl.search
+  ) {
+    console.error("[config] CHAPA_BASE_URL must be https://api.chapa.global.");
+    process.exit(1);
+  }
+  validatedChapaCallbackUrl = validateChapaUrl("CHAPA_CALLBACK_URL", chapaCallbackUrl, {
+    allowLocalHttp: !isProduction,
+  });
+  validatedChapaReturnUrl = validateChapaUrl("CHAPA_RETURN_URL", chapaReturnUrl, {
+    allowLocalHttp: !isProduction,
+  });
+}
 
 if (authMode === "jwt" && !jwtSecret) {
   console.error(
@@ -96,6 +161,13 @@ const env = Object.freeze({
   RATE_LIMIT_MAX: readNumber("RATE_LIMIT_MAX", 300),
   AUTH_RATE_LIMIT_MAX: readNumber("AUTH_RATE_LIMIT_MAX", 20),
   ENABLE_API_DOCS: readBoolean("ENABLE_API_DOCS", true),
+
+  // --- Payment Provider (Chapa Test-Mode) ---
+  CHAPA_SECRET_KEY: chapaSecretKey,
+  CHAPA_WEBHOOK_SECRET: chapaWebhookSecret,
+  CHAPA_BASE_URL: validatedChapaBaseUrl,
+  CHAPA_CALLBACK_URL: validatedChapaCallbackUrl,
+  CHAPA_RETURN_URL: validatedChapaReturnUrl,
 });
 
 module.exports = env;

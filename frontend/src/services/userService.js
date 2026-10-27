@@ -1,4 +1,5 @@
 import { userApi } from "./api";
+import store from "../store";
 
 // Maps backend gender enums to display labels used across the profile UI.
 export const GENDER_LABELS = {
@@ -16,14 +17,36 @@ export const GENDER_OPTIONS = [
   { value: "prefer_not_to_say", label: "Prefer not to say" },
 ];
 
+const mergeProfileWithAuthUser = (user = null) => {
+  const authUser = store.getState().auth?.user || {};
+  if (!user && !authUser) return null;
+
+  const merged = {
+    ...authUser,
+    ...user,
+    firstName: user?.firstName || authUser.firstName || "",
+    middleName: user?.middleName ?? authUser.middleName ?? "",
+    lastName: user?.lastName || authUser.lastName || "",
+    username: user?.username || authUser.username || "",
+    email: user?.email || authUser.email || "",
+    phoneNumber: user?.phoneNumber || authUser.phoneNumber || "",
+    dateOfBirth: user?.dateOfBirth || authUser.dateOfBirth || null,
+    gender: user?.gender || authUser.gender || "prefer_not_to_say",
+    role: user?.role || authUser.role || "USER",
+  };
+
+  return merged;
+};
+
 // All requests go through `userApi`, which attaches the JWT and transparently
 // refreshes an expired access token (see services/api.js interceptors).
 export const getMyProfile = async () => {
   const { data } = await userApi.get("/users/me");
-  return normalizeProfile(data.data.user);
+  return normalizeProfile(mergeProfileWithAuthUser(data.data.user));
 };
 
 const normalizeProfile = (user) => {
+  if (!user) return user;
   if (!user?.avatarUrl?.startsWith("/uploads/avatars/")) return user;
   const apiBase = new URL(userApi.defaults.baseURL, window.location.origin);
   return { ...user, avatarUrl: new URL(user.avatarUrl, `${apiBase.origin}/`).toString() };

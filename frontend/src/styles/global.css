@@ -3,7 +3,7 @@
 @theme {
   --font-sans: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --color-navy-950: #050d1a;
   --color-navy-900: #0a1628;
@@ -22,6 +22,7 @@
   --color-ink-700: #26324a;
   --color-ink-500: #55617a;
   --color-ink-400: #7a849a;
+  --color-ink-300: #c3cad8;
   --color-ink-200: #e4e8f0;
   --color-ink-100: #eef1f6;
   --color-ink-50: #f7f9fc;
@@ -50,6 +51,11 @@
     background: var(--color-gold-100);
     color: var(--color-navy-900);
   }
+
+  :focus-visible {
+    outline: 2px solid var(--color-navy-500);
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
@@ -61,7 +67,11 @@
     @apply w-full rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[15px] text-ink-700
       placeholder:text-ink-400 outline-none transition
       focus:border-navy-500 focus:ring-4 focus:ring-navy-500/10
-      disabled:bg-ink-100;
+      disabled:bg-ink-100 disabled:text-ink-400;
+  }
+
+  .field-input[aria-invalid="true"] {
+    @apply border-red-300 focus:border-red-500 focus:ring-red-500/10;
   }
 
   .field-error {
@@ -69,16 +79,38 @@
   }
 
   .btn-primary {
-    @apply inline-flex w-full items-center justify-center gap-2 rounded-lg bg-navy-800 px-5 py-3
-      text-[15px] font-semibold text-white shadow-[0_1px_2px_rgba(5,13,26,.25)]
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-navy-800 px-5 py-2.5
+      text-sm font-semibold text-white shadow-[0_1px_2px_rgba(5,13,26,.25)]
       transition hover:bg-navy-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-navy-500/25
       active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-ink-200 bg-white
+      px-4 py-2.5 text-sm font-semibold text-navy-800 transition hover:border-navy-500/40
+      hover:bg-navy-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-navy-500/15
+      disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 rounded-lg border border-ink-200 bg-white
       px-4 py-2.5 text-sm font-semibold text-navy-800 transition hover:border-navy-500/40
-      hover:bg-navy-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-navy-500/15;
+      hover:bg-navy-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-navy-500/15
+      disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-red-700 px-4 py-2.5
+      text-sm font-semibold text-white transition hover:bg-red-800
+      focus:outline-none focus-visible:ring-4 focus-visible:ring-red-500/25
+      disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-danger-outline {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-white
+      px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:border-red-300
+      hover:bg-red-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-red-500/15
+      disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .link {
@@ -92,21 +124,65 @@
   .card {
     @apply rounded-xl border border-ink-200 bg-white shadow-[0_1px_2px_rgba(5,13,26,.05),0_8px_24px_-16px_rgba(5,13,26,.2)];
   }
+
+  .badge-neutral {
+    @apply inline-flex items-center gap-1 rounded-full bg-ink-100 px-2.5 py-1 text-[11px] font-bold leading-none text-ink-500;
+  }
+
+  .badge-info {
+    @apply inline-flex items-center gap-1 rounded-full bg-navy-50 px-2.5 py-1 text-[11px] font-bold leading-none text-navy-700;
+  }
+
+  .badge-success {
+    @apply inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold leading-none text-emerald-700;
+  }
+
+  .badge-warning {
+    @apply inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold leading-none text-amber-700;
+  }
+
+  .badge-danger {
+    @apply inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold leading-none text-red-700;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded-md bg-ink-100;
+  }
+
+  .data-table {
+    @apply w-full text-left text-sm;
+  }
+
+  .data-table thead th {
+    @apply border-b border-ink-100 px-4 py-3 text-[10px] font-bold uppercase tracking-[0.14em] text-ink-400;
+  }
+
+  .data-table tbody td {
+    @apply border-b border-ink-100 px-4 py-3.5 align-middle;
+  }
+
+  .data-table tbody tr {
+    @apply transition hover:bg-ink-50;
+  }
 }
 
 @utility num {
   font-variant-numeric: tabular-nums;
 }
 
-/* soft dotted texture for the auth panel */
-.brand-texture {
-  background-image: radial-gradient(rgba(217, 184, 87, 0.16) 1px, transparent 1px);
-  background-size: 22px 22px;
-}
-
-/* hide number input spinners */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

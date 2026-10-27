@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Loader2, MailCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, MailCheck } from "lucide-react";
 import { forgotPassword } from "../../services/authService";
+import { normalizeApiError } from "../../utils/apiError";
+import { Spinner } from "../../components/ui/Spinner";
+import PageTransition from "../../components/ui/PageTransition";
 
 export default function ForgotPassword() {
   const navigate = useNavigate();
@@ -23,7 +26,8 @@ export default function ForgotPassword() {
       await forgotPassword(email);
       setSent(true);
     } catch (err) {
-      setError(err.response?.data?.message || "Something went wrong. Please try again.");
+      const { message } = normalizeApiError(err);
+      setError(message);
     } finally {
       setSubmitting(false);
     }
@@ -31,7 +35,7 @@ export default function ForgotPassword() {
 
   if (sent) {
     return (
-      <div>
+      <PageTransition>
         <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-8 ring-emerald-50/60">
           <MailCheck size={22} />
         </span>
@@ -42,7 +46,11 @@ export default function ForgotPassword() {
           code is on its way. It expires in 10 minutes.
         </p>
 
-        <button type="button" className="btn-primary mt-6" onClick={() => navigate("/reset-password", { state: { email } })}>
+        <button
+          type="button"
+          className="btn-primary mt-6 w-full"
+          onClick={() => navigate("/reset-password", { state: { email } })}
+        >
           I have the code <ArrowRight size={17} />
         </button>
 
@@ -51,12 +59,12 @@ export default function ForgotPassword() {
             <ArrowLeft size={14} /> Back to sign in
           </Link>
         </p>
-      </div>
+      </PageTransition>
     );
   }
 
   return (
-    <div>
+    <PageTransition>
       <p className="eyebrow">Account recovery</p>
       <h1 className="mt-2 text-3xl font-extrabold">Forgot your password?</h1>
       <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
@@ -74,14 +82,15 @@ export default function ForgotPassword() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
+            aria-invalid={error ? "true" : undefined}
           />
           {error && <p className="field-error">{error}</p>}
         </div>
 
-        <button type="submit" className="btn-primary" disabled={submitting}>
+        <button type="submit" className="btn-primary w-full" disabled={submitting}>
           {submitting ? (
             <>
-              <Loader2 size={17} className="animate-spin" /> Sending code…
+              <Spinner size={17} /> Sending code…
             </>
           ) : (
             <>
@@ -95,6 +104,6 @@ export default function ForgotPassword() {
         Remembered it?{" "}
         <Link to="/" className="link">Back to sign in</Link>
       </p>
-    </div>
+    </PageTransition>
   );
 }

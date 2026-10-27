@@ -1,46 +1,126 @@
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
+  provider = "postgresql"
 }
 
 model UserProfile {
-    id                String    @id @default(uuid())
-    firstName         String
-    middleName        String?
-    lastName          String
-    username          String    @unique
-    email             String    @unique
-    phoneNumber       String
-    dateOfBirth       DateTime
-    gender            String
-    addressLine1      String?
-    addressLine2      String?
-    city              String?
-    state             String?
-    postalCode        String?
-    country           String?
-    bio               String?
-    avatarUrl         String?
-    role              String    @default("USER")
-    passwordHash      String
-    passwordChangedAt DateTime?
-    createdAt         DateTime  @default(now())
-    updatedAt         DateTime  @updatedAt
+  id                String    @id @default(uuid())
+  firstName         String
+  middleName        String?
+  lastName          String
+  username          String    @unique
+  email             String    @unique
+  phoneNumber       String
+  dateOfBirth       DateTime
+  gender            String
+  addressLine1      String?
+  addressLine2      String?
+  city              String?
+  state             String?
+  postalCode        String?
+  country           String?
+  bio               String?
+  avatarUrl         String?
+  role              String    @default("USER")
+  passwordHash      String
+  passwordChangedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-    devSessions DevSession[]
+  devSessions  DevSession[]
+  wallet       Wallet?
+  transactions Transaction[]
+  payments     Payment[]
 }
 
 model DevSession {
-    id        String      @id @default(uuid())
-    userId    String
-    user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
-    tokenHash String      @unique
-    expiresAt DateTime
-    revokedAt DateTime?
-    createdAt DateTime    @default(now())
+  id        String      @id @default(uuid())
+  userId    String
+  user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String      @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime    @default(now())
 
-    @@index([userId])
+  @@index([userId])
+}
+
+model Wallet {
+  id        String      @id @default(uuid())
+  userId    String      @unique
+  user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Decimal     @default(0) @db.Decimal(19, 2)
+  currency  String      @default("ETB") @db.VarChar(3)
+  isActive  Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  outgoingTransactions Transaction[] @relation("TransactionSource")
+  incomingTransactions Transaction[] @relation("TransactionDestination")
+  payments             Payment[]
+}
+
+model Transaction {
+  id                  String      @id @default(uuid())
+  reference           String      @unique @default(uuid())
+  initiatedByUserId   String
+  initiatedBy         UserProfile @relation(fields: [initiatedByUserId], references: [id], onDelete: Restrict)
+  type                String      @default("TRANSFER")
+  sourceWalletId      String?
+  sourceWallet        Wallet?     @relation("TransactionSource", fields: [sourceWalletId], references: [id], onDelete: Restrict)
+  destinationWalletId String
+  destinationWallet   Wallet      @relation("TransactionDestination", fields: [destinationWalletId], references: [id], onDelete: Restrict)
+  amount              Decimal     @db.Decimal(19, 2)
+  idempotencyKey      String
+  paymentId           String?     @unique
+  payment             Payment?    @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  createdAt           DateTime    @default(now())
+
+  @@unique([initiatedByUserId, idempotencyKey])
+  @@index([sourceWalletId, createdAt])
+  @@index([destinationWalletId, createdAt])
+  @@index([initiatedByUserId])
+}
+
+model Payment {
+  id               String      @id @default(uuid())
+  reference        String      @unique @default(uuid())
+  provider         String      @default("CHAPA")
+  providerRef      String?     @unique
+  type             String      @default("DEPOSIT")
+  status           String      @default("PENDING")
+  amount           Decimal     @db.Decimal(19, 2)
+  currency         String      @default("ETB") @db.VarChar(3)
+  idempotencyKey   String
+  checkoutUrl      String?
+  failureReason    String?
+  userId           String
+  user             UserProfile @relation(fields: [userId], references: [id], onDelete: Restrict)
+  walletId         String
+  wallet           Wallet      @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  transaction      Transaction?
+  webhookEvents    PaymentWebhookEvent[]
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  @@unique([userId, idempotencyKey])
+  @@index([walletId, createdAt])
+  @@index([userId])
+  @@index([status])
+}
+
+model PaymentWebhookEvent {
+  id               String   @id @default(uuid())
+  bodyHash         String   @unique
+  paymentReference String
+  payment          Payment  @relation(fields: [paymentReference], references: [reference], onDelete: Restrict)
+  event            String
+  mode             String
+  receivedAt       DateTime @default(now())
+  processedAt      DateTime
+
+  @@index([paymentReference, receivedAt])
 }

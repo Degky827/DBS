@@ -32,7 +32,16 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "10kb" }));
+app.use(
+  express.json({
+    limit: "10kb",
+    verify: (req, res, buf) => {
+      if (req.originalUrl === `${ROUTES.API_PREFIX}${ROUTES.PAYMENTS.WEBHOOK}`) {
+        req.rawBody = Buffer.from(buf);
+      }
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
 app.use(
   "/uploads/avatars",

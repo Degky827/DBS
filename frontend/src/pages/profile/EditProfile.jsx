@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
-import { Save, X, Loader2, CheckCircle2, ImagePlus } from "lucide-react";
+import { Save, X, ImagePlus } from "lucide-react";
 import FieldInput from "../../components/FieldInput";
 import {
   getMyProfile,
@@ -9,6 +9,12 @@ import {
   GENDER_OPTIONS,
   toDateInputValue,
 } from "../../services/userService";
+import { normalizeApiError } from "../../utils/apiError";
+import { isUninitializedDate } from "../../utils/format";
+import PageTransition, { StaggerGroup, StaggerItem } from "../../components/ui/PageTransition";
+import PageHeader from "../../components/ui/PageHeader";
+import Alert from "../../components/ui/Alert";
+import { LoadingBlock, Spinner } from "../../components/ui/Spinner";
 
 const EMPTY_FORM = {
   firstName: "",
@@ -30,12 +36,6 @@ const EMPTY_FORM = {
 const NAME_PATTERN = /^[A-Za-zÀ-ÿ' -]+$/;
 const PHONE_PATTERN = /^\+?[0-9]{7,15}$/;
 
-const isUninitializedDate = (value) => {
-  if (!value) return true;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) || date.getTime() === Date.UTC(1970, 0, 1);
-};
-
 const createProfileForm = (profile = {}, registeredUser = {}) => ({
   firstName: profile.firstName || registeredUser.firstName || "",
   middleName: profile.middleName || registeredUser.middleName || "",
@@ -49,9 +49,7 @@ const createProfileForm = (profile = {}, registeredUser = {}) => ({
       ? registeredUser.gender || profile.gender || ""
       : profile.gender,
   dateOfBirth: toDateInputValue(
-    isUninitializedDate(profile.dateOfBirth)
-      ? registeredUser.dateOfBirth
-      : profile.dateOfBirth
+    isUninitializedDate(profile.dateOfBirth) ? registeredUser.dateOfBirth : profile.dateOfBirth
   ),
   addressLine1: profile.addressLine1 || "",
   addressLine2: profile.addressLine2 || "",
@@ -97,7 +95,7 @@ export default function EditProfile() {
         if (!active) return;
         setForm(createProfileForm({}, authUser));
         setLoadError(
-          err.response?.data?.message ||
+          normalizeApiError(err).message ||
             "We couldn't load your saved profile. You can still edit the fields below."
         );
       } finally {
@@ -119,10 +117,7 @@ export default function EditProfile() {
 
   const handleAvatarChange = (e) => {
     const file = e.target.files?.[0] || null;
-    if (
-      file &&
-      !["image/png", "image/jpeg", "image/webp"].includes(file.type)
-    ) {
+    if (file && !["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
       e.currentTarget.value = "";
       setErrors((prev) => ({
         ...prev,
@@ -195,8 +190,7 @@ export default function EditProfile() {
     return Object.keys(next).length === 0;
   };
 
-  // Only send non-empty fields; the backend rejects empty strings for optional
-  // fields and requires at least one field in the payload.
+  // Only send non-empty fields; the backend requires at least one field.
   const buildPayload = () => {
     const payload = {};
     const put = (key, value) => {
@@ -242,227 +236,227 @@ export default function EditProfile() {
       setSuccess("Profile updated successfully.");
       setTimeout(() => navigate("/profile/view"), 700);
     } catch (err) {
-      const data = err.response?.data;
-      if (data?.errors && typeof data.errors === "object") {
-        setErrors((prev) => ({ ...prev, ...data.errors }));
+      const { message, fields } = normalizeApiError(err);
+      if (Object.keys(fields).length) {
+        setErrors((prev) => ({ ...prev, ...fields }));
       }
-      setServerError(data?.message || "Unable to update your profile. Please try again.");
+      setServerError(message);
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-        <div>
-          <h1 className="text-2xl font-extrabold text-navy-900">Edit Profile</h1>
-          <p className="mt-1 text-sm text-ink-500">Update your personal information below.</p>
-        </div>
+    <PageTransition className="mx-auto max-w-3xl space-y-6">
+      <PageHeader
+        backTo="/profile"
+        backLabel="Profile"
+        eyebrow="Account"
+        title="Edit profile"
+        description="Update your personal information, address and profile photo."
+      />
 
-        {loadError && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-[13px] font-medium text-amber-800">
-            {loadError}
-          </div>
-        )}
+      <Alert tone="warning">{loadError}</Alert>
+      <Alert tone="error">{serverError}</Alert>
+      <Alert tone="success">{success}</Alert>
 
-        {serverError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] font-medium text-red-700">
-            {serverError}
-          </div>
-        )}
-
-        {success && (
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-[13px] font-medium text-emerald-700">
-            <CheckCircle2 size={15} /> {success}
-          </div>
-        )}
-
-        {loading ? (
-          <div className="card flex items-center justify-center gap-3 px-5 py-16 text-sm font-semibold text-ink-500">
-            <Loader2 size={18} className="animate-spin text-navy-600" /> Loading your profile…
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} noValidate className="space-y-6">
-            <section className="card p-6">
-              <h2 className="mb-5 text-[15px] font-extrabold text-navy-900">Personal Details</h2>
-              <div className="grid gap-5 sm:grid-cols-2">
-                <FieldInput
-                  label="First Name"
-                  name="firstName"
-                  value={form.firstName}
-                  onChange={handleChange}
-                  required
-                  error={errors.firstName}
-                />
-                <FieldInput
-                  label="Middle Name"
-                  name="middleName"
-                  value={form.middleName}
-                  onChange={handleChange}
-                  error={errors.middleName}
-                />
-                <FieldInput
-                  label="Last Name"
-                  name="lastName"
-                  value={form.lastName}
-                  onChange={handleChange}
-                  required
-                  error={errors.lastName}
-                />
-                <FieldInput
-                  label="Phone Number"
-                  name="phoneNumber"
-                  type="tel"
-                  value={form.phoneNumber}
-                  onChange={handleChange}
-                  error={errors.phoneNumber}
-                />
-                <FieldInput
-                  label="Gender"
-                  name="gender"
-                  value={form.gender}
-                  onChange={handleChange}
-                  options={GENDER_OPTIONS}
-                  error={errors.gender}
-                />
-                <FieldInput
-                  label="Date of Birth"
-                  name="dateOfBirth"
-                  type="date"
-                  value={form.dateOfBirth}
-                  onChange={handleChange}
-                  error={errors.dateOfBirth}
-                />
-              </div>
-            </section>
-
-            <section className="card p-6">
-              <h2 className="mb-5 text-[15px] font-extrabold text-navy-900">Address</h2>
-              <div className="grid gap-5 sm:grid-cols-2">
-                <FieldInput
-                  label="Address Line 1"
-                  name="addressLine1"
-                  value={form.addressLine1}
-                  onChange={handleChange}
-                  error={errors.addressLine1}
-                />
-                <FieldInput
-                  label="Address Line 2"
-                  name="addressLine2"
-                  value={form.addressLine2}
-                  onChange={handleChange}
-                  error={errors.addressLine2}
-                />
-                <FieldInput
-                  label="City"
-                  name="city"
-                  value={form.city}
-                  onChange={handleChange}
-                  error={errors.city}
-                />
-                <FieldInput
-                  label="State / Province"
-                  name="state"
-                  value={form.state}
-                  onChange={handleChange}
-                  error={errors.state}
-                />
-                <FieldInput
-                  label="Postal Code"
-                  name="postalCode"
-                  value={form.postalCode}
-                  onChange={handleChange}
-                  error={errors.postalCode}
-                />
-                <FieldInput
-                  label="Country"
-                  name="country"
-                  value={form.country}
-                  onChange={handleChange}
-                  error={errors.country}
-                />
-              </div>
-            </section>
-
-            <section className="card p-6">
-              <h2 className="mb-5 text-[15px] font-extrabold text-navy-900">About</h2>
-              <div className="space-y-5">
-                <FieldInput
-                  label="Bio"
-                  name="bio"
-                  value={form.bio}
-                  onChange={handleChange}
-                  rows={4}
-                  error={errors.bio}
-                />
-                <FieldInput
-                  label="Avatar URL"
-                  name="avatarUrl"
-                  type="url"
-                  value={form.avatarUrl}
-                  onChange={handleChange}
-                  placeholder="https://example.com/avatar.jpg"
-                  error={errors.avatarUrl}
-                />
-                <div>
-                  <label htmlFor="avatarFile" className="field-label">
-                    Upload a profile photo
-                  </label>
-                  <div className="flex flex-wrap items-center gap-4">
-                    {avatarPreview || form.avatarUrl ? (
-                      <img
-                        src={avatarPreview || form.avatarUrl}
-                        alt="Profile avatar preview"
-                        className="h-16 w-16 rounded-full border border-ink-100 object-cover"
-                      />
-                    ) : (
-                      <span className="flex h-16 w-16 items-center justify-center rounded-full bg-navy-50 text-navy-500">
-                        <ImagePlus size={22} />
-                      </span>
-                    )}
-                    <input
-                      id="avatarFile"
-                      name="avatarFile"
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      onChange={handleAvatarChange}
-                      disabled={submitting}
-                      className="field-input min-w-0 flex-1"
-                    />
-                  </div>
-                  <p className="mt-1 text-xs text-ink-500">
-                    PNG, JPEG, or WebP; maximum file size 5 MB.
-                  </p>
-                  {errors.avatarFile && (
-                    <p className="field-error">{errors.avatarFile}</p>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <div className="flex items-center justify-end gap-3 pb-4">
-              <button
-                type="button"
-                onClick={() => navigate("/profile/view")}
-                className="btn-ghost"
+      {loading ? (
+        <LoadingBlock label="Loading your profile…" />
+      ) : (
+        <StaggerGroup as="form" onSubmit={handleSubmit} noValidate className="space-y-6">
+          <StaggerItem className="card p-6">
+            <h2 className="mb-5 text-[15px] font-extrabold text-navy-900">Personal details</h2>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <FieldInput
+                label="First name"
+                name="firstName"
+                value={form.firstName}
+                onChange={handleChange}
+                required
+                error={errors.firstName}
                 disabled={submitting}
-              >
-                <X size={15} /> Cancel
-              </button>
-              <button type="submit" className="btn-primary w-auto! px-6!" disabled={submitting}>
-                {submitting ? (
-                  <>
-                    <Loader2 size={15} className="animate-spin" /> Saving…
-                  </>
-                ) : (
-                  <>
-                    <Save size={15} /> Save Changes
-                  </>
-                )}
-              </button>
+              />
+              <FieldInput
+                label="Middle name"
+                name="middleName"
+                value={form.middleName}
+                onChange={handleChange}
+                error={errors.middleName}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="Last name"
+                name="lastName"
+                value={form.lastName}
+                onChange={handleChange}
+                required
+                error={errors.lastName}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="Phone number"
+                name="phoneNumber"
+                type="tel"
+                value={form.phoneNumber}
+                onChange={handleChange}
+                error={errors.phoneNumber}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="Gender"
+                name="gender"
+                value={form.gender}
+                onChange={handleChange}
+                options={GENDER_OPTIONS}
+                error={errors.gender}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="Date of birth"
+                name="dateOfBirth"
+                type="date"
+                value={form.dateOfBirth}
+                onChange={handleChange}
+                error={errors.dateOfBirth}
+                disabled={submitting}
+              />
             </div>
-          </form>
-        )}
-      </div>
+          </StaggerItem>
+
+          <StaggerItem className="card p-6">
+            <h2 className="mb-5 text-[15px] font-extrabold text-navy-900">Address</h2>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <FieldInput
+                label="Address line 1"
+                name="addressLine1"
+                value={form.addressLine1}
+                onChange={handleChange}
+                error={errors.addressLine1}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="Address line 2"
+                name="addressLine2"
+                value={form.addressLine2}
+                onChange={handleChange}
+                error={errors.addressLine2}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="City"
+                name="city"
+                value={form.city}
+                onChange={handleChange}
+                error={errors.city}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="State / province"
+                name="state"
+                value={form.state}
+                onChange={handleChange}
+                error={errors.state}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="Postal code"
+                name="postalCode"
+                value={form.postalCode}
+                onChange={handleChange}
+                error={errors.postalCode}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="Country"
+                name="country"
+                value={form.country}
+                onChange={handleChange}
+                error={errors.country}
+                disabled={submitting}
+              />
+            </div>
+          </StaggerItem>
+
+          <StaggerItem className="card p-6">
+            <h2 className="mb-5 text-[15px] font-extrabold text-navy-900">About & photo</h2>
+            <div className="space-y-5">
+              <FieldInput
+                label="Bio"
+                name="bio"
+                value={form.bio}
+                onChange={handleChange}
+                rows={4}
+                error={errors.bio}
+                disabled={submitting}
+              />
+              <FieldInput
+                label="Avatar URL"
+                name="avatarUrl"
+                type="url"
+                value={form.avatarUrl}
+                onChange={handleChange}
+                placeholder="https://example.com/avatar.jpg"
+                error={errors.avatarUrl}
+                disabled={submitting || Boolean(avatarFile)}
+                hint="Optional. Ignored once a file is chosen below."
+              />
+              <div>
+                <label htmlFor="avatarFile" className="field-label">
+                  Upload a profile photo
+                </label>
+                <div className="flex flex-wrap items-center gap-4">
+                  {avatarPreview || form.avatarUrl ? (
+                    <img
+                      src={avatarPreview || form.avatarUrl}
+                      alt="Profile avatar preview"
+                      className="h-16 w-16 rounded-full border border-ink-100 object-cover"
+                    />
+                  ) : (
+                    <span className="flex h-16 w-16 items-center justify-center rounded-full bg-navy-50 text-navy-500">
+                      <ImagePlus size={22} />
+                    </span>
+                  )}
+                  <input
+                    id="avatarFile"
+                    name="avatarFile"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={handleAvatarChange}
+                    disabled={submitting}
+                    className="field-input min-w-0 flex-1"
+                  />
+                </div>
+                <p className="mt-1 text-xs text-ink-500">
+                  PNG, JPEG, or WebP; maximum file size 5 MB.
+                </p>
+                {errors.avatarFile && <p className="field-error">{errors.avatarFile}</p>}
+              </div>
+            </div>
+          </StaggerItem>
+
+          <StaggerItem className="flex items-center justify-end gap-3 pb-4">
+            <button
+              type="button"
+              onClick={() => navigate("/profile/view")}
+              className="btn-ghost"
+              disabled={submitting}
+            >
+              <X size={15} /> Cancel
+            </button>
+            <button type="submit" className="btn-primary px-6" disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Spinner size={15} /> Saving…
+                </>
+              ) : (
+                <>
+                  <Save size={15} /> Save changes
+                </>
+              )}
+            </button>
+          </StaggerItem>
+        </StaggerGroup>
+      )}
+    </PageTransition>
   );
 }
