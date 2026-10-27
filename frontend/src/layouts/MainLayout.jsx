@@ -4,7 +4,9 @@ import { useSelector } from "react-redux";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   Activity,
+  ArrowLeftRight,
   ChevronDown,
+  CreditCard,
   FileSearch,
   LayoutDashboard,
   LogOut,
@@ -12,6 +14,7 @@ import {
   ShieldCheck,
   UserCog,
   X,
+  WalletCards,
 } from "lucide-react";
 import Logo from "../components/Logo";
 import { logoutUser } from "../services/authService";
@@ -21,6 +24,9 @@ import { initialsOf, todayLong } from "../utils/format";
 function buildNav(user) {
   const items = [
     { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
+    { to: "/wallet", label: "Wallet", icon: WalletCards },
+    { to: "/transactions", label: "Transactions", icon: ArrowLeftRight },
+    { to: "/payments", label: "Payments", icon: CreditCard },
     { to: "/kyc", label: "Identity verification", icon: ShieldCheck },
   ];
 

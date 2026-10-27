@@ -9,6 +9,9 @@ import VerifyEmail from "../pages/auth/VerifyEmail";
 import ForgotPassword from "../pages/auth/ForgotPassword";
 import ResetPassword from "../pages/auth/ResetPassword";
 import Dashboard from "../pages/dashboard/Dashboard";
+import Wallet from "../pages/wallet/Wallet";
+import Transactions from "../pages/transactions/Transactions";
+import Payments from "../pages/payments/Payments";
 import KycVerification from "../pages/dashboard/KycVerification";
 import OfficerReviews from "../pages/kyc/OfficerReviews";
 import Profile from "../pages/profile/Profile";
@@ -65,6 +68,9 @@ function AppRoutes() {
         <Route element={<ProtectedRoute />}>
           <Route element={<MainLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/wallet" element={<Wallet />} />
+            <Route path="/transactions" element={<Transactions />} />
+            <Route path="/payments" element={<Payments />} />
             <Route path="/kyc" element={<KycVerification />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/view" element={<ViewProfile />} />

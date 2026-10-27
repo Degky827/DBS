@@ -57,7 +57,11 @@ const attachAuthInterceptors = (instance) => {
 
       if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
         const { accessToken } = store.getState().auth.tokens || {};
-        if (!accessToken) return Promise.reject(error);
+        if (!accessToken) {
+          store.dispatch(logout());
+          window.location.href = "/";
+          return Promise.reject(error);
+        }
 
         originalRequest._retry = true;
 
@@ -70,6 +74,11 @@ const attachAuthInterceptors = (instance) => {
           window.location.href = "/";
           return Promise.reject(refreshError);
         }
+      }
+
+      if (error.response?.status === 401 && originalRequest?._retry) {
+        store.dispatch(logout());
+        window.location.href = "/";
       }
 
       return Promise.reject(error);

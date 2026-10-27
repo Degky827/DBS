@@ -15,7 +15,9 @@ export const normalizeApiError = (error) => {
   const { status, data } = error.response;
   const message =
     (typeof data?.message === "string" && data.message) ||
-    (status === 429
+    (status === 401
+      ? "Your session has expired. Sign in again to continue."
+      : status === 429
       ? "Too many requests. Please wait a moment and try again."
       : status >= 500
         ? "The server encountered a problem. Please try again shortly."
