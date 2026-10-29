@@ -221,6 +221,7 @@ test("creates a documented Didit session with the configured workflow and no exp
     assert.equal(submissions.get("submission-1").documentVerificationStatus, null);
     assert.equal(submissions.get("submission-1").dataComparisonStatus, null);
     assert.equal(submissions.get("submission-1").comparisonResults, null);
+    assert.equal(submissions.get("submission-1").submittedAt, null);
     assert.equal(submissions.get("submission-1").faceMatchStatus, null);
     assert.equal(submissions.get("submission-1").livenessStatus, null);
     assert.equal(diditRequest.url, "https://verification.didit.me/v3/session/");
@@ -266,6 +267,11 @@ test("verifies V2 signatures against the signed body timestamp and persists sess
   assert.equal(response.body.data.accepted, true);
   assert.equal(submissions.get("submission-1").providerStatus, "Approved");
   assert.equal(submissions.get("submission-1").status, "PENDING_REVIEW");
+  assert.ok(submissions.get("submission-1").submittedAt instanceof Date);
+  assert.equal(
+    submissions.get("submission-1").submittedAt.getTime(),
+    event.timestamp * 1000
+  );
   assert.equal(submissions.get("submission-1").documentVerificationStatus, "Approved");
   assert.equal(submissions.get("submission-1").faceMatchStatus, "Approved");
   assert.equal(submissions.get("submission-1").livenessStatus, "Approved");

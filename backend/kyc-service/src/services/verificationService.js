@@ -59,6 +59,7 @@ async function createSession(userId, submissionId) {
         faceMatchStatus: null,
         livenessStatus: null,
         comparisonResults: Prisma.DbNull,
+        submittedAt: null,
         status: SUBMISSION_STATUS.IN_PROGRESS,
       },
     });
@@ -250,6 +251,9 @@ async function processWebhook(event, authenticationMethod) {
             submissionUpdate.providerStatus = providerStatus;
             if (targetStatus && targetStatus !== current.status) {
               submissionUpdate.status = targetStatus;
+              if (targetStatus === SUBMISSION_STATUS.PENDING_REVIEW) {
+                submissionUpdate.submittedAt = eventTimestamp;
+              }
             }
           }
         }

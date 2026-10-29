@@ -44,6 +44,8 @@ const spec = {
     "/status": {
       get: {
         summary: "Get the authenticated customer's latest KYC status",
+        description:
+          "Returns the latest submission with document metadata, provider check outcomes, and lifecycle timestamps. `submittedAt` is recorded when a provider result moves the submission into review and cleared when a new verification attempt starts; `reviewedAt` is recorded by the officer decision.",
         security: [{ bearerAuth: [] }],
         responses: {
           200: { description: "Latest submission status" },
