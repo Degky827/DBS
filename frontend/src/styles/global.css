@@ -35,6 +35,7 @@
   --color-muted: #667085;
   --color-success: #15803d;
   --color-danger: #dc2626;
+  --color-warning: #b45309;
 
   --color-ink-700: #26324a;
   --color-ink-500: #55617a;
@@ -53,37 +54,37 @@
 
   body {
     font-family: var(--font-sans);
-    background: var(--color-ink-50);
-    color: var(--color-ink-700);
+    background: var(--color-canvas);
+    color: var(--color-body);
   }
 
   h1,
   h2,
   h3 {
     letter-spacing: -0.02em;
-    color: var(--color-navy-900);
+    color: var(--color-midnight);
   }
 
   ::selection {
-    background: var(--color-gold-100);
-    color: var(--color-navy-900);
+    background: var(--color-brand-50);
+    color: var(--color-midnight);
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-navy-500);
+    outline: 2px solid var(--color-brand-600);
     outline-offset: 2px;
   }
 }
 
 @layer components {
   .field-label {
-    @apply block text-[11px] font-bold uppercase tracking-[0.14em] text-ink-400 mb-1.5;
+    @apply block text-[11px] font-bold uppercase tracking-[0.14em] text-muted mb-1.5;
   }
 
   .field-input {
-    @apply w-full rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[15px] text-ink-700
+    @apply w-full rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[15px] text-body
       placeholder:text-ink-400 outline-none transition
-      focus:border-navy-500 focus:ring-4 focus:ring-navy-500/10
+      focus:border-brand-600 focus:ring-4 focus:ring-brand-600/10
       disabled:bg-ink-100 disabled:text-ink-400;
   }
 
@@ -96,16 +97,16 @@
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-navy-800 px-5 py-2.5
-      text-sm font-semibold text-white shadow-[0_1px_2px_rgba(5,13,26,.25)]
-      transition hover:bg-navy-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-navy-500/25
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 py-2.5
+      text-sm font-semibold text-white shadow-[0_1px_2px_rgba(16,43,70,.18)]
+      transition hover:bg-brand-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-600/25
       active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 rounded-lg border border-ink-200 bg-white
-      px-4 py-2.5 text-sm font-semibold text-navy-800 transition hover:border-navy-500/40
-      hover:bg-navy-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-navy-500/15
+      px-4 py-2.5 text-sm font-semibold text-midnight transition hover:border-brand-600/40
+      hover:bg-brand-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-600/15
       disabled:cursor-not-allowed disabled:opacity-60;
   }
 
@@ -129,55 +130,55 @@
 
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 rounded-lg border border-ink-200 bg-white
-      px-4 py-2.5 text-sm font-semibold text-navy-800 transition hover:border-navy-500/40
-      hover:bg-navy-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-navy-500/15
+      px-4 py-2.5 text-sm font-semibold text-midnight transition hover:border-brand-600/40
+      hover:bg-brand-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-600/15
       disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .btn-danger {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-red-700 px-4 py-2.5
-      text-sm font-semibold text-white transition hover:bg-red-800
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-danger px-4 py-2.5
+      text-sm font-semibold text-white transition hover:bg-[#b91c1c]
       focus:outline-none focus-visible:ring-4 focus-visible:ring-red-500/25
       disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .btn-danger-outline {
     @apply inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-white
-      px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:border-red-300
+      px-4 py-2.5 text-sm font-semibold text-danger transition hover:border-red-300
       hover:bg-red-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-red-500/15
       disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .link {
-    @apply text-sm font-semibold text-navy-600 underline-offset-4 transition hover:text-navy-800 hover:underline;
+    @apply text-sm font-semibold text-brand-700 underline-offset-4 transition hover:text-brand-800 hover:underline;
   }
 
   .eyebrow {
-    @apply text-[11px] font-bold uppercase tracking-[0.18em] text-gold-600;
+    @apply text-[11px] font-bold uppercase tracking-[0.18em] text-brand-700;
   }
 
   .card {
-    @apply rounded-xl border border-ink-200 bg-white shadow-[0_1px_2px_rgba(5,13,26,.05),0_8px_24px_-16px_rgba(5,13,26,.2)];
+    @apply rounded-xl border border-ink-200 bg-white shadow-[0_1px_2px_rgba(16,43,70,.04),0_12px_32px_-24px_rgba(16,43,70,.28)];
   }
 
   .badge-neutral {
-    @apply inline-flex items-center gap-1 rounded-full bg-ink-100 px-2.5 py-1 text-[11px] font-bold leading-none text-ink-500;
+    @apply inline-flex items-center gap-1 rounded-full bg-ink-100 px-2.5 py-1 text-[11px] font-bold leading-none text-muted;
   }
 
   .badge-info {
-    @apply inline-flex items-center gap-1 rounded-full bg-navy-50 px-2.5 py-1 text-[11px] font-bold leading-none text-navy-700;
+    @apply inline-flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-bold leading-none text-brand-700;
   }
 
   .badge-success {
-    @apply inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold leading-none text-emerald-700;
+    @apply inline-flex items-center gap-1 rounded-full bg-[#ecfdf3] px-2.5 py-1 text-[11px] font-bold leading-none text-success;
   }
 
   .badge-warning {
-    @apply inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold leading-none text-amber-700;
+    @apply inline-flex items-center gap-1 rounded-full bg-[#fffbeb] px-2.5 py-1 text-[11px] font-bold leading-none text-warning;
   }
 
   .badge-danger {
-    @apply inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold leading-none text-red-700;
+    @apply inline-flex items-center gap-1 rounded-full bg-[#fef2f2] px-2.5 py-1 text-[11px] font-bold leading-none text-danger;
   }
 
   .skeleton {
