@@ -123,7 +123,7 @@ const sendOtpEmail = async ({ to, otp, purpose }) => {
   const html = layout({ heading, body: intro + otpBlock(otp) });
 
   if (!env.BREVO_API_KEY) {
-    logger.warn({ to, purpose }, "Brevo key not set — OTP will only be written to the logs");
+    logger.warn({ to, purpose }, "Brevo key not set — OTP email delivery unavailable");
     return { delivered: false };
   }
 
@@ -138,7 +138,9 @@ const sendOtpEmail = async ({ to, otp, purpose }) => {
       { to, purpose, transport, error: error.message },
       "Failed to send OTP email"
     );
-    throw new Error(`Failed to send verification email: ${error.message}`);
+    throw new Error(`Failed to send verification email: ${error.message}`, {
+      cause: error,
+    });
   }
 };
 
