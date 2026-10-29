@@ -99,14 +99,6 @@ const passwordField = (label) =>
       `${label} must contain at least one uppercase letter, one lowercase letter and one number`
     );
 
-const refreshSchema = z.object({
-  refreshToken: requiredString("refreshToken").trim().min(1, "refreshToken is required"),
-});
-
-const logoutSchema = z.object({
-  refreshToken: requiredString("refreshToken").trim().min(1, "refreshToken is required"),
-});
-
 const forgotPasswordSchema = z.object({
   email: emailField,
 });
@@ -137,8 +129,6 @@ module.exports = {
   loginSchema,
   verifyEmailSchema,
   resendOtpSchema,
-  refreshSchema,
-  logoutSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
 };

@@ -3,6 +3,7 @@ const API_PREFIX = "/api/v1";
 const ROUTES = Object.freeze({
   API_PREFIX,
   HEALTH: "/health",
+  READY: "/ready",
   DOCS: "/docs",
   OPENAPI: "/openapi.json",
   OPENAPI_YAML: "/openapi.yaml",
