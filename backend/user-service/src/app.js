@@ -1,10 +1,10 @@
 const express = require("express");
-const cors = require("cors");
 const env = require("./config/env");
 
 const ROUTES = require("./constants/routes");
 const v1Routes = require("./routes/v1");
 const securityMiddlewares = require("./middlewares/security");
+const corsMiddleware = require("./middlewares/cors");
 const requestLogger = require("./middlewares/requestLogger");
 const { globalLimiter } = require("./middlewares/rateLimiter");
 const notFound = require("./middlewares/notFound");
@@ -12,8 +12,10 @@ const errorHandler = require("./middlewares/errorHandler");
 
 const app = express();
 
-if (env.IS_PRODUCTION) {
-  app.set("trust proxy", 1);
+// Only trust the configured number of reverse proxies so spoofed
+// X-Forwarded-For headers cannot influence limiter and audit keys.
+if (env.TRUST_PROXY > 0) {
+  app.set("trust proxy", env.TRUST_PROXY);
 }
 
 app.disable("x-powered-by");
@@ -21,22 +23,17 @@ app.disable("x-powered-by");
 app.use(...securityMiddlewares);
 app.use(requestLogger);
 
-app.use(
-  cors({
-    origin:
-      env.CORS_ORIGIN === "*"
-        ? true
-        : env.CORS_ORIGIN.split(",").map((origin) => origin.trim()),
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  })
-);
+app.use(corsMiddleware);
+
+const WEBHOOK_PATH = `${ROUTES.API_PREFIX}${ROUTES.PAYMENTS.WEBHOOK}`;
 
 app.use(
   express.json({
     limit: "10kb",
     verify: (req, res, buf) => {
-      if (req.originalUrl === `${ROUTES.API_PREFIX}${ROUTES.PAYMENTS.WEBHOOK}`) {
+      // Compare the pathname only: originalUrl retains the query string, which
+      // would otherwise suppress raw-body capture for the webhook.
+      if (req.path === WEBHOOK_PATH) {
         req.rawBody = Buffer.from(buf);
       }
     },
