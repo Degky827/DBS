@@ -4,7 +4,7 @@ const TONES = {
   DRAFT: "badge-neutral",
   IN_PROGRESS: "badge-info",
   PENDING_REVIEW: "badge-warning",
-  NEEDS_RESUBMISSION: "badge-danger",
+  NEEDS_RESUBMISSION: "badge-warning",
   APPROVED: "badge-success",
   REJECTED: "badge-danger",
   MATCH: "badge-success",
@@ -19,6 +19,13 @@ const TONES = {
   Abandoned: "badge-neutral",
   OCR_COMPLETE: "badge-success",
   UPLOADED: "badge-neutral",
+  POSTED: "badge-success",
+  COMPLETED: "badge-success",
+  PENDING: "badge-warning",
+  FAILED: "badge-danger",
+  REVERSED: "badge-neutral",
+  NOT_STARTED: "badge-neutral",
+  NOT_SUBMITTED: "badge-neutral",
 };
 
 export default function StatusBadge({ value, fallback = "—", tone }) {
