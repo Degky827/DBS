@@ -19,6 +19,23 @@
   --color-gold-400: #d9b857;
   --color-gold-100: #f7edd4;
 
+  /* Public site and auth palette */
+  --color-midnight: #102b46;
+  --color-midnight-deep: #0b1f33;
+  --color-brand-50: #eef5ff;
+  --color-brand-100: #d9e8ff;
+  --color-brand-200: #b7d2ff;
+  --color-brand-300: #8fbaff;
+  --color-brand-500: #2b7aef;
+  --color-brand-600: #1769e0;
+  --color-brand-700: #1257bd;
+  --color-brand-800: #0f4799;
+  --color-canvas: #f3f6fa;
+  --color-body: #182230;
+  --color-muted: #667085;
+  --color-success: #15803d;
+  --color-danger: #dc2626;
+
   --color-ink-700: #26324a;
   --color-ink-500: #55617a;
   --color-ink-400: #7a849a;
@@ -90,6 +107,24 @@
       px-4 py-2.5 text-sm font-semibold text-navy-800 transition hover:border-navy-500/40
       hover:bg-navy-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-navy-500/15
       disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-brand {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-5 py-3
+      text-sm font-semibold text-white shadow-[0_1px_2px_rgba(16,43,70,.18)]
+      transition hover:bg-brand-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-600/25
+      active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-brand-outline {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-brand-600/30 bg-white
+      px-5 py-3 text-sm font-semibold text-brand-700 transition hover:border-brand-600/60
+      hover:bg-brand-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-600/15
+      disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .nav-link {
+    @apply rounded-lg px-3 py-2 text-sm font-semibold text-muted transition hover:bg-brand-50 hover:text-midnight;
   }
 
   .btn-ghost {
