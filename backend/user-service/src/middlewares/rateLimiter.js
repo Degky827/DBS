@@ -27,7 +27,7 @@ const globalLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.RATE_LIMIT_MAX,
-  skip: (req) => req.path === "/api/v1/health",
+  skip: (req) => req.path === "/api/v1/health" || req.path === "/api/v1/ready",
   handler: buildHandler("Too many requests, please try again later"),
 });
 
