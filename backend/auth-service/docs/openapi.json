@@ -231,7 +231,7 @@
                   "properties": {
                     "success": { "type": "boolean", "example": true },
                     "message": { "type": "string", "example": "If the account exists, a new verification code has been sent" },
-                    "data": { "type": "null" }
+                    "data": { "type": "object", "nullable": true }
                   }
                 }
               }
@@ -278,7 +278,7 @@
         "security": [],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RefreshRequest" } } } },
         "responses": {
-          "200": { "description": "Logged out", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean", "example": true }, "message": { "type": "string", "example": "Logged out" }, "data": { "type": "null" } } } } } },
+          "200": { "description": "Logged out", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean", "example": true }, "message": { "type": "string", "example": "Logged out" }, "data": { "type": "object", "nullable": true } } } } } },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "429": { "$ref": "#/components/responses/TooManyRequests" }
         }
@@ -293,7 +293,7 @@
         "security": [],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResendOtpRequest" } } } },
         "responses": {
-          "200": { "description": "Reset code sent (or account does not exist)", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean", "example": true }, "message": { "type": "string", "example": "If the account exists, a password reset code has been sent" }, "data": { "type": "null" } } } } } },
+          "200": { "description": "Reset code sent (or account does not exist)", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean", "example": true }, "message": { "type": "string", "example": "If the account exists, a password reset code has been sent" }, "data": { "type": "object", "nullable": true } } } } } },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "429": { "$ref": "#/components/responses/TooManyRequests" }
         }
@@ -308,7 +308,7 @@
         "security": [],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResetPasswordRequest" } } } },
         "responses": {
-          "200": { "description": "Password reset", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean", "example": true }, "message": { "type": "string", "example": "Password has been reset" }, "data": { "type": "null" } } } } } },
+          "200": { "description": "Password reset", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean", "example": true }, "message": { "type": "string", "example": "Password has been reset" }, "data": { "type": "object", "nullable": true } } } } } },
           "400": {
             "description": "Invalid/expired code or validation failure",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }, "example": { "success": false, "message": "Invalid or expired reset code" } } }

@@ -215,7 +215,8 @@ paths:
                     example: If the account exists, a new verification code has been
                       sent
                   data:
-                    type: 'null'
+                    type: object
+                    nullable: true
         '400':
           description: Email already verified
           content:
@@ -292,7 +293,8 @@ paths:
                     type: string
                     example: Logged out
                   data:
-                    type: 'null'
+                    type: object
+                    nullable: true
         '400':
           $ref: '#/components/responses/ValidationError'
         '429':
@@ -328,7 +330,8 @@ paths:
                     example: If the account exists, a password reset code has been
                       sent
                   data:
-                    type: 'null'
+                    type: object
+                    nullable: true
         '400':
           $ref: '#/components/responses/ValidationError'
         '429':
@@ -363,7 +366,8 @@ paths:
                     type: string
                     example: Password has been reset
                   data:
-                    type: 'null'
+                    type: object
+                    nullable: true
         '400':
           description: Invalid/expired code or validation failure
           content:

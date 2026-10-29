@@ -20,6 +20,12 @@ COPY docs ./docs
 COPY server.js ./
 RUN npm prune --omit=dev
 
+# ---------- Stage 3b: migration runner (keeps the Prisma CLI) ----------
+FROM dependencies AS migrate
+COPY prisma ./prisma
+COPY prisma.config.mjs ./
+CMD ["npx", "prisma", "migrate", "deploy"]
+
 # ---------- Stage 4: runtime (distroless-style, non-root) ----------
 FROM node:22-alpine AS runtime
 WORKDIR /app
