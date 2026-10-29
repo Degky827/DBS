@@ -33,19 +33,19 @@ curl http://localhost:5003/api/v1/kyc/health
 
 ## Docker Compose
 
-Compose passes `backend/kyc-service/.env` to the KYC container. The `DATABASE_URL` in that file is used by the container, so use the Neon URL for Neon or `postgresql://auth:auth@postgres:5432/kyc_db?schema=public` for the Compose-managed database. For direct commands on Windows, a local Docker database is reached through `localhost` instead of the Compose hostname `postgres`.
-
-On a fresh Postgres data volume, Compose initializes the dedicated `kyc_db` database and starts the service after PostgreSQL is healthy:
+The development stack builds the KYC image and passes the database URL, JWT settings, internal service key, and storage key as environment variables; it does not mount a service `.env` into the container. On a fresh Postgres data volume, the initialization script creates `user_db` and `kyc_db` before the service starts:
 
 ```bash
-docker compose up --build kyc-service
+docker compose -f docker-compose.dev.yml up --build kyc-service
 ```
 
-The SQL initialization script runs only when PostgreSQL initializes a new data directory. If your existing Postgres volume predates the KYC service, create the database once:
+The SQL initialization script runs only when PostgreSQL initializes a new data directory. If an existing volume predates the KYC service, create the database once (adjust the user if it is not `meridian`):
 
 ```bash
-docker exec banking-postgres psql -U auth -d postgres -c "CREATE DATABASE kyc_db;"
+docker exec meridian-dev-postgres-1 psql -U meridian -d postgres -c "CREATE DATABASE kyc_db;"
 ```
+
+The production stack (`docker-compose.yml`) runs `prisma migrate deploy` in a one-shot `kyc-migrate` service, keeps the KYC service off the host network, and requires `STORAGE_ENCRYPTION_KEY`.
 
 ## Initial API
 
@@ -57,7 +57,7 @@ All customer routes use a bearer access token issued by `auth-service`.
 | `POST` | `/api/v1/kyc/submissions` | Create a submission for the authenticated customer after confirming their user-service profile |
 | `GET` | `/api/v1/kyc/status` | Retrieve the authenticated customer's latest submission status |
 
-KYC ownership is keyed by the verified JWT `sub` claim. The service does not accept a customer ID from the request. Profile details remain owned by user-service and are not copied into KYC records. OpenAPI and Swagger UI are available at `/api/v1/kyc/docs`.
+KYC ownership is keyed by the verified JWT `sub` claim. The service does not accept a customer ID from the request. Profile details remain owned by user-service and are not copied into KYC records. OpenAPI and Swagger UI are available at `/api/v1/kyc/docs` in development; production disables them unless `ENABLE_API_DOCS=true` and Basic auth credentials are configured.
 
 ## Current implementation status
 
@@ -69,7 +69,7 @@ KYC ownership is keyed by the verified JWT `sub` claim. The service does not acc
 - Supported upload formats are JPEG, PNG, and WebP; file signatures must match declared MIME type.
 - Images are decoded and normalized with an input-pixel ceiling before OCR; EXIF metadata is not passed to OCR. Uploads are size-limited and rate-limited.
 - Images are encrypted with AES-256-GCM outside public serving paths. OCR text, extracted/corrected fields, and hosted-provider session URLs are also encrypted before database persistence.
-- Generate a fresh 32-byte key as 64 hexadecimal characters and configure it as `STORAGE_ENCRYPTION_KEY` locally or `KYC_STORAGE_ENCRYPTION_KEY` in Compose. Store it in a secret manager and back it up securely. Losing or rotating it without re-encrypting data makes files and OCR unreadable.
+- Generate a fresh 32-byte key as 64 hexadecimal characters and configure it as `STORAGE_ENCRYPTION_KEY` in every environment, including Compose. Store it in a secret manager and back it up securely. Losing or rotating it without re-encrypting data makes files and OCR unreadable.
 - Document/image/field reads and corrections are owner-scoped. Images use `Cache-Control: private, no-store`.
 - OCR is informational only and does not establish document authenticity.
 - Delete documents when no longer needed. A production retention schedule, automated cleanup, encrypted database backups, and key rotation process must be configured before processing real identity documents.
