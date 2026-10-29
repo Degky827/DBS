@@ -41,12 +41,26 @@ async function getCurrentStatus(userId) {
       updatedAt: true,
       submittedAt: true,
       reviewedAt: true,
+      decisionReason: true,
       documentVerificationStatus: true,
       dataComparisonStatus: true,
       faceMatchStatus: true,
       livenessStatus: true,
       providerStatus: true,
       comparisonResults: true,
+      documents: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          documentType: true,
+          side: true,
+          status: true,
+          fileName: true,
+          fileSizeBytes: true,
+          mimeType: true,
+          createdAt: true,
+        },
+      },
     },
   });
 
