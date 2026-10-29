@@ -1,6 +1,16 @@
 const prisma = require("../src/config/database");
 const { hashPassword } = require("../src/utils/password.util");
 
+// Demo accounts use well-known passwords. They exist only for local
+// development and must never be created in a production database.
+if ((process.env.NODE_ENV || "development") === "production") {
+  console.error(
+    "[seed] Refusing to seed demo accounts while NODE_ENV=production. " +
+      "Create the first administrator through a controlled bootstrap process instead."
+  );
+  process.exit(1);
+}
+
 const SEED_USERS = [
   {
     email: "admin@meridianbank.test",
@@ -45,6 +55,8 @@ const SEED_USERS = [
 ];
 
 async function seed() {
+  console.warn("[seed] Creating development-only demo accounts with known passwords.");
+
   for (const entry of SEED_USERS) {
     const [passwordHash, securityAnswerHash] = await Promise.all([
       hashPassword(entry.password),
