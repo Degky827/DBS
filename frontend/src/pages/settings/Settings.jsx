@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
 import {
@@ -17,7 +17,12 @@ import Alert from "../../components/ui/Alert";
 import StatusBadge from "../../components/ui/StatusBadge";
 import { Skeleton } from "../../components/ui/Spinner";
 import { useAccount } from "../../context/AccountContext";
-import { logoutUser } from "../../services/authService";
+import {
+  getNotificationPreferences,
+  logoutUser,
+  updateNotificationPreferences,
+} from "../../services/authService";
+import { normalizeApiError } from "../../utils/apiError";
 import { formatDate, titleCase } from "../../utils/format";
 
 function SettingRow({ title, description, action, status }) {
@@ -41,8 +46,64 @@ export default function Settings() {
   const { profile, kyc, loading, profileError, refresh } = useAccount();
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState("");
+  const [preferences, setPreferences] = useState(null);
+  const [preferencesLoading, setPreferencesLoading] = useState(true);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesError, setPreferencesError] = useState("");
+  const [preferencesNotice, setPreferencesNotice] = useState("");
 
   const emailVerified = authUser?.isEmailVerified;
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const data = await getNotificationPreferences();
+        if (mounted) setPreferences(data.preferences);
+      } catch (error) {
+        if (mounted) setPreferencesError(normalizeApiError(error).message);
+      } finally {
+        if (mounted) setPreferencesLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const retryPreferences = useCallback(async () => {
+    setPreferencesLoading(true);
+    setPreferencesError("");
+    try {
+      const data = await getNotificationPreferences();
+      setPreferences(data.preferences);
+    } catch (error) {
+      setPreferencesError(normalizeApiError(error).message);
+    } finally {
+      setPreferencesLoading(false);
+    }
+  }, []);
+
+  const toggleSecurityAlerts = async () => {
+    if (!preferences || preferencesSaving) return;
+    const next = !preferences.securityEmailAlerts;
+    setPreferencesSaving(true);
+    setPreferencesError("");
+    setPreferencesNotice("");
+    try {
+      const data = await updateNotificationPreferences({ securityEmailAlerts: next });
+      setPreferences(data.preferences);
+      setPreferencesNotice(
+        data.preferences.securityEmailAlerts
+          ? "Security alert emails are enabled."
+          : "Security alert emails are disabled."
+      );
+    } catch (error) {
+      setPreferencesError(normalizeApiError(error).message);
+    } finally {
+      setPreferencesSaving(false);
+    }
+  };
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -209,15 +270,71 @@ export default function Settings() {
               <Bell size={16} className="text-brand-700" />
               <h2 className="text-[14px] font-extrabold text-midnight">Notifications</h2>
             </div>
-            <div className="space-y-3 px-5 py-4 text-[12.5px] leading-relaxed text-muted">
-              <p>
-                Account notices are generated from your live wallet, profile and verification
-                status, and appear in the bell in the top bar.
-              </p>
-              <p>
-                Persisted email or SMS notification preferences are not available on this
-                platform yet, so no preference controls are shown here.
-              </p>
+            <div className="space-y-4 px-5 py-4">
+              {preferencesLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-4 w-full" />
+                </div>
+              ) : preferences ? (
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-bold text-midnight">Security alert emails</p>
+                    <p className="mt-0.5 text-[12px] leading-relaxed text-muted">
+                      Email {profile?.email || authUser?.email || "your address"} when your
+                      password is changed or reset through account recovery.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={preferences.securityEmailAlerts}
+                    aria-label="Security alert emails"
+                    onClick={toggleSecurityAlerts}
+                    disabled={preferencesSaving}
+                    className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-600/25 ${
+                      preferences.securityEmailAlerts ? "bg-brand-700" : "bg-ink-200"
+                    } ${preferencesSaving ? "opacity-60" : ""}`}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 rounded-full bg-white shadow transition ${
+                        preferences.securityEmailAlerts ? "translate-x-5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[12px] leading-relaxed text-muted">
+                    Notification preferences could not be loaded.
+                  </p>
+                  <button type="button" className="btn-ghost py-2" onClick={retryPreferences}>
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {preferencesSaving ? (
+                <p className="text-[11px] font-semibold text-ink-500" role="status">
+                  Saving preference…
+                </p>
+              ) : null}
+              {preferences && preferencesError ? (
+                <Alert tone="error">{preferencesError}</Alert>
+              ) : null}
+              {preferencesNotice ? (
+                <p className="text-[12px] font-semibold text-emerald-700" role="status">
+                  {preferencesNotice}
+                </p>
+              ) : null}
+
+              <div className="border-t border-ink-100 pt-3 text-[12px] leading-relaxed text-muted">
+                <p>
+                  Account notices are generated from your live wallet, profile and verification
+                  status, and always appear in the bell in the top bar.
+                </p>
+                <p className="mt-1">SMS alerts are not available on this platform.</p>
+              </div>
             </div>
           </StaggerItem>
         </StaggerGroup>

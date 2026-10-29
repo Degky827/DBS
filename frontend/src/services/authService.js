@@ -46,6 +46,16 @@ export const getMe = async () => {
   return data.data;
 };
 
+export const getNotificationPreferences = async () => {
+  const { data } = await authApi.get("/auth/me/notification-preferences");
+  return data.data;
+};
+
+export const updateNotificationPreferences = async (preferences) => {
+  const { data } = await authApi.patch("/auth/me/notification-preferences", preferences);
+  return data.data;
+};
+
 export const forgotPassword = async (email) => {
   const { data } = await authApi.post("/auth/forgot-password", { email });
   return data;
