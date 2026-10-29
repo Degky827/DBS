@@ -119,7 +119,6 @@ const generateUniqueUsername = async (email) => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const candidate =
       attempt === 0 ? base : `${base}_${random()}`.slice(0, 30);
-    // eslint-disable-next-line no-await-in-loop
     const taken = await userRepository.findByUsername(candidate);
     if (!taken) return candidate;
   }

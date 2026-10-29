@@ -2,21 +2,30 @@ const jwt = require("jsonwebtoken");
 const env = require("../config/env");
 const ApiError = require("./ApiError");
 
-// Verifies an access token issued by auth-service (Phase 1).
-// Shares the HS256 secret, issuer and audience via environment configuration.
+// Verifies access tokens issued by auth-service. HS256 uses a shared secret;
+// RS256 uses auth-service's public key so only the issuer holds signing key
+// material. The algorithm is pinned to the configured value.
+const verificationKey = () =>
+  env.JWT_ALGORITHM === "RS256" ? env.JWT_PUBLIC_KEY : env.JWT_SECRET;
+
 const verifyAccessToken = (token) => {
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET, {
+    const key = verificationKey();
+    if (!key) {
+      throw ApiError.internal("Access token verification key is not configured");
+    }
+
+    const payload = jwt.verify(token, key, {
       issuer: env.JWT_ISSUER,
       audience: env.JWT_AUDIENCE,
-      algorithms: ["HS256"],
+      algorithms: [env.JWT_ALGORITHM],
     });
 
     if (payload.typ !== "access") {
       throw ApiError.unauthorized("Invalid token type", "INVALID_TOKEN_TYPE");
     }
 
-    if (!payload.sub) {
+    if (typeof payload.sub !== "string" || !payload.sub) {
       throw ApiError.unauthorized("Invalid token subject", "INVALID_TOKEN_SUBJECT");
     }
 

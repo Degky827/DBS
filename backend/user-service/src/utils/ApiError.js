@@ -9,8 +9,8 @@ class ApiError extends Error {
     Error.captureStackTrace(this, this.constructor);
   }
 
-  static badRequest(message = "Bad request", details = null) {
-    return new ApiError(400, message, "BAD_REQUEST", details);
+  static badRequest(message = "Bad request", code = "BAD_REQUEST", details = null) {
+    return new ApiError(400, message, code, details);
   }
 
   static validation(details = null) {
