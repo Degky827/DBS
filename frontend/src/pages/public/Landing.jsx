@@ -36,7 +36,7 @@ const FEATURES = [
   {
     icon: Wallet,
     title: "Digital Wallet",
-    text: "Open a wallet backed by a double-entry ledger, with balances and transfer limits shown in one place.",
+    text: "Open a wallet backed by a double-entry ledger, with every balance and posting recorded in one place.",
   },
   {
     icon: ArrowLeftRight,
@@ -211,7 +211,7 @@ export default function Landing() {
             <SectionHeading
               eyebrow="Features"
               title="Everything an account needs, in one place"
-              text="Six connected capabilities cover the path from registration to a recalled transaction — each one built into the platform you are signing in to."
+              text="Six connected capabilities cover the path from registration to a recorded transaction — each one built into the platform you are signing in to."
               center
             />
 
@@ -354,9 +354,9 @@ export default function Landing() {
                   </h2>
                   <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-brand-100/85">
                     Meridian is a full-stack evaluation platform: a React client backed by
-                    dedicated authentication, profile, wallet and KYC services, PostgreSQL
-                    and a double-entry ledger. The public experience you are reading is the
-                    same one that talks to those services.
+                    dedicated authentication, user and KYC services, PostgreSQL and a
+                    double-entry ledger. The public experience you are reading is the same
+                    one that talks to those services.
                   </p>
 
                   <div className="mt-8 flex flex-col gap-3 sm:flex-row">
