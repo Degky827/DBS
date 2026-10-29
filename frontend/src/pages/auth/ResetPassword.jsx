@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, KeyRound } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, KeyRound } from "lucide-react";
 import OtpInput from "../../components/OtpInput";
 import PasswordStrength from "../../components/PasswordStrength";
 import { scorePassword } from "../../utils/passwordScore";
@@ -19,6 +19,8 @@ export default function ResetPassword() {
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -36,7 +38,7 @@ export default function ResetPassword() {
 
     try {
       await resetPassword(email, otp, password, confirm);
-      navigate("/", { state: { reset: true }, replace: true });
+      navigate("/login", { state: { reset: true }, replace: true });
     } catch (err) {
       const { message, fields } = normalizeApiError(err);
       setServerError(message);
@@ -56,10 +58,14 @@ export default function ResetPassword() {
 
   return (
     <div>
-      <p className="eyebrow">Account recovery</p>
-      <h1 className="mt-2 text-3xl font-extrabold">Set a new password</h1>
-      <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
-        Paste the code from your email and choose a new password. All active sessions
+      <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+        <KeyRound size={19} />
+      </span>
+      <h1 className="mt-4 text-[32px] font-extrabold leading-tight text-midnight">
+        Set a new password
+      </h1>
+      <p className="mt-2 text-[15px] leading-relaxed text-muted">
+        Enter the code from your email and choose a new password. All active sessions
         will be signed out.
       </p>
 
@@ -91,36 +97,56 @@ export default function ResetPassword() {
 
         <div>
           <label htmlFor="newPassword" className="field-label">New password</label>
-          <input
-            id="newPassword"
-            type="password"
-            className="field-input"
-            placeholder="••••••••"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="new-password"
-            aria-invalid={errors.password ? "true" : undefined}
-          />
+          <div className="relative">
+            <input
+              id="newPassword"
+              type={showPassword ? "text" : "password"}
+              className="field-input pr-11"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+              aria-invalid={errors.password ? "true" : undefined}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 transition hover:text-brand-600"
+            >
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
           <PasswordStrength password={password} />
           {errors.password && <p className="field-error">{errors.password}</p>}
         </div>
 
         <div>
           <label htmlFor="confirmPassword" className="field-label">Confirm new password</label>
-          <input
-            id="confirmPassword"
-            type="password"
-            className="field-input"
-            placeholder="••••••••"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            autoComplete="new-password"
-            aria-invalid={errors.confirm ? "true" : undefined}
-          />
+          <div className="relative">
+            <input
+              id="confirmPassword"
+              type={showConfirm ? "text" : "password"}
+              className="field-input pr-11"
+              placeholder="••••••••"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+              aria-invalid={errors.confirm ? "true" : undefined}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm((v) => !v)}
+              aria-label={showConfirm ? "Hide password confirmation" : "Show password confirmation"}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 transition hover:text-brand-600"
+            >
+              {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
           {errors.confirm && <p className="field-error">{errors.confirm}</p>}
         </div>
 
-        <button type="submit" className="btn-primary w-full" disabled={submitting}>
+        <button type="submit" className="btn-brand w-full" disabled={submitting}>
           {submitting ? (
             <>
               <Spinner size={17} /> Updating password…
@@ -133,8 +159,11 @@ export default function ResetPassword() {
         </button>
       </form>
 
-      <p className="mt-7 text-center text-sm text-ink-500">
-        <Link to="/" className="link inline-flex items-center gap-1.5">
+      <p className="mt-7 text-center text-sm text-muted">
+        <Link
+          to="/login"
+          className="inline-flex items-center gap-1.5 font-semibold text-brand-700 hover:underline"
+        >
           <ArrowLeft size={14} /> Back to sign in
         </Link>
       </p>
