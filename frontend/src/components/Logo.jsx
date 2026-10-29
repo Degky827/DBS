@@ -10,25 +10,25 @@ export default function Logo({ light = false, size = "md" }) {
         aria-hidden="true"
         fill="none"
       >
-        <rect width="40" height="40" rx="10" className="fill-navy-800" />
+        <rect width="40" height="40" rx="10" className="fill-brand-600" />
         <path
           d="M11 27V13.5L20 21l9-7.5V27"
-          stroke="#d9b857"
+          stroke="#ffffff"
           strokeWidth="2.6"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-        <path d="M14.5 27h11" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
+        <path d="M14.5 27h11" stroke="#b7d2ff" strokeWidth="2.6" strokeLinecap="round" />
       </svg>
       <div className={`leading-none ${text}`}>
         <span
-          className={`font-extrabold tracking-tight ${light ? "text-white" : "text-navy-900"}`}
+          className={`font-extrabold tracking-tight ${light ? "text-white" : "text-midnight"}`}
         >
           Meridian
         </span>
         <span
           className={`ml-1.5 text-[11px] font-bold uppercase tracking-[0.22em] ${
-            light ? "text-gold-400" : "text-gold-600"
+            light ? "text-brand-200" : "text-brand-600"
           }`}
         >
           Bank
