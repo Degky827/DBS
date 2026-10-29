@@ -1,5 +1,6 @@
 const prisma = require("../config/database");
 const ApiError = require("../utils/ApiError");
+const { SUBMISSION_STATUS, canTransition } = require("../constants/kycStatus");
 
 const APPROVAL_REQUIREMENTS = {
   providerStatus: "Approved",
@@ -11,7 +12,7 @@ const APPROVAL_REQUIREMENTS = {
 
 async function getQueue() {
   return prisma.kycSubmission.findMany({
-    where: { status: "PENDING_REVIEW" },
+    where: { status: SUBMISSION_STATUS.PENDING_REVIEW },
     orderBy: { updatedAt: "asc" },
     select: {
       id: true,
@@ -24,6 +25,7 @@ async function getQueue() {
       livenessStatus: true,
       createdAt: true,
       updatedAt: true,
+      _count: { select: { documents: true } },
     },
   });
 }
@@ -48,25 +50,41 @@ async function decide({ submissionId, reviewerId, decision, reason }) {
   if (submission.userId === reviewerId) {
     throw ApiError.forbidden("You cannot review your own KYC submission", "SELF_REVIEW_FORBIDDEN");
   }
-  if (submission.status !== "PENDING_REVIEW") {
+  if (submission.status !== SUBMISSION_STATUS.PENDING_REVIEW) {
     throw ApiError.conflict("Submission is not awaiting review", "SUBMISSION_NOT_REVIEWABLE");
   }
-  if (
-    decision === "APPROVE" &&
-    Object.entries(APPROVAL_REQUIREMENTS).some(
-      ([field, expected]) => submission[field] !== expected
-    )
-  ) {
-    throw ApiError.conflict(
-      "Approval requires an approved provider, document, face match, liveness, and matching profile data",
-      "APPROVAL_REQUIREMENTS_NOT_MET"
-    );
+  if (decision === "APPROVE") {
+    const evidenceCount = await prisma.kycDocument.count({ where: { submissionId } });
+    if (evidenceCount < 1) {
+      throw ApiError.conflict(
+        "Approval requires at least one submitted identity document",
+        "APPROVAL_EVIDENCE_MISSING"
+      );
+    }
+    if (
+      Object.entries(APPROVAL_REQUIREMENTS).some(
+        ([field, expected]) => submission[field] !== expected
+      )
+    ) {
+      throw ApiError.conflict(
+        "Approval requires an approved provider, document, face match, liveness, and matching profile data",
+        "APPROVAL_REQUIREMENTS_NOT_MET"
+      );
+    }
   }
 
-  const finalStatus = decision === "APPROVE" ? "APPROVED" : "REJECTED";
+  const finalStatus = decision === "APPROVE"
+    ? SUBMISSION_STATUS.APPROVED
+    : SUBMISSION_STATUS.REJECTED;
+  if (!canTransition(submission.status, finalStatus)) {
+    throw ApiError.conflict(
+      "Submission cannot be decided from its current status",
+      "INVALID_KYC_STATUS_TRANSITION"
+    );
+  }
   return prisma.$transaction(async (tx) => {
     const transition = await tx.kycSubmission.updateMany({
-      where: { id: submissionId, status: "PENDING_REVIEW" },
+      where: { id: submissionId, status: SUBMISSION_STATUS.PENDING_REVIEW },
       data: {
         status: finalStatus,
         reviewedAt: new Date(),
