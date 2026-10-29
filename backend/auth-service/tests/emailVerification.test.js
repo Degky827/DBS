@@ -139,6 +139,7 @@ require.cache[emailPath] = {
       sentEmails.push({ to, otp, purpose });
       return { delivered: true, transport: "api" };
     },
+    sendSecurityAlertEmail: async () => ({ delivered: true, transport: "api" }),
   },
 };
 

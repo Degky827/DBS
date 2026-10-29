@@ -23,6 +23,7 @@ const PASSWORD_RESET_ACK =
 const users = new Map();
 let otpCodes = [];
 let sentEmails = [];
+let sentAlerts = [];
 let revokedForUsers = [];
 let idCounter = 0;
 let emailMode = "success";
@@ -154,6 +155,10 @@ require.cache[emailPath] = {
       }
       return { delivered: true, transport: "api" };
     },
+    sendSecurityAlertEmail: async ({ to, via }) => {
+      sentAlerts.push({ to, via });
+      return { delivered: true, transport: "api" };
+    },
   },
 };
 
@@ -177,6 +182,7 @@ test.beforeEach(() => {
   users.clear();
   otpCodes = [];
   sentEmails = [];
+  sentAlerts = [];
   revokedForUsers = [];
   logLines.length = 0;
   emailMode = "success";
@@ -328,6 +334,23 @@ test("reset password with valid OTP changes the password and consumes the code",
   const record = otpCodes.find((item) => item.userId === user.id);
   assert.ok(record.consumedAt, "OTP should be consumed after use");
   assert.ok(revokedForUsers.includes(user.id), "refresh sessions should be revoked");
+  assert.deepEqual(
+    sentAlerts,
+    [{ to: user.email, via: "PASSWORD_RESET" }],
+    "a security alert is emailed when alerts are enabled"
+  );
+});
+
+test("reset password skips the security alert when the preference is disabled", async () => {
+  const user = await ensureUser("reset-alerts-off@example.test");
+  user.securityEmailAlerts = false;
+
+  await forgotPassword(user.email);
+  const { otp } = lastOtpFor(user.email);
+
+  const response = await resetPassword(user.email, otp, "NewPassword123");
+  assert.equal(response.status, 200);
+  assert.deepEqual(sentAlerts, [], "no alert is sent when the user disabled them");
 });
 
 test("reset password rejects an invalid OTP and counts the attempt", async () => {
