@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "rea
 import { useDispatch, useSelector } from "react-redux";
 import AuthLayout from "../layouts/AuthLayout";
 import MainLayout from "../layouts/MainLayout";
+import Landing from "../pages/public/Landing";
 import Login from "../pages/auth/Login";
 import Register from "../pages/auth/Register";
 import VerifyEmail from "../pages/auth/VerifyEmail";
@@ -45,10 +46,17 @@ function GuestRoute() {
 }
 
 function ScrollToTop() {
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
   useEffect(() => {
+    if (hash) {
+      const target = document.getElementById(hash.slice(1));
+      if (target) {
+        target.scrollIntoView({ behavior: "auto", block: "start" });
+        return;
+      }
+    }
     window.scrollTo({ top: 0, behavior: "auto" });
-  }, [pathname]);
+  }, [pathname, hash]);
   return null;
 }
 
@@ -71,9 +79,11 @@ function AppRoutes() {
     <BrowserRouter>
       <ScrollToTop />
       <Routes>
+        <Route path="/" element={<Landing />} />
+
         <Route element={<AuthLayout />}>
           <Route element={<GuestRoute />}>
-            <Route path="/" element={<Login />} />
+            <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />

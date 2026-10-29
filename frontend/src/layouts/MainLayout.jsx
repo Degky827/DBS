@@ -113,7 +113,7 @@ export default function MainLayout() {
     setMenuOpen(false);
     setDrawerOpen(false);
     await logoutUser();
-    navigate("/");
+    navigate("/login");
   };
 
   const sidebarContent = (
