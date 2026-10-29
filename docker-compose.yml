@@ -1,124 +1,256 @@
+# Production-oriented stack.
+#
+# Only the frontend port is published. PostgreSQL, pgAdmin, and the three
+# backend services stay on the private Compose network. For local development
+# with published service ports and pgAdmin, use docker-compose.dev.yml.
+#
+# Required values (see .env.production.example):
+#   POSTGRES_PASSWORD, APP_ORIGIN, JWT_SECRET (HS256) or JWT_PRIVATE_KEY_BASE64 +
+#   JWT_PUBLIC_KEY_BASE64 (RS256), INTERNAL_SERVICE_KEY, STORAGE_ENCRYPTION_KEY
+#
+# APP_ORIGIN must be the HTTPS origin users load in the browser, for example
+# https://bank.example.com. The Nginx container proxies /api/auth, /api/user,
+# and /api/kyc to the backend services on the private network.
+
+name: meridian
+
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: banking-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: auth
-      POSTGRES_PASSWORD: auth
+      POSTGRES_USER: ${POSTGRES_USER:-meridian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: auth_db
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/kyc-service/docker/init-database.sql:/docker-entrypoint-initdb.d/20-kyc-database.sql:ro
+      - ./backend/kyc-service/docker/init-database.sql:/docker-entrypoint-initdb.d/20-service-databases.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U auth -d auth_db"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d auth_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
 
-  auth-service:
-    build: ./backend/auth-service
-    container_name: auth-service
-    restart: unless-stopped
+  auth-migrate:
+    build:
+      context: ./backend/auth-service
+      target: migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD}@postgres:5432/auth_db?schema=public
     depends_on:
       postgres:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  auth-service:
+    build:
+      context: ./backend/auth-service
+      target: runtime
+    restart: unless-stopped
+    init: true
     environment:
       NODE_ENV: production
       PORT: 5001
       DB_ADAPTER: pg
-      DATABASE_URL: postgresql://auth:auth@postgres:5432/auth_db?schema=public
-      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-string}
-      JWT_EXPIRES_IN: 15m
-      JWT_ISSUER: auth-service
-      JWT_AUDIENCE: banking-system
-      BCRYPT_ROUNDS: 12
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173}
-
-      # Shared key guarding internal service-to-service endpoints.
-      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key}
-
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD}@postgres:5432/auth_db?schema=public
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      # Leave empty when JWT_ALGORITHM=RS256. Startup validation rejects a
+      # missing or weak HS256 secret in production.
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_PRIVATE_KEY_BASE64: ${JWT_PRIVATE_KEY_BASE64:-}
+      JWT_PUBLIC_KEY_BASE64: ${JWT_PUBLIC_KEY_BASE64:-}
+      JWT_KEY_ID: ${JWT_KEY_ID:-}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_ISSUER: ${JWT_ISSUER:-auth-service}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-banking-system}
+      REFRESH_TOKEN_TTL_MS: ${REFRESH_TOKEN_TTL_MS:-604800000}
+      REFRESH_TOKEN_GRACE_MS: ${REFRESH_TOKEN_GRACE_MS:-30000}
+      REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME:-meridian_refresh}
+      # Nginx strips /api/auth before forwarding, so the browser-visible path
+      # is /api/auth while the service sees /api/v1/auth.
+      REFRESH_COOKIE_PATH: /api/auth
+      REFRESH_COOKIE_SAME_SITE: ${REFRESH_COOKIE_SAME_SITE:-lax}
+      COOKIE_SECURE: "true"
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
+      CORS_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
+      TRUST_PROXY: 1
+      ENABLE_HSTS: "true"
+      ENABLE_API_DOCS: "false"
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      LOGIN_RATE_LIMIT_MAX: ${LOGIN_RATE_LIMIT_MAX:-10}
+      SENSITIVE_AUTH_RATE_LIMIT_MAX: ${SENSITIVE_AUTH_RATE_LIMIT_MAX:-20}
+      REFRESH_RATE_LIMIT_MAX: ${REFRESH_RATE_LIMIT_MAX:-60}
       BREVO_API_KEY: ${BREVO_API_KEY:-}
       EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-}
       EMAIL_FROM: ${EMAIL_FROM:-Meridian Bank}
       EMAIL_FROM_EMAIL: ${EMAIL_FROM_EMAIL:-no-reply@meridianbank.example}
       EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
-      LOG_LEVEL: info
-      RATE_LIMIT_WINDOW_MS: 900000
-      RATE_LIMIT_MAX: 300
-      AUTH_RATE_LIMIT_MAX: 10
-      ENABLE_API_DOCS: "true"
-    ports:
-      - "5001:5001"
+    depends_on:
+      auth-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5001/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
 
-  user-service:
-    build: ./backend/user-service
-    container_name: user-service
-    restart: unless-stopped
+  user-migrate:
+    build:
+      context: ./backend/user-service
+      target: migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD}@postgres:5432/user_db?schema=public
     depends_on:
       postgres:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  user-service:
+    build:
+      context: ./backend/user-service
+      target: runtime
+    restart: unless-stopped
+    init: true
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 5002
       DB_ADAPTER: pg
-      DATABASE_URL: postgresql://auth:auth@postgres:5432/user_db?schema=public
-      AUTH_MODE: ${USER_AUTH_MODE:-jwt}
-      DEV_SESSION_TTL_MS: 28800000
-      DEV_API_KEY: ${DEV_API_KEY:-}
-      # auth-service integration (shared HS256 secret + issuer + audience).
-      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-string}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD}@postgres:5432/user_db?schema=public
+      AUTH_MODE: jwt
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_PUBLIC_KEY_BASE64: ${JWT_PUBLIC_KEY_BASE64:-}
       JWT_ISSUER: ${JWT_ISSUER:-auth-service}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-banking-system}
       AUTH_SERVICE_URL: http://auth-service:5001/api/v1
-      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key}
+      KYC_SERVICE_URL: http://kyc-service:5003/api/v1/kyc
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
+      CORS_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
+      TRUST_PROXY: 1
+      ENABLE_HSTS: "true"
+      ENABLE_API_DOCS: "false"
       AVATAR_UPLOAD_DIR: /app/uploads/avatars
-      BCRYPT_ROUNDS: 12
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173}
-      LOG_LEVEL: info
-      RATE_LIMIT_WINDOW_MS: 900000
-      RATE_LIMIT_MAX: 300
-      AUTH_RATE_LIMIT_MAX: 20
-      ENABLE_API_DOCS: "true"
-    ports:
-      - "5002:5002"
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-20}
+      # Chapa remains disabled unless all four values are supplied.
+      CHAPA_SECRET_KEY: ${CHAPA_SECRET_KEY:-}
+      CHAPA_WEBHOOK_SECRET: ${CHAPA_WEBHOOK_SECRET:-}
+      CHAPA_BASE_URL: ${CHAPA_BASE_URL:-}
+      CHAPA_CALLBACK_URL: ${CHAPA_CALLBACK_URL:-}
+      CHAPA_RETURN_URL: ${CHAPA_RETURN_URL:-}
+      # Scheduled reconciliation is opt-in; manual runs use the ADMIN endpoint.
+      RECONCILIATION_ENABLED: ${RECONCILIATION_ENABLED:-false}
+      RECONCILIATION_INTERVAL_MS: ${RECONCILIATION_INTERVAL_MS:-300000}
+      RECONCILIATION_STALE_MINUTES: ${RECONCILIATION_STALE_MINUTES:-15}
+      RECONCILIATION_BATCH_SIZE: ${RECONCILIATION_BATCH_SIZE:-25}
+    depends_on:
+      user-migrate:
+        condition: service_completed_successfully
+      auth-service:
+        condition: service_healthy
     volumes:
       - user_uploads:/app/uploads
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5002/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
 
-  kyc-service:
-    build: ./backend/kyc-service
-    container_name: kyc-service
-    restart: unless-stopped
-    env_file:
-      - ./backend/kyc-service/.env
+  kyc-migrate:
+    build:
+      context: ./backend/kyc-service
+      target: migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD}@postgres:5432/kyc_db?schema=public
     depends_on:
       postgres:
         condition: service_healthy
-      user-service:
-        condition: service_started
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  kyc-service:
+    build:
+      context: ./backend/kyc-service
+      target: runtime
+    restart: unless-stopped
+    init: true
     environment:
       NODE_ENV: production
       PORT: 5003
       DB_ADAPTER: pg
-      DATABASE_URL: ${KYC_DATABASE_URL:-postgresql://auth:auth@postgres:5432/kyc_db?schema=public}
-      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-string}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD}@postgres:5432/kyc_db?schema=public
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_PUBLIC_KEY_BASE64: ${JWT_PUBLIC_KEY_BASE64:-}
       JWT_ISSUER: ${JWT_ISSUER:-auth-service}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-banking-system}
-      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key}
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
       USER_SERVICE_URL: http://user-service:5002/api/v1
       AUTH_SERVICE_URL: http://auth-service:5001/api/v1
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173}
-      LOG_LEVEL: info
-      RATE_LIMIT_WINDOW_MS: 900000
-      RATE_LIMIT_MAX: 300
-      ENABLE_API_DOCS: "true"
+      CORS_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
+      TRUST_PROXY: 1
+      ENABLE_HSTS: "true"
+      ENABLE_API_DOCS: "false"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      UPLOAD_RATE_LIMIT_MAX: ${UPLOAD_RATE_LIMIT_MAX:-10}
       STORAGE_DIR: /app/storage
-      MAX_FILE_SIZE_BYTES: 10485760
-      DIDIT_API_BASE_URL: ${DIDIT_API_BASE_URL:-https://verification.didit.me}
-    ports:
-      - "5003:5003"
+      MAX_FILE_SIZE_BYTES: ${MAX_FILE_SIZE_BYTES:-10485760}
+      STORAGE_ENCRYPTION_KEY: ${STORAGE_ENCRYPTION_KEY:?STORAGE_ENCRYPTION_KEY is required}
+      DIDIT_API_BASE_URL: https://verification.didit.me
+      DIDIT_API_KEY: ${DIDIT_API_KEY:-}
+      DIDIT_WORKFLOW_ID: ${DIDIT_WORKFLOW_ID:-}
+      DIDIT_WEBHOOK_SECRET: ${DIDIT_WEBHOOK_SECRET:-}
+      DIDIT_WEBHOOK_SECRET_PREVIOUS: ${DIDIT_WEBHOOK_SECRET_PREVIOUS:-}
+    depends_on:
+      kyc-migrate:
+        condition: service_completed_successfully
+      user-service:
+        condition: service_healthy
     volumes:
       - kyc_storage:/app/storage
     healthcheck:
@@ -133,41 +265,38 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
 
   frontend:
     build:
       context: ./frontend
       args:
-        VITE_AUTH_API: ${VITE_AUTH_API:-http://localhost:5001/api/v1}
-        VITE_USER_API: ${VITE_USER_API:-http://localhost:5002/api/v1}
-        VITE_KYC_API: ${VITE_KYC_API:-http://localhost:5003/api/v1/kyc}
-    container_name: banking-frontend
+        VITE_AUTH_API: ${VITE_AUTH_API:-/api/auth}
+        VITE_USER_API: ${VITE_USER_API:-/api/user}
+        VITE_KYC_API: ${VITE_KYC_API:-/api/kyc}
     restart: unless-stopped
     depends_on:
-      - auth-service
-      - user-service
-      - kyc-service
-    ports:
-      - "8080:80"
-
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: banking-pgadmin
-    restart: unless-stopped
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@meridianbank.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
-      PGADMIN_CONFIG_SERVER_MODE: "false"
-    ports:
-      - "5051:80"
-    depends_on:
-      postgres:
+      auth-service:
         condition: service_healthy
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
+      user-service:
+        condition: service_healthy
+      kyc-service:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
 
 volumes:
   postgres_data:
-  pgadmin_data:
   user_uploads:
   kyc_storage:
+
+networks:
+  backend:
+    driver: bridge
