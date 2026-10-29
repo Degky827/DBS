@@ -110,6 +110,15 @@ export default function KycStatus() {
       at: null,
     },
     {
+      key: "submitted",
+      title: "Submitted for review",
+      description: kyc?.submittedAt
+        ? "Your provider results were recorded and the application entered officer review."
+        : "Recorded automatically when the provider returns your check results.",
+      state: kyc?.submittedAt ? "done" : "pending",
+      at: kyc?.submittedAt,
+    },
+    {
       key: "decision",
       title: "Officer decision",
       description: approved
@@ -317,6 +326,9 @@ export default function KycStatus() {
               {kyc ? (
                 <div className="mt-4 text-[11.5px] text-muted">
                   Application created {formatDateTime(kyc.createdAt)}
+                  {kyc.submittedAt
+                    ? ` · Submitted for review ${formatDateTime(kyc.submittedAt)}`
+                    : ""}
                   {kyc.reviewedAt ? ` · Decision recorded ${formatDateTime(kyc.reviewedAt)}` : ""}
                 </div>
               ) : null}
