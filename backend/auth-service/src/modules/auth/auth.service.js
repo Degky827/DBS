@@ -27,7 +27,10 @@ const {
   MAX_OTP_ATTEMPTS,
   OTP_PURPOSES,
 } = require("../../utils/otp.util");
-const { sendOtpEmail } = require("../../services/email.service");
+const {
+  sendOtpEmail,
+  sendSecurityAlertEmail,
+} = require("../../services/email.service");
 
 const EMAIL_DELIVERY_ERROR = "EMAIL_DELIVERY_FAILED";
 const RESEND_ACKNOWLEDGEMENT =
@@ -303,6 +306,46 @@ const getMe = async (userId) => {
   return { user: toPublicUser(user) };
 };
 
+const toNotificationPreferences = (user) => ({
+  securityEmailAlerts: user.securityEmailAlerts !== false,
+});
+
+const getNotificationPreferences = async (userId) => {
+  const user = await userRepository.findById(userId);
+
+  if (!user) {
+    throw ApiError.notFound("Account not found", "USER_NOT_FOUND");
+  }
+
+  return { preferences: toNotificationPreferences(user) };
+};
+
+const updateNotificationPreferences = async (userId, input) => {
+  const user = await userRepository.updateNotificationPreferences(userId, {
+    securityEmailAlerts: input.securityEmailAlerts,
+  });
+
+  return { preferences: toNotificationPreferences(user) };
+};
+
+const sendPasswordChangedAlert = async (user, via) => {
+  if (!user?.email || user.securityEmailAlerts === false) return;
+
+  try {
+    await sendSecurityAlertEmail({
+      to: user.email,
+      changedAt: new Date(),
+      via,
+    });
+  } catch (error) {
+    // The password change already succeeded; alert delivery must never undo it.
+    logger.error(
+      { userId: user.id, via, error: error.message },
+      "Failed to send password change alert"
+    );
+  }
+};
+
 const INVALID_REFRESH_MESSAGE = "Invalid or expired refresh token";
 
 const rotatedRecently = (record) =>
@@ -464,6 +507,7 @@ const resetPassword = async (input) => {
   await userRepository.updatePassword(user.id, passwordHash);
   await refreshTokenRepository.revokeAllForUser(user.id);
   audit("PASSWORD_RESET_SUCCESS", { userId: user.id });
+  await sendPasswordChangedAlert(user, "PASSWORD_RESET");
 
   return { message: "Password has been reset" };
 };
@@ -472,6 +516,8 @@ module.exports = {
   register,
   login,
   getMe,
+  getNotificationPreferences,
+  updateNotificationPreferences,
   verifyEmail,
   resendOtp,
   refresh,

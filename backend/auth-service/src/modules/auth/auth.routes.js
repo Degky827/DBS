@@ -17,6 +17,7 @@ const {
   resendOtpSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  notificationPreferencesSchema,
 } = require("./auth.validation");
 
 router.use((req, res, next) => {
@@ -27,6 +28,19 @@ router.use((req, res, next) => {
 
 // Ordinary authenticated account reads use only the global limiter.
 router.get(ROUTES.AUTH.ME, authenticate, authController.me);
+
+router.get(
+  ROUTES.AUTH.NOTIFICATION_PREFERENCES,
+  authenticate,
+  authController.getNotificationPreferences
+);
+
+router.patch(
+  ROUTES.AUTH.NOTIFICATION_PREFERENCES,
+  authenticate,
+  validate(notificationPreferencesSchema),
+  authController.updateNotificationPreferences
+);
 
 // Credential-adjacent endpoints receive stricter, purpose-specific budgets.
 router.post(

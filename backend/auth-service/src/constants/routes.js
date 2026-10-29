@@ -17,6 +17,7 @@ const ROUTES = Object.freeze({
     LOGOUT: "/logout",
     FORGOT_PASSWORD: "/forgot-password",
     RESET_PASSWORD: "/reset-password",
+    NOTIFICATION_PREFERENCES: "/me/notification-preferences",
   }),
   INTERNAL: Object.freeze({
     CHANGE_PASSWORD: "/users/change-password",

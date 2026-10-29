@@ -124,6 +124,14 @@ const loginSchema = z.object({
     .max(72, "password must not exceed 72 characters"),
 });
 
+const notificationPreferencesSchema = z
+  .object({
+    securityEmailAlerts: z.boolean({
+      error: "securityEmailAlerts must be true or false",
+    }),
+  })
+  .strict("notification preferences only accept known fields");
+
 module.exports = {
   registerSchema,
   loginSchema,
@@ -131,4 +139,5 @@ module.exports = {
   resendOtpSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  notificationPreferencesSchema,
 };

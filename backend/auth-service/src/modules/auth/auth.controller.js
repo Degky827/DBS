@@ -23,6 +23,19 @@ const me = async (req, res) => {
   return ApiResponse.success(res, result, "Profile fetched");
 };
 
+const getNotificationPreferences = async (req, res) => {
+  const result = await authService.getNotificationPreferences(req.user.sub);
+  return ApiResponse.success(res, result, "Notification preferences fetched");
+};
+
+const updateNotificationPreferences = async (req, res) => {
+  const result = await authService.updateNotificationPreferences(
+    req.user.sub,
+    req.body
+  );
+  return ApiResponse.success(res, result, "Notification preferences updated");
+};
+
 const verifyEmail = async (req, res) => {
   const result = await authService.verifyEmail(req.body);
   return ApiResponse.success(res, result, "Email verified");
@@ -77,6 +90,8 @@ module.exports = {
   register,
   login,
   me,
+  getNotificationPreferences,
+  updateNotificationPreferences,
   verifyEmail,
   resendOtp,
   refresh,
