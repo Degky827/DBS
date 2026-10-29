@@ -31,7 +31,13 @@ export const getKycDocumentContent = async (documentId) => {
   };
 };
 
-export const uploadKycDocument = async ({ submissionId, documentType, side, file }) => {
+export const uploadKycDocument = async ({
+  submissionId,
+  documentType,
+  side,
+  file,
+  onProgress,
+}) => {
   const formData = new FormData();
   formData.append("document", file);
   formData.append("documentType", documentType);
@@ -39,6 +45,10 @@ export const uploadKycDocument = async ({ submissionId, documentType, side, file
 
   const { data } = await kycApi.post(`/submissions/${submissionId}/documents`, formData, {
     headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (event) => {
+      if (!onProgress || !event.total) return;
+      onProgress(Math.min(100, Math.round((event.loaded * 100) / event.total)));
+    },
   });
 
   return data.data;
@@ -100,23 +110,3 @@ export const getOfficerDocumentContent = async (documentId) => {
   };
 };
 
-// Remembers the last uploaded document id per submission so the review UI can
-// reload it after a page refresh (the status endpoint does not list documents).
-const documentKey = (submissionId) => `meridian_kyc_document_${submissionId}`;
-
-export const rememberKycDocumentId = (submissionId, documentId) => {
-  try {
-    if (submissionId && documentId) localStorage.setItem(documentKey(submissionId), documentId);
-    else if (submissionId) localStorage.removeItem(documentKey(submissionId));
-  } catch {
-    // storage unavailable — ignore
-  }
-};
-
-export const recallKycDocumentId = (submissionId) => {
-  try {
-    return submissionId ? localStorage.getItem(documentKey(submissionId)) : null;
-  } catch {
-    return null;
-  }
-};
