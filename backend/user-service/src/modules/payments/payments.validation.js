@@ -20,4 +20,15 @@ const depositSchema = z
   })
   .strict();
 
-module.exports = { depositSchema };
+const withdrawalSchema = z
+  .object({
+    amount: z
+      .string()
+      .refine(
+        isValidAmount,
+        "Amount must be a positive decimal with at most two places"
+      ),
+  })
+  .strict();
+
+module.exports = { depositSchema, withdrawalSchema };
