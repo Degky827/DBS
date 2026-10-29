@@ -1,6 +1,7 @@
 const prisma = require("../config/database");
 const ApiError = require("../utils/ApiError");
 const userServiceClient = require("./userServiceClient");
+const { SUBMISSION_STATUS } = require("../constants/kycStatus");
 
 async function createSubmission(userId, authorization) {
   await userServiceClient.getMyProfile(authorization);
@@ -56,4 +57,30 @@ async function getCurrentStatus(userId) {
   return submission;
 }
 
-module.exports = { createSubmission, getCurrentStatus };
+async function getInternalStatus(userId) {
+  const [latestSubmission, latestDecision] = await Promise.all([
+    prisma.kycSubmission.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, status: true, updatedAt: true },
+    }),
+    prisma.kycSubmission.findFirst({
+      where: { userId, reviewedAt: { not: null } },
+      orderBy: { reviewedAt: "desc" },
+      select: { id: true, status: true, reviewedAt: true },
+    }),
+  ]);
+
+  // The most recent completed officer decision is authoritative. A newer
+  // in-progress or draft submission does not revoke an existing approval.
+  return {
+    userId,
+    isApproved: latestDecision?.status === SUBMISSION_STATUS.APPROVED,
+    status: latestSubmission?.status || "NOT_SUBMITTED",
+    submissionId: latestSubmission?.id || null,
+    reviewedAt: latestDecision?.reviewedAt || null,
+    updatedAt: latestSubmission?.updatedAt || null,
+  };
+}
+
+module.exports = { createSubmission, getCurrentStatus, getInternalStatus };
