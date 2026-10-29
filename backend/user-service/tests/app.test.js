@@ -475,7 +475,7 @@ test("profile photo upload rejects unauthenticated, unsupported, and spoofed fil
       contentType: "image/png",
     });
   assert.equal(spoofed.status, 400);
-  assert.equal(spoofed.body.code, undefined);
+  assert.equal(spoofed.body.code, "INVALID_AVATAR_CONTENT");
   assert.match(spoofed.body.message, /content does not match/);
 
   const tooLarge = await request(app)
