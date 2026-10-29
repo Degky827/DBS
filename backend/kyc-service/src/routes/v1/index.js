@@ -5,6 +5,8 @@ const healthRoutes = require("./health.routes");
 const docsRoutes = require("./docs.routes");
 const submissionRoutes = require("./submission.routes");
 const documentRoutes = require("./document.routes");
+const officerDocumentRoutes = require("./officerDocument.routes");
+const internalRoutes = require("./internal.routes");
 const reviewController = require("../../controllers/reviewController");
 const authenticate = require("../../middlewares/authenticate");
 const requireOfficer = require("../../middlewares/requireOfficer");
@@ -19,6 +21,8 @@ if (env.ENABLE_API_DOCS) {
 
 router.use("/", submissionRoutes);
 router.use("/", documentRoutes);
+router.use("/", officerDocumentRoutes);
+router.use("/", internalRoutes);
 router.get("/officer/reviews", authenticate, requireOfficer, reviewController.queue);
 router.post(
   "/officer/submissions/:submissionId/decision",
