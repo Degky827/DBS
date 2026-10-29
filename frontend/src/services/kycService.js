@@ -78,6 +78,28 @@ export const submitOfficerDecision = async (submissionId, { decision, reason }) 
   return data.data;
 };
 
+// Evidence blobs are fetched with the officer's bearer token and turned into
+// short-lived object URLs; callers must revoke them when closing the review.
+export const getOfficerSubmissionDocuments = async (submissionId) => {
+  const { data } = await kycApi.get(`/officer/submissions/${submissionId}/documents`);
+  return data.data;
+};
+
+export const getOfficerDocumentContent = async (documentId) => {
+  const response = await kycApi.get(`/officer/documents/${documentId}/content`, {
+    responseType: "blob",
+  });
+
+  const blob = response.data;
+  const mimeType =
+    response.headers["content-type"] || blob.type || "application/octet-stream";
+
+  return {
+    url: URL.createObjectURL(blob),
+    mimeType,
+  };
+};
+
 // Remembers the last uploaded document id per submission so the review UI can
 // reload it after a page refresh (the status endpoint does not list documents).
 const documentKey = (submissionId) => `meridian_kyc_document_${submissionId}`;

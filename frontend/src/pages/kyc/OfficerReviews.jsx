@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
-import { FileSearch, ShieldCheck } from "lucide-react";
-import { getOfficerReviews, submitOfficerDecision } from "../../services/kycService";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FileImage, FileSearch, ShieldCheck } from "lucide-react";
+import {
+  getOfficerDocumentContent,
+  getOfficerReviews,
+  getOfficerSubmissionDocuments,
+  submitOfficerDecision,
+} from "../../services/kycService";
 import { normalizeApiError } from "../../utils/apiError";
 import { formatDateTime, titleCase } from "../../utils/format";
 import PageTransition, { StaggerGroup, StaggerItem } from "../../components/ui/PageTransition";
@@ -12,6 +17,7 @@ import Modal from "../../components/ui/Modal";
 import { Spinner } from "../../components/ui/Spinner";
 
 const APPROVAL_REQUIREMENTS = (review) =>
+  (review?._count?.documents ?? 0) > 0 &&
   review?.providerStatus === "Approved" &&
   review?.documentVerificationStatus === "Approved" &&
   review?.dataComparisonStatus === "MATCH" &&
@@ -27,6 +33,89 @@ export default function OfficerReviews() {
   const [reason, setReason] = useState("");
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [evidence, setEvidence] = useState([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState("");
+  const objectUrlsRef = useRef(new Set());
+  const evidenceRequestRef = useRef(0);
+
+  const releaseEvidenceUrls = useCallback(() => {
+    for (const url of objectUrlsRef.current) URL.revokeObjectURL(url);
+    objectUrlsRef.current.clear();
+  }, []);
+
+  useEffect(() => () => releaseEvidenceUrls(), [releaseEvidenceUrls]);
+
+  const clearEvidence = useCallback(() => {
+    evidenceRequestRef.current += 1;
+    releaseEvidenceUrls();
+    setEvidence([]);
+    setEvidenceLoading(false);
+    setEvidenceError("");
+  }, [releaseEvidenceUrls]);
+
+  const loadEvidence = async (submissionId) => {
+    const requestId = evidenceRequestRef.current + 1;
+    evidenceRequestRef.current = requestId;
+    releaseEvidenceUrls();
+    setEvidence([]);
+    setEvidenceError("");
+    setEvidenceLoading(true);
+
+    try {
+      const result = await getOfficerSubmissionDocuments(submissionId);
+      if (requestId !== evidenceRequestRef.current) return;
+
+      const documents = Array.isArray(result?.documents) ? result.documents : [];
+      setEvidence(
+        documents.map((document) => ({
+          ...document,
+          url: null,
+          loading: true,
+          error: "",
+        }))
+      );
+      setEvidenceLoading(false);
+
+      await Promise.all(
+        documents.map(async (document) => {
+          try {
+            const { url } = await getOfficerDocumentContent(document.id);
+            if (requestId !== evidenceRequestRef.current) {
+              URL.revokeObjectURL(url);
+              return;
+            }
+            objectUrlsRef.current.add(url);
+            setEvidence((current) =>
+              current.map((item) =>
+                item.id === document.id ? { ...item, url, loading: false } : item
+              )
+            );
+          } catch (error) {
+            if (requestId !== evidenceRequestRef.current) return;
+            setEvidence((current) =>
+              current.map((item) =>
+                item.id === document.id
+                  ? {
+                      ...item,
+                      loading: false,
+                      error:
+                        normalizeApiError(error).message || "Evidence unavailable",
+                    }
+                  : item
+              )
+            );
+          }
+        })
+      );
+    } catch (error) {
+      if (requestId !== evidenceRequestRef.current) return;
+      setEvidenceError(
+        normalizeApiError(error).message || "Unable to load submitted evidence"
+      );
+      setEvidenceLoading(false);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -67,9 +156,17 @@ export default function OfficerReviews() {
   }, []);
 
   const openReview = (review) => {
+    clearEvidence();
     setSelected(review);
     setDecision(APPROVAL_REQUIREMENTS(review) ? "APPROVE" : "REJECT");
     setReason("");
+    setFormError("");
+    loadEvidence(review.id);
+  };
+
+  const closeReview = () => {
+    clearEvidence();
+    setSelected(null);
     setFormError("");
   };
 
@@ -89,8 +186,8 @@ export default function OfficerReviews() {
     setFormError("");
     try {
       await submitOfficerDecision(selected.id, { decision, reason: trimmed });
-      setSelected(null);
-      await load({ silent: true });
+      closeReview();
+      await load();
     } catch (error) {
       const { message } = normalizeApiError(error);
       setFormError(message);
@@ -184,12 +281,12 @@ export default function OfficerReviews() {
 
       <Modal
         open={Boolean(selected)}
-        onClose={() => setSelected(null)}
+        onClose={closeReview}
         title="Record review decision"
         description={selected ? `Submission ${selected.id}` : ""}
         footer={
           <>
-            <button type="button" className="btn-ghost" onClick={() => setSelected(null)} disabled={busy}>
+            <button type="button" className="btn-ghost" onClick={closeReview} disabled={busy}>
               Cancel
             </button>
             <button
@@ -204,6 +301,65 @@ export default function OfficerReviews() {
         }
       >
         <div className="space-y-4">
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="field-label">Evidence</span>
+              {evidenceLoading && evidence.length > 0 ? (
+                <span className="text-xs text-ink-400">Loading previews…</span>
+              ) : null}
+            </div>
+            <div className="mt-2 space-y-3">
+              {evidenceError && <Alert tone="error">{evidenceError}</Alert>}
+
+              {!evidenceError && evidenceLoading && evidence.length === 0 && (
+                <div className="flex items-center gap-2 text-sm text-ink-500" role="status">
+                  <Spinner size={15} /> Loading submitted documents…
+                </div>
+              )}
+
+              {!evidenceError && !evidenceLoading && evidence.length === 0 && (
+                <p className="rounded-lg border border-ink-200 bg-ink-50 px-3.5 py-3 text-[13px] text-ink-500">
+                  No document evidence is available for this submission.
+                </p>
+              )}
+
+              {evidence.length > 0 && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {evidence.map((item) => (
+                    <figure
+                      key={item.id}
+                      className="overflow-hidden rounded-lg border border-ink-200"
+                    >
+                      <div className="flex aspect-[3/2] items-center justify-center bg-ink-50">
+                        {item.loading ? (
+                          <Spinner size={18} className="text-navy-600" />
+                        ) : item.url ? (
+                          <img
+                            src={item.url}
+                            alt={`${titleCase(item.documentType)} evidence`}
+                            className="h-full w-full object-contain"
+                          />
+                        ) : (
+                          <span className="flex items-center gap-2 px-3 text-center text-xs font-semibold text-ink-500">
+                            <FileImage size={16} />
+                            {item.error || "Evidence unavailable"}
+                          </span>
+                        )}
+                      </div>
+                      <figcaption className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-ink-500">
+                        <span className="font-semibold text-navy-900">
+                          {item.documentType ? titleCase(item.documentType) : "Document"}
+                          {item.side ? ` · ${titleCase(item.side)}` : ""}
+                        </span>
+                        <StatusBadge value={item.status} fallback="Uploaded" />
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
           <dl className="grid gap-2.5 rounded-lg bg-ink-50 p-3.5 sm:grid-cols-2">
             {checks.map((check) => (
               <div key={check.label} className="flex items-center justify-between gap-3 text-sm">
