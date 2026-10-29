@@ -1,4 +1,4 @@
-const rateLimit = require("express-rate-limit");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 
 const env = require("../config/env");
 const ApiResponse = require("../utils/ApiResponse");
@@ -18,24 +18,54 @@ const buildHandler = (message) => (req, res) => {
 const commonOptions = {
   standardHeaders: "draft-7",
   legacyHeaders: false,
-  ipv6Subnet: 56,
 };
+
+const skipHealthChecks = (req) =>
+  req.path === "/api/v1/health" || req.path === "/api/v1/ready";
 
 const globalLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.RATE_LIMIT_MAX,
-  skip: (req) => req.path === "/api/v1/health" || req.path === "/api/v1/ready",
+  skip: skipHealthChecks,
   handler: buildHandler("Too many requests, please try again later"),
 });
 
-const authLimiter = rateLimit({
+const normalizeEmail = (req) =>
+  typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+
+// Failed logins are counted per client IP and account. Successful logins are
+// not counted, so shared NAT deployments are not exhausted by normal use.
+const loginLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
-  limit: env.AUTH_RATE_LIMIT_MAX,
-  handler: buildHandler(
-    "Too many authentication attempts, please try again later"
-  ),
+  limit: env.LOGIN_RATE_LIMIT_MAX,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => `${ipKeyGenerator(req.ip)}:${normalizeEmail(req)}`,
+  handler: buildHandler("Too many sign-in attempts, please try again later"),
 });
 
-module.exports = { globalLimiter, authLimiter };
+// Registration, OTP verification/resend, and password reset are lower-volume
+// endpoints and receive a stricter per-IP budget than ordinary requests.
+const sensitiveAuthLimiter = rateLimit({
+  ...commonOptions,
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  limit: env.SENSITIVE_AUTH_RATE_LIMIT_MAX,
+  handler: buildHandler("Too many authentication attempts, please try again later"),
+});
+
+// Session refresh is expected to run regularly (including on page reload and
+// from several tabs) so it receives a separate, more generous budget.
+const refreshLimiter = rateLimit({
+  ...commonOptions,
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  limit: env.REFRESH_RATE_LIMIT_MAX,
+  handler: buildHandler("Too many session refresh attempts, please try again later"),
+});
+
+module.exports = {
+  globalLimiter,
+  loginLimiter,
+  sensitiveAuthLimiter,
+  refreshLimiter,
+};

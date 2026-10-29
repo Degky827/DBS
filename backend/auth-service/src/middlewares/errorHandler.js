@@ -49,5 +49,5 @@ module.exports = function errorHandler(err, req, res, next) {
     : error.message;
   const details = isServerError && env.IS_PRODUCTION ? null : error.details;
 
-  return ApiResponse.error(res, error.statusCode, message, details);
+  return ApiResponse.error(res, error.statusCode, message, details, error.code);
 };
