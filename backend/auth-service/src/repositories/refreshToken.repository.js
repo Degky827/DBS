@@ -6,18 +6,21 @@ const refreshTokenRepository = {
     return withRetry(() => prisma.refreshToken.create({ data }));
   },
 
-  findActiveByHash(tokenHash) {
+  findByHash(tokenHash) {
     return withRetry(() =>
-      prisma.refreshToken.findFirst({
-        where: { tokenHash, revokedAt: null },
+      prisma.refreshToken.findUnique({
+        where: { tokenHash },
         include: { user: true },
       })
     );
   },
 
-  revoke(id) {
+  revokeFamily(familyId) {
     return withRetry(() =>
-      prisma.refreshToken.update({ where: { id }, data: { revokedAt: new Date() } })
+      prisma.refreshToken.updateMany({
+        where: { familyId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
     );
   },
 

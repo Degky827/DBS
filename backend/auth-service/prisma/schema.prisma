@@ -38,19 +38,26 @@ model OtpCode {
     purpose    String
     expiresAt  DateTime
     consumedAt DateTime?
+    attempts   Int       @default(0)
     createdAt  DateTime  @default(now())
 
     @@index([email, purpose])
 }
 
 model RefreshToken {
-    id         String    @id @default(uuid())
-    userId     String
-    user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-    tokenHash  String    @unique
-    expiresAt  DateTime
-    revokedAt  DateTime?
-    createdAt  DateTime  @default(now())
+    id                  String    @id @default(uuid())
+    userId              String
+    user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    tokenHash           String    @unique
+    // Tokens issued by one login share a family id. Detecting reuse of any
+    // rotated ancestor revokes every active token in the family.
+    familyId            String
+    replacedByTokenHash String?
+    expiresAt           DateTime
+    revokedAt           DateTime?
+    rotatedAt           DateTime?
+    createdAt           DateTime  @default(now())
 
     @@index([userId])
+    @@index([familyId])
 }
