@@ -23,6 +23,7 @@ model User {
     acceptedTermsAt   DateTime?
     role              String    @default("USER")
     isEmailVerified   Boolean   @default(false)
+    securityEmailAlerts Boolean @default(true)
     createdAt         DateTime  @default(now())
     updatedAt         DateTime  @updatedAt
     otpCodes          OtpCode[]
