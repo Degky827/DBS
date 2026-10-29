@@ -409,6 +409,70 @@ paths:
                 message: Account not found
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /api/v1/auth/me/notification-preferences:
+    get:
+      tags:
+      - Auth
+      summary: Get notification preferences
+      description: Returns the authenticated user's persisted notification preferences.
+        Requires a Bearer access token.
+      operationId: getNotificationPreferences
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Notification preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferencesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Account no longer exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                message: Account not found
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    patch:
+      tags:
+      - Auth
+      summary: Update notification preferences
+      description: Persists the supplied notification preferences for the authenticated
+        user. Unknown fields are rejected.
+      operationId: updateNotificationPreferences
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationPreferencesUpdate'
+            example:
+              securityEmailAlerts: false
+      responses:
+        '200':
+          description: Updated notification preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferencesResponse'
+        '400':
+          description: Invalid preferences payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
 components:
   securitySchemes:
     bearerAuth:
@@ -472,6 +536,39 @@ components:
       - role
       - isEmailVerified
       - createdAt
+    NotificationPreferences:
+      type: object
+      properties:
+        securityEmailAlerts:
+          type: boolean
+          default: true
+          description: Email a security alert whenever the account password is changed.
+      required:
+      - securityEmailAlerts
+    NotificationPreferencesUpdate:
+      type: object
+      description: Persisted notification preferences. Only known fields are accepted.
+      properties:
+        securityEmailAlerts:
+          type: boolean
+          description: Email a security alert whenever the account password is changed.
+      required:
+      - securityEmailAlerts
+      additionalProperties: false
+    NotificationPreferencesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Notification preferences fetched
+        data:
+          type: object
+          properties:
+            preferences:
+              $ref: '#/components/schemas/NotificationPreferences'
     RegisterRequest:
       type: object
       required:
