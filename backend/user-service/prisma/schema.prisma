@@ -34,6 +34,7 @@ model UserProfile {
   wallet       Wallet?
   transactions Transaction[]
   payments     Payment[]
+  withdrawals  Withdrawal[]
 }
 
 model DevSession {
@@ -58,58 +59,71 @@ model Wallet {
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
-  outgoingTransactions Transaction[] @relation("TransactionSource")
-  incomingTransactions Transaction[] @relation("TransactionDestination")
+  outgoingTransactions Transaction[]  @relation("TransactionSource")
+  incomingTransactions Transaction[]  @relation("TransactionDestination")
   payments             Payment[]
+  ledgerAccount        LedgerAccount?
+  withdrawals          Withdrawal[]
 }
 
 model Transaction {
-  id                  String      @id @default(uuid())
-  reference           String      @unique @default(uuid())
+  id                  String                @id @default(uuid())
+  reference           String                @unique @default(uuid())
   initiatedByUserId   String
-  initiatedBy         UserProfile @relation(fields: [initiatedByUserId], references: [id], onDelete: Restrict)
-  type                String      @default("TRANSFER")
+  initiatedBy         UserProfile           @relation(fields: [initiatedByUserId], references: [id], onDelete: Restrict)
+  type                String                @default("TRANSFER")
   sourceWalletId      String?
-  sourceWallet        Wallet?     @relation("TransactionSource", fields: [sourceWalletId], references: [id], onDelete: Restrict)
+  sourceWallet        Wallet?               @relation("TransactionSource", fields: [sourceWalletId], references: [id], onDelete: Restrict)
   destinationWalletId String
-  destinationWallet   Wallet      @relation("TransactionDestination", fields: [destinationWalletId], references: [id], onDelete: Restrict)
-  amount              Decimal     @db.Decimal(19, 2)
+  destinationWallet   Wallet                @relation("TransactionDestination", fields: [destinationWalletId], references: [id], onDelete: Restrict)
+  amount              Decimal               @db.Decimal(19, 2)
+  feeAmount           Decimal               @default(0) @db.Decimal(19, 2)
+  reversedAmount      Decimal               @default(0) @db.Decimal(19, 2)
+  status              String                @default("POSTED")
+  currency            String                @default("ETB") @db.VarChar(3)
+  businessDate        DateTime              @default(now()) @db.Date
+  policySnapshot      Json?
   idempotencyKey      String
-  paymentId           String?     @unique
-  payment             Payment?    @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  createdAt           DateTime    @default(now())
+  paymentId           String?               @unique
+  payment             Payment?              @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  journalEntry        JournalEntry?
+  reversals           TransactionReversal[]
+  createdAt           DateTime              @default(now())
 
   @@unique([initiatedByUserId, idempotencyKey])
   @@index([sourceWalletId, createdAt])
   @@index([destinationWalletId, createdAt])
   @@index([initiatedByUserId])
+  @@index([status])
+  @@index([initiatedByUserId, businessDate, status])
 }
 
 model Payment {
-  id               String      @id @default(uuid())
-  reference        String      @unique @default(uuid())
-  provider         String      @default("CHAPA")
-  providerRef      String?     @unique
-  type             String      @default("DEPOSIT")
-  status           String      @default("PENDING")
-  amount           Decimal     @db.Decimal(19, 2)
-  currency         String      @default("ETB") @db.VarChar(3)
-  idempotencyKey   String
-  checkoutUrl      String?
-  failureReason    String?
-  userId           String
-  user             UserProfile @relation(fields: [userId], references: [id], onDelete: Restrict)
-  walletId         String
-  wallet           Wallet      @relation(fields: [walletId], references: [id], onDelete: Restrict)
-  transaction      Transaction?
-  webhookEvents    PaymentWebhookEvent[]
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
+  id                    String                        @id @default(uuid())
+  reference             String                        @unique @default(uuid())
+  provider              String                        @default("CHAPA")
+  providerRef           String?                       @unique
+  type                  String                        @default("DEPOSIT")
+  status                String                        @default("PENDING")
+  amount                Decimal                       @db.Decimal(19, 2)
+  currency              String                        @default("ETB") @db.VarChar(3)
+  idempotencyKey        String
+  checkoutUrl           String?
+  failureReason         String?
+  userId                String
+  user                  UserProfile                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  walletId              String
+  wallet                Wallet                        @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  transaction           Transaction?
+  webhookEvents         PaymentWebhookEvent[]
+  reconciliationRecords PaymentReconciliationRecord[]
+  createdAt             DateTime                      @default(now())
+  updatedAt             DateTime                      @updatedAt
 
   @@unique([userId, idempotencyKey])
   @@index([walletId, createdAt])
   @@index([userId])
-  @@index([status])
+  @@index([status, createdAt])
 }
 
 model PaymentWebhookEvent {
@@ -123,4 +137,164 @@ model PaymentWebhookEvent {
   processedAt      DateTime
 
   @@index([paymentReference, receivedAt])
+}
+
+// --- Double-entry ledger -------------------------------------------------
+
+model LedgerAccount {
+  id            String          @id @default(uuid())
+  code          String          @unique
+  name          String
+  type          String
+  normalBalance String
+  currency      String          @default("ETB") @db.VarChar(3)
+  walletId      String?         @unique
+  wallet        Wallet?         @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  isActive      Boolean         @default(true)
+  balance       Decimal         @default(0) @db.Decimal(19, 2)
+  postings      LedgerPosting[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([type])
+  @@index([currency])
+}
+
+model JournalEntry {
+  id              String               @id @default(uuid())
+  reference       String               @unique
+  eventType       String
+  eventRef        String
+  status          String               @default("POSTED")
+  currency        String               @db.VarChar(3)
+  description     String?
+  metadata        Json?
+  createdByUserId String?
+  transactionId   String?              @unique
+  transaction     Transaction?         @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  withdrawalId    String?              @unique
+  withdrawal      Withdrawal?          @relation(fields: [withdrawalId], references: [id], onDelete: Restrict)
+  reversalOfId    String?
+  reversalOf      JournalEntry?        @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy      JournalEntry[]       @relation("JournalReversal")
+  reversalRecord  TransactionReversal?
+  postings        LedgerPosting[]
+  postedAt        DateTime             @default(now())
+  createdAt       DateTime             @default(now())
+
+  @@unique([eventType, eventRef])
+  @@index([eventRef])
+  @@index([reversalOfId])
+  @@index([currency, postedAt])
+}
+
+model LedgerPosting {
+  id              String        @id @default(uuid())
+  journalEntryId  String
+  journalEntry    JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  ledgerAccountId String
+  ledgerAccount   LedgerAccount @relation(fields: [ledgerAccountId], references: [id], onDelete: Restrict)
+  direction       String
+  amount          Decimal       @db.Decimal(19, 2)
+  currency        String        @db.VarChar(3)
+  createdAt       DateTime      @default(now())
+
+  @@unique([journalEntryId, ledgerAccountId, direction])
+  @@index([ledgerAccountId, createdAt])
+  @@index([journalEntryId])
+}
+
+model TransactionReversal {
+  id             String       @id @default(uuid())
+  reference      String       @unique
+  transactionId  String
+  transaction    Transaction  @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  journalEntryId String       @unique
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  amount         Decimal      @db.Decimal(19, 2)
+  currency       String       @db.VarChar(3)
+  reason         String
+  actorUserId    String
+  idempotencyKey String
+  createdAt      DateTime     @default(now())
+
+  @@unique([transactionId, idempotencyKey])
+  @@index([transactionId, createdAt])
+}
+
+model Withdrawal {
+  id             String        @id @default(uuid())
+  reference      String        @unique @default(uuid())
+  userId         String
+  user           UserProfile   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  walletId       String
+  wallet         Wallet        @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  amount         Decimal       @db.Decimal(19, 2)
+  currency       String        @default("ETB") @db.VarChar(3)
+  status         String        @default("PENDING")
+  businessDate   DateTime      @default(now()) @db.Date
+  idempotencyKey String
+  failureReason  String?
+  journalEntry   JournalEntry?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([userId, idempotencyKey])
+  @@index([walletId, createdAt])
+  @@index([status])
+}
+
+model FinancialPolicy {
+  id                  String                    @id @default(uuid())
+  type                String
+  currency            String                    @default("ETB") @db.VarChar(3)
+  minAmount           Decimal                   @db.Decimal(19, 2)
+  maxAmount           Decimal                   @db.Decimal(19, 2)
+  dailyOutgoingAmount Decimal                   @db.Decimal(19, 2)
+  dailyOutgoingCount  Int
+  feeType             String                    @default("NONE")
+  feeFlat             Decimal                   @default(0) @db.Decimal(19, 2)
+  feeBps              Int                       @default(0)
+  feeMin              Decimal                   @default(0) @db.Decimal(19, 2)
+  feeMax              Decimal?                  @db.Decimal(19, 2)
+  timezone            String                    @default("Africa/Addis_Ababa")
+  isActive            Boolean                   @default(true)
+  effectiveFrom       DateTime                  @default(now())
+  createdBy           String?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  revisions           FinancialPolicyRevision[]
+
+  @@unique([type, currency])
+  @@index([type, currency, isActive])
+}
+
+model FinancialPolicyRevision {
+  id        String          @id @default(uuid())
+  policyId  String
+  policy    FinancialPolicy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  changedBy String
+  reason    String
+  snapshot  Json
+  createdAt DateTime        @default(now())
+
+  @@index([policyId, createdAt])
+}
+
+model PaymentReconciliationRecord {
+  id               String   @id @default(uuid())
+  paymentId        String
+  payment          Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  attempt          Int
+  trigger          String   @default("SCHEDULED")
+  providerStatus   String?
+  providerRef      String?
+  providerAmount   Decimal? @db.Decimal(19, 2)
+  providerCurrency String?  @db.VarChar(3)
+  outcome          String
+  details          String?
+  createdAt        DateTime @default(now())
+
+  @@index([paymentId, createdAt])
+  @@index([outcome])
 }
