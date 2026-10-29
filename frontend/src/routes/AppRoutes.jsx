@@ -22,13 +22,25 @@ import HealthMonitor from "../pages/health/HealthMonitor";
 import NotFound from "../pages/errors/NotFound";
 import Forbidden from "../pages/errors/Forbidden";
 import ProtectedRoute from "../components/ProtectedRoute";
+import { Spinner } from "../components/ui/Spinner";
 import { getMe } from "../services/authService";
+import { bootstrapSession } from "../services/session";
 import { setUser } from "../store/authSlice";
 import { OFFICER_ROLES } from "../utils/roles";
 
+function SessionLoading() {
+  return (
+    <div className="grid min-h-screen place-items-center bg-ink-50" role="status">
+      <Spinner size={30} className="text-navy-600" />
+      <span className="sr-only">Restoring session</span>
+    </div>
+  );
+}
+
 function GuestRoute() {
-  const { isAuthenticated } = useSelector((state) => state.auth);
-  if (isAuthenticated) return <Navigate to="/dashboard" replace />;
+  const { status } = useSelector((state) => state.auth);
+  if (status === "checking") return <SessionLoading />;
+  if (status === "authenticated") return <Navigate to="/dashboard" replace />;
   return <Outlet />;
 }
 
@@ -42,14 +54,18 @@ function ScrollToTop() {
 
 function AppRoutes() {
   const dispatch = useDispatch();
-  const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
+  const status = useSelector((state) => state.auth.status);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    bootstrapSession();
+  }, []);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
     getMe()
       .then(({ user }) => dispatch(setUser(user)))
       .catch(() => {});
-  }, [isAuthenticated, dispatch]);
+  }, [status, dispatch]);
 
   return (
     <BrowserRouter>

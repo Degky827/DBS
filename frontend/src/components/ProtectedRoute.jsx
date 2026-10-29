@@ -1,11 +1,21 @@
 import { useSelector } from "react-redux";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { Spinner } from "./ui/Spinner";
 
 export default function ProtectedRoute({ roles }) {
-  const { isAuthenticated, user } = useSelector((state) => state.auth);
+  const { status, user } = useSelector((state) => state.auth);
   const location = useLocation();
 
-  if (!isAuthenticated) {
+  if (status === "checking") {
+    return (
+      <div className="grid min-h-screen place-items-center bg-ink-50" role="status">
+        <Spinner size={30} className="text-navy-600" />
+        <span className="sr-only">Restoring session</span>
+      </div>
+    );
+  }
+
+  if (status !== "authenticated") {
     return <Navigate to="/" replace state={{ from: location }} />;
   }
 

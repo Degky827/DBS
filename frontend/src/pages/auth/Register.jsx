@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, ArrowRight, Check, User, AtSign, ShieldCheck } from "lucide-react";
 import PasswordStrength from "../../components/PasswordStrength";
 import { scorePassword } from "../../utils/passwordScore";
-import { registerUser, loginUser } from "../../services/authService";
+import { registerUser } from "../../services/authService";
 import { normalizeApiError } from "../../utils/apiError";
 import Alert from "../../components/ui/Alert";
 import { Spinner } from "../../components/ui/Spinner";
@@ -121,12 +121,10 @@ export default function Register() {
 
     try {
       await registerUser(form);
-      try {
-        await loginUser(form.email, form.password);
-        navigate("/dashboard", { replace: true });
-      } catch {
-        navigate("/", { state: { registered: true } });
-      }
+      navigate("/verify-email", {
+        replace: true,
+        state: { email: form.email },
+      });
     } catch (err) {
       const { message, fields } = normalizeApiError(err);
       setServerError(message);
@@ -336,8 +334,9 @@ export default function Register() {
                   ))}
                 </div>
                 <div className="rounded-lg border border-navy-100 bg-navy-50 px-4 py-3 text-[13px] leading-relaxed text-navy-700">
-                  After creating your account you will be signed in automatically. You can
-                  complete identity verification from your dashboard at any time.
+                  Next we will email you a 6-digit code. You must confirm it before
+                  signing in. Identity verification can be completed from your
+                  dashboard afterwards.
                 </div>
               </div>
             )}
