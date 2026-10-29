@@ -757,3 +757,74 @@ test("withdrawals reserve funds internally and can only be cancelled, never paid
     0
   );
 });
+
+test("payment history is authenticated, paginated, and scoped to the owner", async () => {
+  const ownerPayments = await prisma.payment.count({
+    where: { userId: users.owner.id },
+  });
+  assert.ok(ownerPayments >= 3);
+
+  const all = await request(app)
+    .get("/api/v1/payments?limit=50")
+    .set("Authorization", `Bearer ${tokens.owner}`);
+  assert.equal(all.status, 200);
+  assert.equal(all.body.data.payments.length, ownerPayments);
+  assert.equal(all.body.data.page.total, ownerPayments);
+  assert.equal(all.body.data.page.hasMore, false);
+  for (const payment of all.body.data.payments) {
+    assert.match(payment.amount, /^\d+\.\d{2}$/);
+    assert.equal(payment.currency, "ETB");
+    assert.equal(typeof payment.reference, "string");
+    assert.ok(["PENDING", "COMPLETED", "FAILED"].includes(payment.status));
+  }
+  const timestamps = all.body.data.payments.map((payment) =>
+    new Date(payment.createdAt).getTime()
+  );
+  assert.deepEqual(
+    timestamps,
+    [...timestamps].sort((left, right) => right - left)
+  );
+
+  const firstPage = await request(app)
+    .get("/api/v1/payments?limit=1")
+    .set("Authorization", `Bearer ${tokens.owner}`);
+  assert.equal(firstPage.status, 200);
+  assert.equal(firstPage.body.data.payments.length, 1);
+  assert.equal(firstPage.body.data.page.hasMore, true);
+  assert.equal(typeof firstPage.body.data.page.nextCursor, "string");
+
+  const secondPage = await request(app)
+    .get(`/api/v1/payments?limit=1&cursor=${firstPage.body.data.page.nextCursor}`)
+    .set("Authorization", `Bearer ${tokens.owner}`);
+  assert.equal(secondPage.status, 200);
+  assert.equal(secondPage.body.data.payments.length, 1);
+  assert.notEqual(
+    secondPage.body.data.payments[0].reference,
+    firstPage.body.data.payments[0].reference
+  );
+
+  const invalidLimit = await request(app)
+    .get("/api/v1/payments?limit=51")
+    .set("Authorization", `Bearer ${tokens.owner}`);
+  assert.equal(invalidLimit.status, 400);
+
+  const invalidCursor = await request(app)
+    .get(`/api/v1/payments?cursor=${crypto.randomUUID()}`)
+    .set("Authorization", `Bearer ${tokens.owner}`);
+  assert.equal(invalidCursor.status, 400);
+
+  const foreignCursor = await request(app)
+    .get(`/api/v1/payments?cursor=${firstPage.body.data.payments[0].id}`)
+    .set("Authorization", `Bearer ${tokens.outsider}`);
+  assert.equal(foreignCursor.status, 400);
+
+  const outsiderList = await request(app)
+    .get("/api/v1/payments")
+    .set("Authorization", `Bearer ${tokens.outsider}`);
+  assert.equal(outsiderList.status, 200);
+  assert.equal(outsiderList.body.data.payments.length, 0);
+  assert.equal(outsiderList.body.data.page.total, 0);
+
+  const unauthenticated = await request(app).get("/api/v1/payments");
+  assert.equal(unauthenticated.status, 401);
+});

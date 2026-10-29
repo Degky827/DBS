@@ -364,6 +364,39 @@ test("successful transfers update balances and are idempotent", async () => {
   assert.equal(incomingHistory.status, 200);
   assert.equal(incomingHistory.body.data.transactions.length, 2);
 
+  assert.equal(senderHistory.body.data.summary.total, 2);
+  assert.equal(senderHistory.body.data.summary.incomingAmount, "0.00");
+  assert.equal(senderHistory.body.data.summary.outgoingAmount, "21.25");
+  assert.equal(incomingHistory.body.data.summary.incomingAmount, "21.25");
+  assert.equal(incomingHistory.body.data.summary.outgoingAmount, "0.00");
+
+  const referenceSearch = await request(app)
+    .get(
+      `/api/v1/transactions?type=TRANSFER&status=POSTED&q=${encodeURIComponent(
+        created.body.data.transaction.reference.slice(0, 8)
+      )}`
+    )
+    .set("Authorization", auth("owner"));
+  assert.equal(referenceSearch.status, 200);
+  assert.equal(referenceSearch.body.data.transactions.length, 1);
+  assert.equal(referenceSearch.body.data.summary.total, 1);
+
+  const wrongType = await request(app)
+    .get("/api/v1/transactions?type=DEPOSIT")
+    .set("Authorization", auth("owner"));
+  assert.equal(wrongType.status, 200);
+  assert.equal(wrongType.body.data.transactions.length, 0);
+
+  const invalidStatus = await request(app)
+    .get("/api/v1/transactions?status=PENDING")
+    .set("Authorization", auth("owner"));
+  assert.equal(invalidStatus.status, 400);
+
+  const invalidSearch = await request(app)
+    .get("/api/v1/transactions?q=ab")
+    .set("Authorization", auth("owner"));
+  assert.equal(invalidSearch.status, 400);
+
   const invalidFilter = await request(app)
     .get("/api/v1/transactions?limit=101")
     .set("Authorization", auth("owner"));
