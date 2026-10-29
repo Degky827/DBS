@@ -1,48 +1,40 @@
 import { createSlice } from "@reduxjs/toolkit";
 
-const TOKEN_KEY = "meridian_tokens";
-const USER_KEY = "meridian_user";
-
-const loadInitial = () => {
-  try {
-    const tokens = JSON.parse(localStorage.getItem(TOKEN_KEY));
-    const user = JSON.parse(localStorage.getItem(USER_KEY));
-    return { tokens, user, isAuthenticated: !!tokens?.accessToken };
-  } catch {
-    return { tokens: null, user: null, isAuthenticated: false };
-  }
+// Access tokens live only in memory. The refresh token is kept in an
+// HttpOnly cookie set by auth-service and is never readable from JavaScript.
+// The session is reconstructed on reload by calling /auth/refresh.
+const initialState = {
+  user: null,
+  accessToken: null,
+  status: "checking",
+  isAuthenticated: false,
 };
 
 const authSlice = createSlice({
   name: "auth",
-  initialState: loadInitial(),
+  initialState,
   reducers: {
-    setCredentials(state, action) {
-      const { user, accessToken, refreshToken } = action.payload;
+    setSession(state, action) {
+      const { user, accessToken } = action.payload;
       state.user = user;
-      state.tokens = { accessToken, refreshToken };
+      state.accessToken = accessToken;
+      state.status = "authenticated";
       state.isAuthenticated = true;
-      localStorage.setItem(TOKEN_KEY, JSON.stringify(state.tokens));
-      localStorage.setItem(USER_KEY, JSON.stringify(user));
-    },
-    updateTokens(state, action) {
-      const { accessToken, refreshToken } = action.payload;
-      state.tokens = { accessToken, refreshToken };
-      localStorage.setItem(TOKEN_KEY, JSON.stringify(state.tokens));
     },
     setUser(state, action) {
       state.user = action.payload;
-      localStorage.setItem(USER_KEY, JSON.stringify(action.payload));
     },
-    logout(state) {
+    setStatus(state, action) {
+      state.status = action.payload;
+    },
+    clearSession(state) {
       state.user = null;
-      state.tokens = null;
+      state.accessToken = null;
+      state.status = "anonymous";
       state.isAuthenticated = false;
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
     },
   },
 });
 
-export const { setCredentials, updateTokens, setUser, logout } = authSlice.actions;
+export const { setSession, setUser, setStatus, clearSession } = authSlice.actions;
 export default authSlice.reducer;
