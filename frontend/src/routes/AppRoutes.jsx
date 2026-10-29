@@ -13,12 +13,15 @@ import Dashboard from "../pages/dashboard/Dashboard";
 import Wallet from "../pages/wallet/Wallet";
 import Transactions from "../pages/transactions/Transactions";
 import Payments from "../pages/payments/Payments";
-import KycVerification from "../pages/dashboard/KycVerification";
+import KycOverview from "../pages/kyc/KycOverview";
+import KycWizard from "../pages/kyc/KycWizard";
+import KycStatus from "../pages/kyc/KycStatus";
 import OfficerReviews from "../pages/kyc/OfficerReviews";
 import Profile from "../pages/profile/Profile";
 import ViewProfile from "../pages/profile/ViewProfile";
 import EditProfile from "../pages/profile/EditProfile";
 import ChangePassword from "../pages/profile/ChangePassword";
+import Settings from "../pages/settings/Settings";
 import HealthMonitor from "../pages/health/HealthMonitor";
 import NotFound from "../pages/errors/NotFound";
 import Forbidden from "../pages/errors/Forbidden";
@@ -82,10 +85,10 @@ function AppRoutes() {
         <Route path="/" element={<Landing />} />
 
         <Route element={<AuthLayout />}>
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route element={<GuestRoute />}>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
-            <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
           </Route>
@@ -97,11 +100,14 @@ function AppRoutes() {
             <Route path="/wallet" element={<Wallet />} />
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/payments" element={<Payments />} />
-            <Route path="/kyc" element={<KycVerification />} />
+            <Route path="/kyc" element={<KycOverview />} />
+            <Route path="/kyc/verify" element={<KycWizard />} />
+            <Route path="/kyc/status" element={<KycStatus />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/view" element={<ViewProfile />} />
             <Route path="/profile/edit" element={<EditProfile />} />
             <Route path="/profile/security" element={<ChangePassword />} />
+            <Route path="/settings" element={<Settings />} />
             <Route path="/health" element={<HealthMonitor />} />
             <Route element={<ProtectedRoute roles={OFFICER_ROLES} />}>
               <Route path="/officer/reviews" element={<OfficerReviews />} />
