@@ -15,6 +15,17 @@ const transferSchema = z
   })
   .strict();
 
+const reversalSchema = z
+  .object({
+    amount: amountSchema.optional(),
+    reason: z
+      .string()
+      .trim()
+      .min(5, "Reason must be at least 5 characters")
+      .max(500, "Reason must be at most 500 characters"),
+  })
+  .strict();
+
 const transactionHistorySchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(100).default(25),
@@ -29,4 +40,4 @@ const transactionHistorySchema = z
     { path: ["to"], message: "to must be later than or equal to from" }
   );
 
-module.exports = { transferSchema, transactionHistorySchema };
+module.exports = { transferSchema, reversalSchema, transactionHistorySchema };
