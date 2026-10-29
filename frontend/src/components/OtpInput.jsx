@@ -39,7 +39,7 @@ export default function OtpInput({ value, onChange, onComplete }) {
   };
 
   return (
-    <div className="flex gap-2.5" onPaste={handlePaste}>
+    <div className="grid grid-cols-6 gap-2.5" onPaste={handlePaste}>
       {digits.map((digit, i) => (
         <input
           key={i}
@@ -52,7 +52,7 @@ export default function OtpInput({ value, onChange, onComplete }) {
           inputMode="numeric"
           autoComplete="one-time-code"
           aria-label={`Digit ${i + 1}`}
-          className="num h-14 w-11 rounded-lg border border-ink-200 bg-white text-center text-xl font-bold text-navy-900 outline-none transition focus:border-navy-500 focus:ring-4 focus:ring-navy-500/10"
+          className="num h-14 w-full min-w-0 rounded-lg border border-ink-200 bg-white text-center text-xl font-bold text-midnight outline-none transition focus:border-brand-600 focus:ring-4 focus:ring-brand-600/10"
         />
       ))}
     </div>
