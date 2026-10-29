@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Eye, EyeOff, ArrowRight } from "lucide-react";
+import { Eye, EyeOff, ArrowRight, Lock } from "lucide-react";
 import { loginUser } from "../../services/authService";
 import { normalizeApiError } from "../../utils/apiError";
 import Alert from "../../components/ui/Alert";
@@ -35,7 +35,9 @@ export default function Login() {
     try {
       await loginUser(form.email, form.password);
       const from = location.state?.from?.pathname;
-      navigate(from && from !== "/" ? from : "/dashboard", { replace: true });
+      navigate(from && from !== "/" && from !== "/login" ? from : "/dashboard", {
+        replace: true,
+      });
     } catch (err) {
       const { message, fields } = normalizeApiError(err);
       setServerError(message);
@@ -47,10 +49,14 @@ export default function Login() {
 
   return (
     <div>
-      <p className="eyebrow">Welcome back</p>
-      <h1 className="mt-2 text-3xl font-extrabold">Sign in to your account</h1>
-      <p className="mt-2 text-[15px] text-ink-500">
-        Use the email address registered with Meridian Bank.
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-100 bg-brand-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-700">
+        <Lock size={12} /> Secure sign-in
+      </span>
+      <h1 className="mt-4 text-[32px] font-extrabold leading-tight text-midnight">
+        Welcome back
+      </h1>
+      <p className="mt-2 text-[15px] leading-relaxed text-muted">
+        Sign in with the email address registered with Meridian Bank.
       </p>
 
       {location.state?.registered && !serverError && (
@@ -62,6 +68,12 @@ export default function Login() {
       {location.state?.verified && !serverError && (
         <Alert tone="success" className="mt-5">
           Your email has been verified. Sign in to continue.
+        </Alert>
+      )}
+
+      {location.state?.reset && !serverError && (
+        <Alert tone="success" className="mt-5">
+          Your password has been reset. Sign in with your new password.
         </Alert>
       )}
 
@@ -94,7 +106,7 @@ export default function Login() {
             </label>
             <Link
               to="/forgot-password"
-              className="text-[13px] font-semibold text-navy-600 hover:underline"
+              className="text-[13px] font-semibold text-brand-600 hover:text-brand-700 hover:underline"
             >
               Forgot password?
             </Link>
@@ -114,7 +126,7 @@ export default function Login() {
               type="button"
               onClick={() => setShowPassword((v) => !v)}
               aria-label={showPassword ? "Hide password" : "Show password"}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 transition hover:text-navy-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 transition hover:text-brand-600"
             >
               {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
@@ -122,7 +134,7 @@ export default function Login() {
           {errors.password && <p className="field-error">{errors.password}</p>}
         </div>
 
-        <button type="submit" className="btn-primary w-full" disabled={submitting}>
+        <button type="submit" className="btn-brand w-full" disabled={submitting}>
           {submitting ? (
             <>
               <Spinner size={17} /> Signing in…
@@ -135,12 +147,13 @@ export default function Login() {
         </button>
       </form>
 
-      <p className="mt-7 text-center text-sm text-ink-500">
+      <div className="mt-8 rounded-xl border border-ink-200 bg-ink-50 px-4 py-3 text-[12.5px] leading-relaxed text-muted">
         New to Meridian?{" "}
-        <Link to="/register" className="link">
+        <Link to="/register" className="font-semibold text-brand-700 hover:underline">
           Open an account
-        </Link>
-      </p>
+        </Link>{" "}
+        — registration takes about two minutes and ends with a one-time email code.
+      </div>
     </div>
   );
 }
