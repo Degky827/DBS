@@ -532,15 +532,18 @@ const listTransactions = async (userId, options) => {
     }
   }
 
-  const page = await prisma.transaction.findMany({
-    where,
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    ...(options.cursor
-      ? { cursor: { id: options.cursor }, skip: 1 }
-      : {}),
-    take: options.limit + 1,
-    select: transactionFields,
-  });
+  const [page, total] = await Promise.all([
+    prisma.transaction.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      ...(options.cursor
+        ? { cursor: { id: options.cursor }, skip: 1 }
+        : {}),
+      take: options.limit + 1,
+      select: transactionFields,
+    }),
+    prisma.transaction.count({ where }),
+  ]);
   const hasMore = page.length > options.limit;
   const transactions = page.slice(0, options.limit);
   return {
@@ -549,6 +552,7 @@ const listTransactions = async (userId, options) => {
       limit: options.limit,
       hasMore,
       nextCursor: hasMore ? transactions[transactions.length - 1].id : null,
+      total,
     },
   };
 };
