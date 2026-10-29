@@ -1,4 +1,20 @@
 node_modules
+npm-debug.log*
+coverage
+
+# Secrets - never bake .env into the image
 .env
-npm-debug.log
+.env.*
+!.env.example
+
+# Local runtime data
+uploads
+storage
+
 .git
+.gitignore
+.vscode
+.idea
+.DS_Store
+Dockerfile
+.dockerignore
