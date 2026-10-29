@@ -10,7 +10,12 @@ const BRAND = {
   line: "#e4e8f0",
 };
 
-const layout = ({ heading, body }) => `
+const layout = ({
+  heading,
+  body,
+  footerNote = `This message was sent by Meridian Bank. If you did not request this code,
+                  you can safely ignore this email. Never share your one-time codes with anyone.`,
+}) => `
 <!doctype html>
 <html>
   <body style="margin:0;padding:0;background:#f2f6fc;font-family:Arial,Helvetica,sans-serif;">
@@ -33,8 +38,7 @@ const layout = ({ heading, body }) => `
             <tr>
               <td style="padding:20px 32px;border-top:1px solid ${BRAND.line};">
                 <p style="margin:0;font-size:12px;color:${BRAND.muted};line-height:1.6;">
-                  This message was sent by Meridian Bank. If you did not request this code,
-                  you can safely ignore this email. Never share your one-time codes with anyone.
+                  ${footerNote}
                 </p>
               </td>
             </tr>
@@ -83,7 +87,7 @@ const sendViaApi = async ({ to, subject, html }) => {
     throw new Error(`Brevo API responded ${response.status}: ${detail.slice(0, 300)}`);
   }
 
-  logger.info({ to }, "OTP email sent via Brevo API");
+  logger.info({ to }, "Email sent via Brevo API");
 };
 
 const sendViaSmtp = async ({ to, subject, html }) => {
@@ -107,7 +111,7 @@ const sendViaSmtp = async ({ to, subject, html }) => {
     html,
   });
 
-  logger.info({ to }, "OTP email sent via SMTP");
+  logger.info({ to }, "Email sent via SMTP");
 };
 
 const sendOtpEmail = async ({ to, otp, purpose }) => {
@@ -144,4 +148,59 @@ const sendOtpEmail = async ({ to, otp, purpose }) => {
   }
 };
 
-module.exports = { sendOtpEmail };
+const sendSecurityAlertEmail = async ({
+  to,
+  changedAt = new Date(),
+  via = "PASSWORD_CHANGE",
+}) => {
+  const changed = new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(changedAt);
+
+  const html = layout({
+    heading: "Your password was changed",
+    body: `
+      <p style="margin:0 0 16px;font-size:14px;color:${BRAND.ink};line-height:1.6;">
+        The password for your Meridian Bank account was changed on ${changed} UTC.
+      </p>
+      <p style="margin:0 0 16px;font-size:14px;color:${BRAND.ink};line-height:1.6;">
+        Every other active session was signed out at the same time.
+      </p>
+      <p style="margin:0;font-size:13px;color:${BRAND.muted};line-height:1.6;">
+        If you made this change, no action is needed. If you did not, reset your password
+        immediately and contact Meridian Bank support.
+      </p>
+    `,
+    footerNote: `This is an automated security alert from Meridian Bank. You receive it because
+                  security alert emails are enabled for your account.`,
+  });
+
+  if (!env.BREVO_API_KEY) {
+    logger.warn({ to, purpose: via }, "Brevo key not set — security alert delivery unavailable");
+    return { delivered: false };
+  }
+
+  const transport = resolveTransport();
+  const sender = transport === "api" ? sendViaApi : sendViaSmtp;
+
+  try {
+    await sender({
+      to,
+      subject: "Security alert — your Meridian Bank password was changed",
+      html,
+    });
+    return { delivered: true, transport };
+  } catch (error) {
+    logger.error(
+      { to, purpose: via, transport, error: error.message },
+      "Failed to send security alert email"
+    );
+    throw new Error(`Failed to send security alert email: ${error.message}`, {
+      cause: error,
+    });
+  }
+};
+
+module.exports = { sendOtpEmail, sendSecurityAlertEmail };
