@@ -500,7 +500,7 @@
       "get": {
         "tags": ["Transactions"],
         "summary": "List the authenticated user's transaction history",
-        "description": "Returns a cursor-paginated transfer history visible to the authenticated user. Filter by direction and inclusive ISO 8601 date bounds.",
+        "description": "Returns a cursor-paginated transfer history visible to the authenticated user. Filter by direction, transaction type, status, reference search, and inclusive ISO 8601 date bounds. The summary reflects the applied filters across both directions.",
         "operationId": "listMyTransactions",
         "security": [{ "devBearer": [] }],
         "parameters": [
@@ -519,6 +519,24 @@
             "name": "direction",
             "in": "query",
             "schema": { "type": "string", "enum": ["all", "incoming", "outgoing"], "default": "all" }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Filter by transaction type.",
+            "schema": { "type": "string", "enum": ["TRANSFER", "DEPOSIT"] }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by the transaction's authoritative status.",
+            "schema": { "type": "string", "enum": ["POSTED", "PARTIALLY_REVERSED", "REVERSED"] }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive search within the transaction reference (3-100 characters).",
+            "schema": { "type": "string", "minLength": 3, "maxLength": 100 }
           },
           {
             "name": "from",
@@ -552,6 +570,40 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/v1/payments": {
+      "get": {
+        "tags": ["Payments"],
+        "summary": "List the authenticated user's payments",
+        "description": "Returns the authenticated user's deposits, newest first, as a cursor-paginated list. Requires an access token; only payments belonging to the caller are returned.",
+        "operationId": "listMyPayments",
+        "security": [{ "devBearer": [] }],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Payment id returned by the previous page.",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payments fetched",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentsResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
@@ -1711,6 +1763,16 @@
                     "type": "array",
                     "items": { "$ref": "#/components/schemas/Transaction" }
                   },
+                  "summary": {
+                    "type": "object",
+                    "required": ["total", "incomingAmount", "outgoingAmount"],
+                    "description": "Totals for every transaction matching the applied date, type, status, and reference filters, across both directions. Outgoing includes fees.",
+                    "properties": {
+                      "total": { "type": "integer", "minimum": 0 },
+                      "incomingAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+                      "outgoingAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" }
+                    }
+                  },
                   "page": {
                     "type": "object",
                     "required": ["limit", "hasMore", "nextCursor", "total"],
@@ -1772,6 +1834,35 @@
                 "type": "object",
                 "properties": {
                   "payment": { "$ref": "#/components/schemas/Payment" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PaymentsResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "payments": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/Payment" }
+                  },
+                  "page": {
+                    "type": "object",
+                    "required": ["limit", "hasMore", "nextCursor", "total"],
+                    "properties": {
+                      "limit": { "type": "integer" },
+                      "hasMore": { "type": "boolean" },
+                      "nextCursor": { "type": "string", "format": "uuid", "nullable": true },
+                      "total": { "type": "integer", "minimum": 0 }
+                    }
+                  }
                 }
               }
             }

@@ -33,6 +33,9 @@ const transactionHistorySchema = z
     from: z.iso.datetime({ offset: true }).optional(),
     to: z.iso.datetime({ offset: true }).optional(),
     direction: z.enum(["all", "incoming", "outgoing"]).default("all"),
+    type: z.enum(["TRANSFER", "DEPOSIT"]).optional(),
+    status: z.enum(["POSTED", "PARTIALLY_REVERSED", "REVERSED"]).optional(),
+    q: z.string().trim().min(3).max(100).optional(),
   })
   .strict()
   .refine(

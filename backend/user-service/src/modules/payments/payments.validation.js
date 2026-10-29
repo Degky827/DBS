@@ -31,4 +31,15 @@ const withdrawalSchema = z
   })
   .strict();
 
-module.exports = { depositSchema, withdrawalSchema };
+const paymentHistorySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(50).default(10),
+    cursor: z.uuid().optional(),
+  })
+  .strict();
+
+module.exports = {
+  depositSchema,
+  withdrawalSchema,
+  paymentHistorySchema,
+};

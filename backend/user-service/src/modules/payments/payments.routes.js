@@ -14,7 +14,12 @@ const {
   setCustomPaymentsService,
 } = require("./payments.factory");
 const withdrawalsService = require("./withdrawals.service");
-const { depositSchema, withdrawalSchema } = require("./payments.validation");
+const paymentsHistoryService = require("./paymentsHistory.service");
+const {
+  depositSchema,
+  withdrawalSchema,
+  paymentHistorySchema,
+} = require("./payments.validation");
 
 const requireIdempotencyKey = (req, res, next) => {
   const key = req.get("Idempotency-Key");
@@ -37,6 +42,29 @@ const requireConfiguredProvider = (req, res, next) => {
   } catch (error) {
     return next(error);
   }
+};
+
+const listPayments = async (req, res) => {
+  const userId = await usersService.getResolvedUserId(req.user);
+  const result = await paymentsHistoryService.listPayments(
+    userId,
+    req.paymentHistoryQuery
+  );
+  return ApiResponse.success(res, result, "Payments fetched");
+};
+
+const validatePaymentHistoryQuery = (req, res, next) => {
+  const result = paymentHistorySchema.safeParse(req.query);
+  if (!result.success) {
+    const errors = {};
+    for (const issue of result.error.issues) {
+      const key = issue.path.length ? issue.path.join(".") : "_query";
+      if (!errors[key]) errors[key] = issue.message;
+    }
+    return next(ApiError.validation(errors));
+  }
+  req.paymentHistoryQuery = result.data;
+  return next();
 };
 
 const createDeposit = async (req, res) => {
@@ -135,6 +163,14 @@ const cancelWithdrawal = async (req, res) => {
     result.replayed ? 200 : 200
   );
 };
+
+// Authenticated payment history
+router.get(
+  ROUTES.PAYMENTS.ROOT,
+  authenticate,
+  validatePaymentHistoryQuery,
+  listPayments
+);
 
 // Authenticated deposit initiation
 router.post(

@@ -517,7 +517,15 @@ const listTransactions = async (userId, options) => {
           },
         }
       : {};
-  const where = { ...walletFilter, ...dateFilter };
+  const attributeFilter = {
+    ...(options.type ? { type: options.type } : {}),
+    ...(options.status ? { status: options.status } : {}),
+    ...(options.q
+      ? { reference: { contains: options.q, mode: "insensitive" } }
+      : {}),
+  };
+  const where = { ...walletFilter, ...dateFilter, ...attributeFilter };
+  const summaryWhere = { ...dateFilter, ...attributeFilter };
 
   if (options.cursor) {
     const cursorTransaction = await prisma.transaction.findFirst({
@@ -532,7 +540,7 @@ const listTransactions = async (userId, options) => {
     }
   }
 
-  const [page, total] = await Promise.all([
+  const [page, total, incomingSummary, outgoingSummary] = await Promise.all([
     prisma.transaction.findMany({
       where,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -543,11 +551,31 @@ const listTransactions = async (userId, options) => {
       select: transactionFields,
     }),
     prisma.transaction.count({ where }),
+    prisma.transaction.aggregate({
+      where: { destinationWalletId: wallet.id, ...summaryWhere },
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
+    prisma.transaction.aggregate({
+      where: { sourceWalletId: wallet.id, ...summaryWhere },
+      _sum: { amount: true, feeAmount: true },
+      _count: { _all: true },
+    }),
   ]);
   const hasMore = page.length > options.limit;
   const transactions = page.slice(0, options.limit);
+  const outgoingTotal = new Prisma.Decimal(
+    outgoingSummary._sum.amount ?? 0
+  ).plus(outgoingSummary._sum.feeAmount ?? 0);
   return {
     transactions: transactions.map(formatTransaction),
+    summary: {
+      total: incomingSummary._count._all + outgoingSummary._count._all,
+      incomingAmount: new Prisma.Decimal(
+        incomingSummary._sum.amount ?? 0
+      ).toFixed(2),
+      outgoingAmount: outgoingTotal.toFixed(2),
+    },
     page: {
       limit: options.limit,
       hasMore,

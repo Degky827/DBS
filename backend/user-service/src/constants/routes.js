@@ -31,6 +31,7 @@ const ROUTES = Object.freeze({
     PAYMENT_RECONCILIATION: "/admin/payments/reconciliation",
   }),
   PAYMENTS: Object.freeze({
+    ROOT: "/payments",
     DEPOSITS: "/payments/deposits",
     DEPOSITS_VERIFY: "/payments/deposits/:reference/verify",
     DEPOSIT_REFUNDS: "/payments/deposits/:reference/refunds",
