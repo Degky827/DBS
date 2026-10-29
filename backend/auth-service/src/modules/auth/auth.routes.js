@@ -3,37 +3,89 @@ const router = require("express").Router();
 const ROUTES = require("../../constants/routes");
 const validate = require("../../middlewares/validate");
 const authenticate = require("../../middlewares/authenticate");
-const { authLimiter } = require("../../middlewares/rateLimiter");
+const requireTrustedOrigin = require("../../middlewares/requireTrustedOrigin");
+const {
+  loginLimiter,
+  sensitiveAuthLimiter,
+  refreshLimiter,
+} = require("../../middlewares/rateLimiter");
 const authController = require("./auth.controller");
 const {
   registerSchema,
   loginSchema,
   verifyEmailSchema,
   resendOtpSchema,
-  refreshSchema,
-  logoutSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
 } = require("./auth.validation");
 
-router.use(authLimiter);
+router.use((req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Pragma", "no-cache");
+  next();
+});
 
-router.post(ROUTES.AUTH.REGISTER, validate(registerSchema), authController.register);
-
-router.post(ROUTES.AUTH.LOGIN, validate(loginSchema), authController.login);
-
+// Ordinary authenticated account reads use only the global limiter.
 router.get(ROUTES.AUTH.ME, authenticate, authController.me);
 
-router.post(ROUTES.AUTH.VERIFY_EMAIL, validate(verifyEmailSchema), authController.verifyEmail);
+// Credential-adjacent endpoints receive stricter, purpose-specific budgets.
+router.post(
+  ROUTES.AUTH.REGISTER,
+  sensitiveAuthLimiter,
+  validate(registerSchema),
+  authController.register
+);
 
-router.post(ROUTES.AUTH.RESEND_OTP, validate(resendOtpSchema), authController.resendOtp);
+router.post(
+  ROUTES.AUTH.LOGIN,
+  loginLimiter,
+  requireTrustedOrigin,
+  validate(loginSchema),
+  authController.login
+);
 
-router.post(ROUTES.AUTH.REFRESH, validate(refreshSchema), authController.refresh);
+router.post(
+  ROUTES.AUTH.VERIFY_EMAIL,
+  sensitiveAuthLimiter,
+  validate(verifyEmailSchema),
+  authController.verifyEmail
+);
 
-router.post(ROUTES.AUTH.LOGOUT, validate(logoutSchema), authController.logout);
+router.post(
+  ROUTES.AUTH.RESEND_OTP,
+  sensitiveAuthLimiter,
+  validate(resendOtpSchema),
+  authController.resendOtp
+);
 
-router.post(ROUTES.AUTH.FORGOT_PASSWORD, validate(forgotPasswordSchema), authController.forgotPassword);
+router.post(
+  ROUTES.AUTH.FORGOT_PASSWORD,
+  sensitiveAuthLimiter,
+  validate(forgotPasswordSchema),
+  authController.forgotPassword
+);
 
-router.post(ROUTES.AUTH.RESET_PASSWORD, validate(resetPasswordSchema), authController.resetPassword);
+router.post(
+  ROUTES.AUTH.RESET_PASSWORD,
+  sensitiveAuthLimiter,
+  validate(resetPasswordSchema),
+  authController.resetPassword
+);
+
+// Cookie-authenticated session endpoints: separate refresh budget and
+// origin validation in addition to SameSite cookies.
+router.post(
+  ROUTES.AUTH.REFRESH,
+  refreshLimiter,
+  requireTrustedOrigin,
+  authController.refresh
+);
+
+router.post(
+  ROUTES.AUTH.LOGOUT,
+  refreshLimiter,
+  requireTrustedOrigin,
+  authController.logout
+);
 
 module.exports = router;
