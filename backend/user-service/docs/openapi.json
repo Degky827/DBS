@@ -1713,11 +1713,16 @@
                   },
                   "page": {
                     "type": "object",
-                    "required": ["limit", "hasMore", "nextCursor"],
+                    "required": ["limit", "hasMore", "nextCursor", "total"],
                     "properties": {
                       "limit": { "type": "integer" },
                       "hasMore": { "type": "boolean" },
-                      "nextCursor": { "type": "string", "format": "uuid", "nullable": true }
+                      "nextCursor": { "type": "string", "format": "uuid", "nullable": true },
+                      "total": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of transactions matching the current filters, unaffected by pagination."
+                      }
                     }
                   }
                 }
