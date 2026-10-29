@@ -90,6 +90,8 @@ jobs:
 
       - name: Generate Prisma client
         working-directory: backend/auth-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/auth_test?schema=public
         run: npx prisma generate
 
       - name: Run migrations
@@ -151,6 +153,8 @@ jobs:
 
       - name: Generate Prisma client
         working-directory: backend/user-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/user_test?schema=public
         run: npx prisma generate
 
       - name: Run migrations
@@ -174,6 +178,8 @@ jobs:
 
       - name: Generate KYC Prisma client
         working-directory: backend/kyc-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
         run: npx prisma generate
 
       - name: Run KYC migrations for cross-service test
@@ -237,6 +243,8 @@ jobs:
 
       - name: Generate Prisma client
         working-directory: backend/kyc-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
         run: npx prisma generate
 
       - name: Run migrations
