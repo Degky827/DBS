@@ -451,7 +451,35 @@ test(
     const queue = await kycRequest("/officer/reviews", { token: officerToken });
     assert.equal(queue.status, 200);
     const queued = (await queue.json()).data;
-    assert.equal(queued.some((item) => item.id === reviewableSubmissionId), true);
+    assert.equal(
+      queued.submissions.some((item) => item.id === reviewableSubmissionId),
+      true
+    );
+
+    const stats = await kycRequest("/officer/reviews/stats", { token: officerToken });
+    assert.equal(stats.status, 200);
+    const statsBody = (await stats.json()).data;
+    assert.equal(typeof statsBody.byStatus.PENDING_REVIEW, "number");
+
+    const filteredQueue = await kycRequest(
+      "/officer/reviews?status=PENDING_REVIEW&sort=newest&limit=5",
+      { token: officerToken }
+    );
+    assert.equal(filteredQueue.status, 200);
+    assert.equal((await filteredQueue.json()).data.submissions.length <= 5, true);
+
+    const detail = await kycRequest(
+      `/officer/submissions/${reviewableSubmissionId}`,
+      { token: officerToken }
+    );
+    assert.equal(detail.status, 200);
+    assert.equal((await detail.json()).data.submission.id, reviewableSubmissionId);
+
+    const detailForbidden = await kycRequest(
+      `/officer/submissions/${reviewableSubmissionId}`,
+      { token: applicantToken }
+    );
+    assert.equal(detailForbidden.status, 403);
 
     const decide = (token) =>
       kycRequest(`/officer/submissions/${reviewableSubmissionId}/decision`, {
