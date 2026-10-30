@@ -12,6 +12,8 @@ import ResetPassword from "../pages/auth/ResetPassword";
 import Dashboard from "../pages/dashboard/Dashboard";
 import Wallet from "../pages/wallet/Wallet";
 import Transactions from "../pages/transactions/Transactions";
+import TransactionDetails from "../pages/transactions/TransactionDetails";
+import Transfers from "../pages/transfers/Transfers";
 import Payments from "../pages/payments/Payments";
 import KycOverview from "../pages/kyc/KycOverview";
 import KycWizard from "../pages/kyc/KycWizard";
@@ -98,7 +100,9 @@ function AppRoutes() {
           <Route element={<MainLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/wallet" element={<Wallet />} />
+            <Route path="/transfers" element={<Transfers />} />
             <Route path="/transactions" element={<Transactions />} />
+            <Route path="/transactions/:reference" element={<TransactionDetails />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/kyc" element={<KycOverview />} />
             <Route path="/kyc/verify" element={<KycWizard />} />

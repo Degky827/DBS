@@ -21,7 +21,13 @@ import { Skeleton } from "../../components/ui/Spinner";
 import { useAccount } from "../../context/AccountContext";
 import { listMyTransactions } from "../../services/walletService";
 import { normalizeApiError } from "../../utils/apiError";
-import { formatCurrency, formatDateTime, greetingForNow, titleCase, todayLong } from "../../utils/format";
+import {
+  formatCurrency,
+  formatDateTime,
+  greetingForNow,
+  titleCase,
+  todayLong,
+} from "../../utils/format";
 import { isKycApproved, kycCopy } from "../../utils/kyc";
 
 const DIRECTIONS = [
@@ -131,7 +137,10 @@ export default function Dashboard() {
   }, [accountLoading, wallet, direction, refreshKey]);
 
   const firstName = profile?.firstName || authUser?.firstName || "";
-  const fullName = [profile?.firstName || authUser?.firstName, profile?.lastName || authUser?.lastName]
+  const fullName = [
+    profile?.firstName || authUser?.firstName,
+    profile?.lastName || authUser?.lastName,
+  ]
     .filter(Boolean)
     .join(" ");
   const approved = isKycApproved(kyc);
@@ -155,7 +164,10 @@ export default function Dashboard() {
           </h1>
           <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
             <span>{todayLong()}</span>
-            <span className="hidden h-1 w-1 rounded-full bg-ink-300 sm:inline-block" aria-hidden="true" />
+            <span
+              className="hidden h-1 w-1 rounded-full bg-ink-300 sm:inline-block"
+              aria-hidden="true"
+            />
             <span>{profile?.email || authUser?.email}</span>
           </p>
         </div>
@@ -168,7 +180,7 @@ export default function Dashboard() {
           >
             <RefreshCw size={15} className={isRefreshing ? "animate-spin" : ""} /> Refresh
           </button>
-          <Link to={approved ? "/wallet#transfer" : "/kyc"} className="btn-primary">
+          <Link to={approved ? "/transfers" : "/kyc"} className="btn-primary">
             {approved ? <Send size={16} /> : <LockKeyhole size={16} />}
             {approved ? "Send money" : "Verify to send"}
           </Link>
@@ -229,7 +241,13 @@ export default function Dashboard() {
           to="/kyc"
           actionLabel={kyc ? "Details" : "Start"}
           busy={accountLoading}
-          tone={kyc?.status === "APPROVED" ? "success" : kyc?.status === "REJECTED" ? "danger" : "warning"}
+          tone={
+            kyc?.status === "APPROVED"
+              ? "success"
+              : kyc?.status === "REJECTED"
+                ? "danger"
+                : "warning"
+          }
         />
 
         <SummaryCard
@@ -305,7 +323,11 @@ export default function Dashboard() {
           ) : null}
 
           {accountLoading || (wallet && txLoading) ? (
-            <div className="space-y-3 px-5 py-5" role="status" aria-label="Loading recent transactions">
+            <div
+              className="space-y-3 px-5 py-5"
+              role="status"
+              aria-label="Loading recent transactions"
+            >
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />
@@ -337,7 +359,7 @@ export default function Dashboard() {
                   : "Try a different filter to see other activity."}
               </p>
               {approved && direction === "all" ? (
-                <Link to="/wallet#transfer" className="btn-primary mt-4">
+                <Link to="/transfers" className="btn-primary mt-4">
                   <Send size={15} /> Send money
                 </Link>
               ) : null}
@@ -352,8 +374,12 @@ export default function Dashboard() {
                       <th scope="col">Date &amp; time</th>
                       <th scope="col">Description</th>
                       <th scope="col">Type</th>
-                      <th scope="col" className="text-right">Amount</th>
-                      <th scope="col" className="text-right">Status</th>
+                      <th scope="col" className="text-right">
+                        Amount
+                      </th>
+                      <th scope="col" className="text-right">
+                        Status
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -375,7 +401,9 @@ export default function Dashboard() {
                           <td className="whitespace-nowrap text-[13px] font-semibold text-midnight">
                             {outgoing ? "Internal transfer sent" : "Internal transfer received"}
                           </td>
-                          <td className="text-[12.5px] text-muted">{titleCase(transaction.type)}</td>
+                          <td className="text-[12.5px] text-muted">
+                            {titleCase(transaction.type)}
+                          </td>
                           <td
                             className={`num whitespace-nowrap text-right text-[13px] font-extrabold ${
                               outgoing ? "text-midnight" : "text-success"
@@ -432,7 +460,9 @@ export default function Dashboard() {
                         </p>
                         <div className="mt-1.5 flex items-center gap-2">
                           <StatusBadge value={transaction.status} />
-                          <span className="text-[11px] text-muted">{titleCase(transaction.type)}</span>
+                          <span className="text-[11px] text-muted">
+                            {titleCase(transaction.type)}
+                          </span>
                         </div>
                       </div>
                     </li>
@@ -460,7 +490,11 @@ export default function Dashboard() {
                   Identity verification
                 </p>
                 <h2 className="mt-1 text-[15px] font-extrabold text-midnight">
-                  {accountLoading ? "Checking status" : kycUnavailable ? "Status unavailable" : copy.headline}
+                  {accountLoading
+                    ? "Checking status"
+                    : kycUnavailable
+                      ? "Status unavailable"
+                      : copy.headline}
                 </h2>
               </div>
               {accountLoading ? (
@@ -527,10 +561,10 @@ export default function Dashboard() {
                 to="/wallet"
                 icon={WalletCards}
                 label="View wallet"
-                hint={wallet ? "Balance and transfer form" : "Create your ETB wallet"}
+                hint={wallet ? "Balance, activity and funding" : "Create your ETB wallet"}
               />
               <QuickAction
-                to={approved ? "/wallet#transfer" : "/kyc"}
+                to={approved ? "/transfers" : "/kyc"}
                 icon={approved ? Send : LockKeyhole}
                 label="Send money"
                 hint={approved ? "Internal wallet transfer" : "Verify your identity first"}

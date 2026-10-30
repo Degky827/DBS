@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Send,
   Settings,
   ShieldAlert,
   ShieldCheck,
@@ -28,8 +29,10 @@ import { isOfficer, roleLabel } from "../utils/roles";
 import { initialsOf } from "../utils/format";
 
 const PAGE_META = [
+  { pattern: /^\/transactions\/[^/]+$/, title: "Transaction details", parent: "Banking" },
   { prefix: "/dashboard", title: "Dashboard", parent: "Overview" },
   { prefix: "/wallet", title: "Wallet", parent: "Banking" },
+  { prefix: "/transfers", title: "Send money", parent: "Banking" },
   { prefix: "/transactions", title: "Transactions", parent: "Banking" },
   { prefix: "/payments", title: "Payments", parent: "Banking" },
   { prefix: "/kyc/verify", title: "Verify identity", parent: "Identity verification" },
@@ -47,8 +50,10 @@ const PAGE_META = [
 
 const pageMeta = (pathname) => {
   return (
-    PAGE_META.find(
-      (entry) => pathname === entry.prefix || pathname.startsWith(`${entry.prefix}/`)
+    PAGE_META.find((entry) =>
+      entry.pattern
+        ? entry.pattern.test(pathname)
+        : pathname === entry.prefix || pathname.startsWith(`${entry.prefix}/`)
     ) || { title: "Meridian", parent: "" }
   );
 };
@@ -59,6 +64,7 @@ const NAV_SECTIONS = [
     items: [
       { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
       { to: "/wallet", label: "Wallet", icon: WalletCards },
+      { to: "/transfers", label: "Send money", icon: Send },
       { to: "/transactions", label: "Transactions", icon: ArrowLeftRight },
       { to: "/payments", label: "Payments", icon: CreditCard },
     ],
@@ -108,7 +114,9 @@ function SidebarNav({ user, onNavigate, id }) {
                     <Icon
                       size={17}
                       strokeWidth={isActive ? 2.2 : 1.9}
-                      className={isActive ? "text-white" : "text-white/55 group-hover:text-white/80"}
+                      className={
+                        isActive ? "text-white" : "text-white/55 group-hover:text-white/80"
+                      }
                     />
                     {label}
                   </>
@@ -221,9 +229,7 @@ function AuthenticatedLayout() {
           <p className="mt-1.5 truncate text-[13px] font-bold text-white">
             {displayUser?.email || "—"}
           </p>
-          <p className="mt-0.5 text-xs text-white/45">
-            {roleLabel(displayUser?.role)} account
-          </p>
+          <p className="mt-0.5 text-xs text-white/45">{roleLabel(displayUser?.role)} account</p>
         </div>
         <button
           type="button"
@@ -247,7 +253,7 @@ function AuthenticatedLayout() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[260px] flex-col border-r border-white/5 bg-midnight px-4 py-6 lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[260px] flex-col border-r border-white/5 bg-midnight px-4 py-6 lg:flex print:hidden">
         {sidebarContent()}
       </aside>
 
@@ -289,8 +295,8 @@ function AuthenticatedLayout() {
         ) : null}
       </AnimatePresence>
 
-      <div className="lg:pl-[260px]">
-        <header className="sticky top-0 z-30 border-b border-ink-200/80 bg-white/95 backdrop-blur">
+      <div className="lg:pl-[260px] print:pl-0">
+        <header className="sticky top-0 z-30 border-b border-ink-200/80 bg-white/95 backdrop-blur print:hidden">
           <div className="mx-auto flex h-16 w-full max-w-[1280px] items-center gap-3 px-4 sm:px-6 lg:px-8">
             <button
               ref={menuButtonRef}
@@ -484,7 +490,7 @@ function AuthenticatedLayout() {
 
         <main
           id="main-content"
-          className="mx-auto w-full max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8"
+          className="mx-auto w-full max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8 print:max-w-none print:p-0"
         >
           <Outlet />
         </main>
