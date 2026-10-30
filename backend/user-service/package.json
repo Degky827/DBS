@@ -20,6 +20,7 @@
     "test:payments-adapter": "node --test tests/chapa.adapter.test.js",
     "test:ledger": "node --test tests/ledger.test.js",
     "test:policies": "node --test tests/policies.test.js",
+    "test:admin": "node --test tests/admin.test.js",
     "test:financial-integrity": "node --test tests/financialIntegrity.test.js",
     "test:integration": "node --test tests/kycService.integration.test.js",
     "test:phase3": "node --test --test-concurrency=1 tests/wallets.test.js tests/payments.test.js tests/ledger.test.js tests/policies.test.js",

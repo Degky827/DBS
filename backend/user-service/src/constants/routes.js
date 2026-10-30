@@ -26,9 +26,20 @@ const ROUTES = Object.freeze({
     REVERSALS: "/transactions/:reference/reversals",
   }),
   ADMIN: Object.freeze({
+    OVERVIEW: "/admin/overview",
+    ANALYTICS: "/admin/analytics",
+    USERS: "/admin/users",
+    USER_BY_ID: "/admin/users/:userId",
+    AUDIT_LOGS: "/admin/audit-logs",
     FINANCIAL_POLICIES: "/admin/financial-policies",
     FINANCIAL_POLICY: "/admin/financial-policies/:type",
     PAYMENT_RECONCILIATION: "/admin/payments/reconciliation",
+  }),
+  OPERATIONS: Object.freeze({
+    ANALYTICS: "/operations/analytics",
+    TRANSACTIONS: "/operations/transactions",
+    TRANSACTION_BY_REFERENCE: "/operations/transactions/:reference",
+    PAYMENTS: "/operations/payments",
   }),
   PAYMENTS: Object.freeze({
     ROOT: "/payments",
