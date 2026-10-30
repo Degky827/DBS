@@ -1,450 +1,473 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   ArrowDownLeft,
+  ArrowDownToLine,
   ArrowLeftRight,
+  ArrowRight,
+  ArrowUpFromLine,
   ArrowUpRight,
+  Eye,
+  EyeOff,
+  LockKeyhole,
   RefreshCw,
+  Send,
+  ShieldCheck,
   WalletCards,
 } from "lucide-react";
 import Alert from "../../components/ui/Alert";
 import EmptyState from "../../components/ui/EmptyState";
-import PageHeader from "../../components/ui/PageHeader";
+import StatusBadge from "../../components/ui/StatusBadge";
 import { Skeleton } from "../../components/ui/Spinner";
-import {
-  createMyWallet,
-  getMyWallet,
-  listMyTransactions,
-  transferFunds,
-} from "../../services/walletService";
+import { useAccount } from "../../context/AccountContext";
+import { createMyWallet, listMyTransactions } from "../../services/walletService";
 import { normalizeApiError } from "../../utils/apiError";
+import { formatCurrency, formatDateTime, titleCase } from "../../utils/format";
+import { isKycApproved, kycCopy } from "../../utils/kyc";
 
-const AMOUNT_PATTERN = /^(?:0|[1-9]\d{0,16})(?:\.\d{1,2})?$/;
-const PAGE_SIZE = 25;
+const BALANCE_VISIBILITY_KEY = "meridian:wallet-balance-visible";
+const RECENT_LIMIT = 6;
 
-const dateBoundary = (date, endOfDay = false) => {
-  if (!date) return undefined;
-  return new Date(
-    `${date}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`
-  ).toISOString();
+const readBalancePreference = () => {
+  try {
+    return localStorage.getItem(BALANCE_VISIBILITY_KEY) !== "false";
+  } catch {
+    return true;
+  }
 };
 
-const money = (amount, currency) =>
-  new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-  }).format(Number(amount));
-
-const transactionDate = (value) =>
-  new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-
-const makeIdempotencyKey = () => {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-};
+function QuickAction({ to, icon: Icon, label, hint, disabled }) {
+  const base = "group flex flex-col gap-2 rounded-xl border border-ink-200 bg-white p-4 transition";
+  if (disabled) {
+    return (
+      <div className={`${base} cursor-not-allowed opacity-60`} aria-disabled="true">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-ink-50 text-muted">
+          <Icon size={17} />
+        </span>
+        <span className="text-[13px] font-bold text-midnight">{label}</span>
+        <span className="text-[11px] leading-snug text-muted">{hint}</span>
+      </div>
+    );
+  }
+  return (
+    <Link to={to} className={`${base} hover:border-brand-600/40 hover:bg-brand-50/40`}>
+      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-700 transition group-hover:bg-brand-100">
+        <Icon size={17} />
+      </span>
+      <span className="text-[13px] font-bold text-midnight">{label}</span>
+      <span className="text-[11px] leading-snug text-muted">{hint}</span>
+    </Link>
+  );
+}
 
 export default function Wallet() {
-  const [wallet, setWallet] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [transferring, setTransferring] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [transactions, setTransactions] = useState([]);
-  const [page, setPage] = useState(null);
-  const [destinationWalletId, setDestinationWalletId] = useState("");
-  const [amount, setAmount] = useState("");
-  const [direction, setDirection] = useState("all");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
-  const [appliedFilters, setAppliedFilters] = useState({
-    direction: "all",
-    fromDate: "",
-    toDate: "",
-  });
-  const [historyRefresh, setHistoryRefresh] = useState(0);
-  const [notice, setNotice] = useState(null);
-  const [loadError, setLoadError] = useState("");
-  const [historyError, setHistoryError] = useState("");
-  const retryKey = useRef(null);
-  const retrySignature = useRef("");
+  const {
+    wallet,
+    kyc,
+    kycUnavailable,
+    loading,
+    walletError,
+    refresh: refreshAccount,
+  } = useAccount();
 
-  useEffect(() => {
-    let active = true;
-    const fetchWallet = async () => {
-      try {
-        const currentWallet = await getMyWallet();
-        if (active) setWallet(currentWallet);
-      } catch (error) {
-        if (!active) return;
-        if (error?.response?.status === 404) {
-          setWallet(null);
-        } else {
-          setLoadError(normalizeApiError(error).message);
-        }
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    fetchWallet();
-    return () => {
-      active = false;
-    };
-  }, []);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [balanceVisible, setBalanceVisible] = useState(readBalancePreference);
+  const [transactions, setTransactions] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!wallet) return undefined;
     let active = true;
-    const fetchHistory = async () => {
+    (async () => {
       setHistoryLoading(true);
       setHistoryError("");
       try {
-        const result = await listMyTransactions({
-          limit: PAGE_SIZE,
-          direction: appliedFilters.direction,
-          from: dateBoundary(appliedFilters.fromDate),
-          to: dateBoundary(appliedFilters.toDate, true),
-        });
-        if (active) {
-          setTransactions(result.transactions);
-          setPage(result.page);
-        }
+        const result = await listMyTransactions({ limit: RECENT_LIMIT });
+        if (!active) return;
+        setTransactions(result.transactions || []);
+        setSummary(result.summary || null);
       } catch (error) {
         if (active) setHistoryError(normalizeApiError(error).message);
       } finally {
         if (active) setHistoryLoading(false);
       }
-    };
-    fetchHistory();
+    })();
     return () => {
       active = false;
     };
-  }, [wallet, appliedFilters, historyRefresh]);
+  }, [wallet, refreshKey]);
 
-  const loadMore = async () => {
-    if (!page?.nextCursor || historyLoading) return;
-    setHistoryLoading(true);
-    setHistoryError("");
-    try {
-      const result = await listMyTransactions({
-        limit: PAGE_SIZE,
-        cursor: page.nextCursor,
-        direction: appliedFilters.direction,
-        from: dateBoundary(appliedFilters.fromDate),
-        to: dateBoundary(appliedFilters.toDate, true),
-      });
-      setTransactions((current) => [...current, ...result.transactions]);
-      setPage(result.page);
-    } catch (error) {
-      setHistoryError(normalizeApiError(error).message);
-    } finally {
-      setHistoryLoading(false);
-    }
+  const toggleBalance = () => {
+    setBalanceVisible((visible) => {
+      try {
+        localStorage.setItem(BALANCE_VISIBILITY_KEY, String(!visible));
+      } catch {
+        /* storage may be unavailable; visibility still toggles for this view */
+      }
+      return !visible;
+    });
   };
 
-  const refresh = async () => {
-    setLoading(true);
-    setLoadError("");
-    try {
-      setWallet(await getMyWallet());
-      setHistoryRefresh((current) => current + 1);
-    } catch (error) {
-      setLoadError(normalizeApiError(error).message);
-    } finally {
-      setLoading(false);
-    }
+  const refresh = () => {
+    setRefreshKey((current) => current + 1);
+    refreshAccount({ silent: true });
   };
 
   const handleCreateWallet = async () => {
     setCreating(true);
-    setNotice(null);
-    setLoadError("");
+    setCreateError("");
     try {
-      const created = await createMyWallet();
-      setWallet(created);
-      setNotice({ tone: "success", text: "Your ETB wallet is ready." });
+      await createMyWallet();
+      await refreshAccount({ silent: true });
+      setRefreshKey((current) => current + 1);
     } catch (error) {
       if (error?.response?.status === 409) {
-        try {
-          setWallet(await getMyWallet());
-          setNotice({ tone: "info", text: "Your wallet already exists." });
-        } catch (refreshError) {
-          setLoadError(normalizeApiError(refreshError).message);
-        }
+        await refreshAccount({ silent: true });
       } else {
-        setLoadError(normalizeApiError(error).message);
+        setCreateError(normalizeApiError(error).message);
       }
     } finally {
       setCreating(false);
     }
   };
 
-  const handleTransfer = async (event) => {
-    event.preventDefault();
-    if (!AMOUNT_PATTERN.test(amount) || Number(amount) <= 0) {
-      setNotice({
-        tone: "error",
-        text: "Enter a positive amount with no more than two decimal places.",
-      });
-      return;
-    }
-
-    const signature = `${destinationWalletId}:${amount}`;
-    if (retrySignature.current !== signature) {
-      retrySignature.current = signature;
-      retryKey.current = makeIdempotencyKey();
-    }
-
-    setTransferring(true);
-    setNotice(null);
-    try {
-      const result = await transferFunds({
-        destinationWalletId: destinationWalletId.trim(),
-        amount,
-        idempotencyKey: retryKey.current,
-      });
-      setNotice({
-        tone: "success",
-        text: result.replayed
-          ? `This transfer was already processed. Reference: ${result.transaction.reference}`
-          : `Transfer complete. Reference: ${result.transaction.reference}`,
-      });
-      setDestinationWalletId("");
-      setAmount("");
-      retryKey.current = null;
-      retrySignature.current = "";
-      await refresh();
-    } catch (error) {
-      setNotice({ tone: "error", text: normalizeApiError(error).message });
-    } finally {
-      setTransferring(false);
-    }
-  };
-
-  const handleFilterSubmit = (event) => {
-    event.preventDefault();
-    setAppliedFilters({ direction, fromDate, toDate });
-  };
+  const approved = isKycApproved(kyc);
+  const kycGuidance = kycCopy(kyc);
+  const currency = wallet?.currency || "ETB";
+  const isRefreshing = loading || historyLoading;
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="Everyday banking"
-        title="Wallet & transactions"
-        description="View your ETB balance, make internal wallet transfers, and review your transaction history."
-        actions={
-          wallet ? (
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={loading || historyLoading}
-              className="btn-ghost"
-            >
-              <RefreshCw size={15} /> Refresh
-            </button>
-          ) : null
-        }
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">Everyday banking</p>
+          <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-midnight sm:text-[28px]">
+            Wallet
+          </h1>
+          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted">
+            Your ETB balance, funding options, and recent account activity.
+          </p>
+        </div>
+        {wallet ? (
+          <button type="button" onClick={refresh} disabled={isRefreshing} className="btn-ghost">
+            <RefreshCw size={15} className={isRefreshing ? "animate-spin" : ""} /> Refresh
+          </button>
+        ) : null}
+      </div>
 
-      {notice ? <Alert tone={notice.tone}>{notice.text}</Alert> : null}
-      {loadError ? <Alert tone="error">{loadError}</Alert> : null}
+      {walletError ? <Alert tone="error">{walletError}</Alert> : null}
 
       {loading ? (
-        <div className="card space-y-3 p-6">
+        <div className="card space-y-3 p-6" role="status" aria-label="Loading wallet">
           <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-9 w-48" />
+          <Skeleton className="h-10 w-56" />
+          <Skeleton className="h-4 w-40" />
         </div>
       ) : wallet ? (
         <>
-          <section className="card flex flex-wrap items-center justify-between gap-5 p-6">
-            <div className="flex items-center gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-navy-800 text-white">
-                <WalletCards size={22} />
-              </span>
-              <div>
-                <p className="text-sm font-semibold text-ink-500">Available balance</p>
-                <p className="num mt-1 text-3xl font-extrabold text-navy-900">
-                  {money(wallet.balance, wallet.currency)}
-                </p>
-              </div>
-            </div>
-            <span className={wallet.isActive ? "badge-success" : "badge-danger"}>
-              {wallet.isActive ? "Active" : "Inactive"}
-            </span>
-          </section>
+          {!wallet.isActive ? (
+            <Alert tone="warning">
+              This wallet is inactive. Transfers, deposits, and withdrawals are unavailable until it
+              is reactivated. Contact support if you need help.
+            </Alert>
+          ) : !approved ? (
+            <Alert tone="warning">
+              <span className="font-bold">
+                {kycUnavailable
+                  ? "Verification status unavailable."
+                  : "Identity verification required."}
+              </span>{" "}
+              Wallet transfers, deposits, and withdrawals stay locked until your identity is
+              approved.{" "}
+              <Link to={kycGuidance.nextTo} className="font-bold underline underline-offset-2">
+                {kycGuidance.nextLabel}
+              </Link>
+            </Alert>
+          ) : null}
 
-          <section className="card p-5 sm:p-6">
-            <div className="mb-5 flex items-center gap-2">
-              <ArrowLeftRight size={18} className="text-navy-700" />
-              <h2 className="text-lg font-extrabold text-navy-900">Internal transfer</h2>
-            </div>
-            {!wallet.isActive ? (
-              <Alert tone="warning" className="mb-4">
-                This wallet is inactive. Transfers are unavailable until it is reactivated.
-              </Alert>
-            ) : null}
-            <form onSubmit={handleTransfer} className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-1.5 text-sm font-semibold text-ink-700">
-                Recipient wallet ID
-                <input
-                  required
-                  value={destinationWalletId}
-                  onChange={(event) => setDestinationWalletId(event.target.value)}
-                  placeholder="Recipient wallet UUID"
-                  className="field-input"
-                  autoComplete="off"
-                />
-              </label>
-              <label className="space-y-1.5 text-sm font-semibold text-ink-700">
-                Amount (ETB)
-                <input
-                  required
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                  placeholder="0.00"
-                  className="field-input"
-                  autoComplete="off"
-                />
-              </label>
-              <p className="text-xs leading-relaxed text-ink-500 md:col-span-2">
-                Transfers are final once confirmed. External deposits and withdrawals are not available.
-                If a request times out, retry with the same details to reuse its idempotency key.
-              </p>
-              <div className="md:col-span-2">
-                <button
-                  type="submit"
-                  disabled={transferring || !wallet.isActive}
-                  className="btn-primary"
-                >
-                  <ArrowUpRight size={16} />
-                  {transferring ? "Sending transfer…" : "Transfer funds"}
-                </button>
-              </div>
-            </form>
-          </section>
-
-          <section className="card p-5 sm:p-6">
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-extrabold text-navy-900">Transaction history</h2>
-                <p className="mt-1 text-sm text-ink-500">
-                  Your recent incoming and outgoing wallet transfers.
-                </p>
-              </div>
-            </div>
-
-            <form
-              onSubmit={handleFilterSubmit}
-              className="mb-5 grid gap-3 rounded-lg bg-ink-50 p-4 sm:grid-cols-2 lg:grid-cols-4"
-            >
-              <label className="space-y-1 text-xs font-bold text-ink-500">
-                Direction
-                <select
-                  value={direction}
-                  onChange={(event) => setDirection(event.target.value)}
-                  className="field-input"
-                >
-                  <option value="all">All activity</option>
-                  <option value="incoming">Incoming</option>
-                  <option value="outgoing">Outgoing</option>
-                </select>
-              </label>
-              <label className="space-y-1 text-xs font-bold text-ink-500">
-                From
-                <input
-                  type="date"
-                  value={fromDate}
-                  onChange={(event) => setFromDate(event.target.value)}
-                  className="field-input"
-                />
-              </label>
-              <label className="space-y-1 text-xs font-bold text-ink-500">
-                To
-                <input
-                  type="date"
-                  value={toDate}
-                  onChange={(event) => setToDate(event.target.value)}
-                  className="field-input"
-                />
-              </label>
-              <button
-                type="submit"
-                disabled={historyLoading}
-                className="btn-ghost self-end"
-              >
-                Apply filters
-              </button>
-            </form>
-
-            {historyError ? <Alert tone="error">{historyError}</Alert> : null}
-            {transactions.length === 0 && !historyLoading ? (
-              <EmptyState
-                icon={ArrowLeftRight}
-                title="No transfers found"
-                description="Completed incoming and outgoing transfers will appear here."
+          <section className="overflow-hidden rounded-2xl border border-white/10 bg-midnight text-white shadow-[0_20px_48px_-28px_rgba(11,31,51,.6)]">
+            <div className="relative px-5 py-6 sm:px-7 sm:py-7">
+              <div
+                className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-brand-600/25 blur-3xl"
+                aria-hidden="true"
               />
+              <div className="relative flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/50">
+                    Available balance
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    <p
+                      className="num text-3xl font-extrabold tracking-tight sm:text-4xl"
+                      aria-live="polite"
+                    >
+                      {balanceVisible ? formatCurrency(wallet.balance, currency) : "••••••"}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={toggleBalance}
+                      aria-pressed={!balanceVisible}
+                      aria-label={balanceVisible ? "Hide balance" : "Show balance"}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 text-white/70 transition hover:bg-white/10 hover:text-white"
+                    >
+                      {balanceVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11.5px] text-white/55">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-2.5 py-1 font-bold">
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          wallet.isActive ? "bg-emerald-400" : "bg-red-400"
+                        }`}
+                        aria-hidden="true"
+                      />
+                      {wallet.isActive ? "Active wallet" : "Inactive wallet"}
+                    </span>
+                    <span>
+                      {currency} · opened {formatDateTime(wallet.createdAt)}
+                    </span>
+                  </div>
+                </div>
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 text-white/80">
+                  <WalletCards size={20} />
+                </span>
+              </div>
+
+              <div className="relative mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {historyLoading && !summary ? (
+                  Array.from({ length: 4 }, (_, index) => (
+                    <div
+                      key={index}
+                      className="h-[62px] animate-pulse rounded-lg bg-white/10"
+                      aria-hidden="true"
+                    />
+                  ))
+                ) : (
+                  <>
+                    <div className="rounded-lg bg-white/[0.06] px-3.5 py-2.5">
+                      <p className="text-[9.5px] font-bold uppercase tracking-[0.14em] text-white/45">
+                        Incoming
+                      </p>
+                      <p className="num mt-1 text-[13.5px] font-extrabold text-emerald-300">
+                        {summary ? formatCurrency(summary.incomingAmount, currency) : "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-white/[0.06] px-3.5 py-2.5">
+                      <p className="text-[9.5px] font-bold uppercase tracking-[0.14em] text-white/45">
+                        Outgoing
+                      </p>
+                      <p className="num mt-1 text-[13.5px] font-extrabold text-white">
+                        {summary ? formatCurrency(summary.outgoingAmount, currency) : "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-white/[0.06] px-3.5 py-2.5">
+                      <p className="text-[9.5px] font-bold uppercase tracking-[0.14em] text-white/45">
+                        Activity
+                      </p>
+                      <p className="num mt-1 text-[13.5px] font-extrabold text-white">
+                        {summary ? `${summary.total} record${summary.total === 1 ? "" : "s"}` : "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-white/[0.06] px-3.5 py-2.5">
+                      <p className="text-[9.5px] font-bold uppercase tracking-[0.14em] text-white/45">
+                        Verification
+                      </p>
+                      <p className="mt-1.5">
+                        <StatusBadge value={kyc?.status} fallback="Not started" />
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="card p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-[15px] font-extrabold text-midnight">Quick actions</h2>
+                <p className="mt-0.5 text-[12px] text-muted">
+                  Move money or review your full history.
+                </p>
+              </div>
+              <Link
+                to="/transactions"
+                className="inline-flex items-center gap-1 text-[12px] font-bold text-brand-700 transition hover:text-brand-800"
+              >
+                View transactions <ArrowRight size={13} />
+              </Link>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+              <QuickAction
+                to="/payments#deposit"
+                icon={ArrowDownToLine}
+                label="Deposit"
+                hint="Fund through Chapa test mode"
+                disabled={!wallet.isActive || !approved}
+              />
+              <QuickAction
+                to="/payments#withdraw"
+                icon={ArrowUpFromLine}
+                label="Withdraw"
+                hint="Reserve and cancel payouts"
+                disabled={!wallet.isActive || !approved}
+              />
+              <QuickAction
+                to="/transfers"
+                icon={Send}
+                label="Send money"
+                hint="Transfer to another wallet"
+                disabled={!wallet.isActive || !approved}
+              />
+              <QuickAction
+                to="/transactions"
+                icon={ArrowLeftRight}
+                label="Transactions"
+                hint="Search, filter and inspect"
+              />
+            </div>
+            {!approved ? (
+              <p className="mt-3 flex items-center gap-1.5 text-[11.5px] font-semibold text-warning">
+                <LockKeyhole size={12} />
+                Locked actions unlock when your identity verification is approved.
+              </p>
+            ) : null}
+          </section>
+
+          <section className="card overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 px-5 py-4">
+              <div>
+                <h2 className="text-[15px] font-extrabold text-midnight">Recent activity</h2>
+                <p className="mt-0.5 text-[12px] text-muted">
+                  Latest wallet entries with their type and posting status.
+                </p>
+              </div>
+              <Link
+                to="/transactions"
+                className="inline-flex items-center gap-1 text-[12px] font-bold text-brand-700 transition hover:text-brand-800"
+              >
+                Full history <ArrowRight size={13} />
+              </Link>
+            </div>
+
+            {historyError ? (
+              <div className="px-5 py-4">
+                <Alert tone="error">
+                  {historyError}
+                  <button
+                    type="button"
+                    onClick={() => setRefreshKey((current) => current + 1)}
+                    className="ml-2 underline underline-offset-2"
+                  >
+                    Retry
+                  </button>
+                </Alert>
+              </div>
+            ) : null}
+
+            {historyLoading && transactions.length === 0 ? (
+              <div className="space-y-3 px-5 py-5" role="status" aria-label="Loading activity">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : transactions.length === 0 ? (
+              <div className="px-5 py-10">
+                <EmptyState
+                  className="border-none shadow-none"
+                  icon={ArrowLeftRight}
+                  title="No wallet activity yet"
+                  description="Deposits and transfers will appear here once they are posted to your wallet."
+                />
+              </div>
             ) : (
-              <div className="divide-y divide-ink-100">
+              <ul className="divide-y divide-ink-100">
                 {transactions.map((transaction) => {
                   const outgoing = transaction.sourceWalletId === wallet.id;
                   return (
-                    <article
-                      key={transaction.id}
-                      className="flex flex-wrap items-center justify-between gap-3 py-4 first:pt-0 last:pb-0"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-ink-100 text-ink-600">
-                          {outgoing ? <ArrowUpRight size={18} /> : <ArrowDownLeft size={18} />}
+                    <li key={transaction.id}>
+                      <Link
+                        to={`/transactions/${transaction.reference}`}
+                        className="flex items-center gap-3 px-5 py-3.5 transition hover:bg-ink-50"
+                      >
+                        <span
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                            outgoing ? "bg-ink-100 text-muted" : "bg-[#ecfdf3] text-success"
+                          }`}
+                        >
+                          {outgoing ? <ArrowUpRight size={16} /> : <ArrowDownLeft size={16} />}
                         </span>
-                        <div className="min-w-0">
-                          <p className="font-bold text-navy-900">
-                            {outgoing ? "Sent transfer" : "Received transfer"}
-                          </p>
-                          <p className="mt-0.5 truncate text-xs text-ink-500">
-                            Ref {transaction.reference} · {transactionDate(transaction.createdAt)}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-[13px] font-bold text-midnight">
+                              {outgoing ? "Sent" : "Received"}{" "}
+                              {titleCase(transaction.type).toLowerCase()}
+                            </p>
+                            <StatusBadge value={transaction.status} />
+                          </div>
+                          <p className="mt-0.5 truncate text-[11.5px] text-muted">
+                            {formatDateTime(transaction.createdAt)} ·{" "}
+                            <span className="font-mono">{transaction.reference}</span>
                           </p>
                         </div>
-                      </div>
-                      <p
-                        className={`num font-extrabold ${
-                          outgoing ? "text-ink-700" : "text-emerald-700"
-                        }`}
-                      >
-                        {outgoing ? "−" : "+"}
-                        {money(transaction.amount, wallet.currency)}
-                      </p>
-                    </article>
+                        <p
+                          className={`num shrink-0 text-[13px] font-extrabold ${
+                            outgoing ? "text-midnight" : "text-success"
+                          }`}
+                        >
+                          {outgoing ? "−" : "+"}
+                          {formatCurrency(transaction.amount, transaction.currency || currency)}
+                        </p>
+                      </Link>
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             )}
+          </section>
 
-            {page?.hasMore ? (
-              <button
-                type="button"
-                onClick={loadMore}
-                disabled={historyLoading}
-                className="btn-ghost mt-5 w-full justify-center"
-              >
-                {historyLoading ? "Loading…" : "Load more transactions"}
-              </button>
-            ) : null}
+          <section className="card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <ShieldCheck size={19} className="mt-0.5 shrink-0 text-brand-700" />
+              <div>
+                <h2 className="text-[15px] font-extrabold text-midnight">
+                  Server-authoritative balances
+                </h2>
+                <p className="mt-1 max-w-2xl text-[12.5px] leading-relaxed text-muted">
+                  Your wallet balance is projected from double-entry ledger accounts. The interface
+                  never changes a balance on its own; every deposit, transfer, and withdrawal is
+                  confirmed by the backend first.
+                </p>
+              </div>
+            </div>
+            <Link to="/transactions" className="btn-ghost shrink-0">
+              <ArrowLeftRight size={15} /> Open history
+            </Link>
           </section>
         </>
       ) : (
-        <EmptyState
-          icon={WalletCards}
-          title="Create your ETB wallet"
-          description="Your wallet starts at zero. Internal transfers are available after creation; external deposits and withdrawals are currently disabled."
-          actionLabel={creating ? "Creating wallet…" : "Create wallet"}
-          actionDisabled={creating}
-          onAction={handleCreateWallet}
-        />
+        <div className="space-y-4">
+          {createError ? <Alert tone="error">{createError}</Alert> : null}
+          <EmptyState
+            icon={WalletCards}
+            title="Create your ETB wallet"
+            description={
+              approved
+                ? "Your wallet starts at zero. Create it now to receive transfers, deposits, and payouts."
+                : "Your ETB wallet becomes available once identity verification is approved. You can start or review verification now."
+            }
+            actionLabel={
+              approved ? (creating ? "Creating wallet…" : "Create wallet") : kycGuidance.nextLabel
+            }
+            actionTo={approved ? undefined : kycGuidance.nextTo}
+            actionDisabled={creating}
+            onAction={approved ? handleCreateWallet : undefined}
+          />
+        </div>
       )}
     </div>
   );
