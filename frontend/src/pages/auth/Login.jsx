@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Eye, EyeOff, ArrowRight, Lock } from "lucide-react";
 import { loginUser } from "../../services/authService";
 import { normalizeApiError } from "../../utils/apiError";
+import { homePathForRole } from "../../utils/roles";
 import Alert from "../../components/ui/Alert";
 import { Spinner } from "../../components/ui/Spinner";
 
@@ -33,11 +34,14 @@ export default function Login() {
     setServerError("");
 
     try {
-      await loginUser(form.email, form.password);
+      const session = await loginUser(form.email, form.password);
       const from = location.state?.from?.pathname;
-      navigate(from && from !== "/" && from !== "/login" ? from : "/dashboard", {
-        replace: true,
-      });
+      navigate(
+        from && from !== "/" && from !== "/login" ? from : homePathForRole(session?.user?.role),
+        {
+          replace: true,
+        }
+      );
     } catch (err) {
       const { message, fields } = normalizeApiError(err);
       setServerError(message);

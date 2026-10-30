@@ -3,12 +3,10 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-do
 import { useSelector } from "react-redux";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
-  Activity,
   ArrowLeftRight,
   Bell,
   ChevronDown,
   CreditCard,
-  FileSearch,
   Info,
   KeyRound,
   LayoutDashboard,
@@ -25,7 +23,7 @@ import {
 import Logo from "../components/Logo";
 import { AccountProvider, useAccount } from "../context/AccountContext";
 import { logoutUser } from "../services/authService";
-import { isOfficer, roleLabel } from "../utils/roles";
+import { roleLabel } from "../utils/roles";
 import { initialsOf } from "../utils/format";
 
 const PAGE_META = [
@@ -43,8 +41,6 @@ const PAGE_META = [
   { prefix: "/profile/security", title: "Change password", parent: "Profile" },
   { prefix: "/profile", title: "Profile", parent: "Account" },
   { prefix: "/settings", title: "Settings", parent: "Account" },
-  { prefix: "/health", title: "System health", parent: "Operations" },
-  { prefix: "/officer/reviews", title: "Review queue", parent: "Operations" },
   { prefix: "/forbidden", title: "Access restricted", parent: "Account" },
 ];
 
@@ -79,18 +75,10 @@ const NAV_SECTIONS = [
   },
 ];
 
-function SidebarNav({ user, onNavigate, id }) {
-  const sections = NAV_SECTIONS.map((section) => ({ ...section }));
-  if (isOfficer(user)) {
-    sections.push({
-      label: "Operations",
-      items: [{ to: "/officer/reviews", label: "Review queue", icon: FileSearch }],
-    });
-  }
-
+function SidebarNav({ onNavigate, id }) {
   return (
     <nav id={id} aria-label="Main navigation" className="space-y-6">
-      {sections.map((section) => (
+      {NAV_SECTIONS.map((section) => (
         <div key={section.label}>
           <p className="px-3 text-[10px] font-bold uppercase tracking-[0.2em] text-white/35">
             {section.label}
@@ -217,7 +205,6 @@ function AuthenticatedLayout() {
       <div className="mt-8 flex-1 overflow-y-auto">
         <SidebarNav
           id={onNavigate ? "primary-navigation-drawer" : "primary-navigation"}
-          user={displayUser}
           onNavigate={onNavigate}
         />
       </div>
@@ -247,9 +234,6 @@ function AuthenticatedLayout() {
     { to: "/settings", label: "Settings", icon: Settings },
     { to: "/profile/security", label: "Change password", icon: KeyRound },
   ];
-  if (isOfficer(displayUser)) {
-    menuItems.push({ to: "/health", label: "System health", icon: Activity });
-  }
 
   return (
     <div className="min-h-screen bg-canvas">
