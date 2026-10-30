@@ -75,8 +75,20 @@ export const startVerificationSession = async (submissionId) => {
 };
 
 // Officer endpoints (server enforces ADMIN / OFFICER / VERIFICATION_OFFICER)
-export const getOfficerReviews = async () => {
-  const { data } = await kycApi.get("/officer/reviews");
+export const getOfficerReviews = async (params) => {
+  const { data } = await kycApi.get("/officer/reviews", { params });
+  return data.data;
+};
+
+export const getOfficerReviewStats = async () => {
+  const { data } = await kycApi.get("/officer/reviews/stats");
+  return data.data;
+};
+
+export const getOfficerSubmission = async (submissionId) => {
+  const { data } = await kycApi.get(
+    `/officer/submissions/${encodeURIComponent(submissionId)}`
+  );
   return data.data;
 };
 
