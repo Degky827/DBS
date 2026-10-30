@@ -23,12 +23,77 @@ const submissions = new Map([
     status: "DRAFT",
     providerSessionId: null,
     providerSessionUrlEncrypted: null,
+    providerStatus: "In Review",
+    documentVerificationStatus: "In Review",
+    dataComparisonStatus: "MATCH",
+    comparisonResults: [{ field: "firstName", status: "MATCH" }],
+    faceMatchStatus: "Approved",
+    livenessStatus: "Approved",
+  }],
+  ["submission-declined", {
+    id: "submission-declined",
+    userId: "customer-1",
+    status: "DRAFT",
+    providerSessionId: "didit-session-declined",
+    providerSessionUrlEncrypted: "encrypted",
+    providerStatus: null,
+    documentVerificationStatus: null,
+    dataComparisonStatus: null,
+    faceMatchStatus: null,
+    livenessStatus: null,
+  }],
+  ["submission-terminal", {
+    id: "submission-terminal",
+    userId: "customer-1",
+    status: "APPROVED",
+    providerSessionId: "didit-session-terminal",
+    providerSessionUrlEncrypted: "encrypted",
+    providerStatus: "Approved",
+    documentVerificationStatus: "Approved",
+    dataComparisonStatus: "MATCH",
+    faceMatchStatus: "Approved",
+    livenessStatus: "Approved",
+  }],
+  ["submission-order", {
+    id: "submission-order",
+    userId: "customer-1",
+    status: "PENDING_REVIEW",
+    providerSessionId: "didit-session-order",
+    providerSessionUrlEncrypted: "encrypted",
+    providerStatus: "Approved",
+    documentVerificationStatus: "Approved",
+    dataComparisonStatus: "MATCH",
+    faceMatchStatus: "Approved",
+    livenessStatus: "Approved",
+  }],
+  ["submission-compare", {
+    id: "submission-compare",
+    userId: "customer-1",
+    status: "PENDING_REVIEW",
+    providerSessionId: "didit-session-compare",
+    providerSessionUrlEncrypted: "encrypted",
+    providerStatus: "Approved",
+    documentVerificationStatus: "Approved",
+    dataComparisonStatus: "MATCH",
+    comparisonResults: [{ field: "firstName", status: "MATCH" }],
+    faceMatchStatus: "Approved",
+    livenessStatus: "Approved",
   }],
 ]);
 const providerEvents = new Map();
 const auditEvents = [];
+const { Prisma } = require("@prisma/client");
+function applyData(target, data) {
+  for (const [key, value] of Object.entries(data)) {
+    target[key] = value === Prisma.DbNull ? null : value;
+  }
+}
 const fakePrisma = {
   $transaction: async (callback) => callback(fakePrisma),
+  $queryRaw: async (strings, ...values) => {
+    const submission = submissions.get(values[0]);
+    return submission ? [{ id: submission.id, status: submission.status }] : [];
+  },
   kycSubmission: {
     findFirst: async ({ where }) => {
       const submission = submissions.get(where.id);
@@ -44,12 +109,28 @@ const fakePrisma = {
     },
     update: async ({ where, data }) => {
       const submission = submissions.get(where.id);
-      Object.assign(submission, data);
+      applyData(submission, data);
       return { ...submission };
+    },
+    updateMany: async ({ where, data }) => {
+      const submission = submissions.get(where.id);
+      if (!submission) return { count: 0 };
+      if (where.userId && submission.userId !== where.userId) return { count: 0 };
+      if (typeof where.status === "string" && submission.status !== where.status) {
+        return { count: 0 };
+      }
+      applyData(submission, data);
+      return { count: 1 };
     },
   },
   kycProviderEvent: {
     findUnique: async ({ where }) => providerEvents.get(where.eventId) || null,
+    findFirst: async ({ where }) => {
+      const events = [...providerEvents.values()]
+        .filter((item) => item.submissionId === where.submissionId)
+        .sort((left, right) => right.eventTimestamp - left.eventTimestamp);
+      return events[0] ? { eventTimestamp: events[0].eventTimestamp } : null;
+    },
     create: async ({ data }) => {
       if (providerEvents.has(data.eventId)) {
         const error = new Error("duplicate event");
@@ -136,6 +217,13 @@ test("creates a documented Didit session with the configured workflow and no exp
       submissions.get("submission-1").providerSessionUrlEncrypted,
       "https://verify.didit.me/session/secret-link"
     );
+    assert.equal(submissions.get("submission-1").providerStatus, "Not Started");
+    assert.equal(submissions.get("submission-1").documentVerificationStatus, null);
+    assert.equal(submissions.get("submission-1").dataComparisonStatus, null);
+    assert.equal(submissions.get("submission-1").comparisonResults, null);
+    assert.equal(submissions.get("submission-1").submittedAt, null);
+    assert.equal(submissions.get("submission-1").faceMatchStatus, null);
+    assert.equal(submissions.get("submission-1").livenessStatus, null);
     assert.equal(diditRequest.url, "https://verification.didit.me/v3/session/");
     assert.equal(diditRequest.options.headers["x-api-key"], "test-didit-api-key");
     assert.equal(diditRequest.body.workflow_id, "published-workflow-id");
@@ -179,9 +267,16 @@ test("verifies V2 signatures against the signed body timestamp and persists sess
   assert.equal(response.body.data.accepted, true);
   assert.equal(submissions.get("submission-1").providerStatus, "Approved");
   assert.equal(submissions.get("submission-1").status, "PENDING_REVIEW");
+  assert.ok(submissions.get("submission-1").submittedAt instanceof Date);
+  assert.equal(
+    submissions.get("submission-1").submittedAt.getTime(),
+    event.timestamp * 1000
+  );
   assert.equal(submissions.get("submission-1").documentVerificationStatus, "Approved");
   assert.equal(submissions.get("submission-1").faceMatchStatus, "Approved");
   assert.equal(submissions.get("submission-1").livenessStatus, "Approved");
+  // Provider data must never be interpreted as an applicant-data comparison.
+  assert.equal(submissions.get("submission-1").dataComparisonStatus, null);
 
   const duplicate = await request(app)
     .post("/api/v1/kyc/webhooks/didit")
@@ -319,4 +414,141 @@ test("verifies an exact-raw signature before parsing its JSON body", async () =>
 
   assert.equal(response.status, 401);
   assert.equal(response.body.message, "Webhook signature is invalid");
+});
+
+function postSignedV2(event) {
+  return request(app)
+    .post("/api/v1/kyc/webhooks/didit")
+    .set("Content-Type", "application/json")
+    .set("X-Signature-V2", signV2(event))
+    .send(JSON.stringify(event));
+}
+
+test("a declined provider result enters review without approving the applicant or setting comparison", async () => {
+  const base = Math.floor(Date.now() / 1000);
+  const event = {
+    event_id: "declined-event-1",
+    session_id: "didit-session-declined",
+    status: "Declined",
+    webhook_type: "status.updated",
+    timestamp: base,
+    decision: {
+      id_verifications: [{ status: "Declined" }],
+      face_matches: [{ status: "Approved" }],
+      liveness_checks: [{ status: "Approved" }],
+    },
+  };
+  const response = await postSignedV2(event);
+
+  assert.equal(response.status, 202);
+  assert.equal(response.body.data.applied, true);
+  const submission = submissions.get("submission-declined");
+  assert.equal(submission.status, "PENDING_REVIEW");
+  assert.notEqual(submission.status, "APPROVED");
+  assert.equal(submission.providerStatus, "Declined");
+  assert.equal(submission.documentVerificationStatus, "Declined");
+  assert.equal(submission.dataComparisonStatus, null);
+});
+
+test("rejects an invalid submission status transition without applying provider data", async () => {
+  const response = await postSignedV2({
+    event_id: "invalid-transition-1",
+    session_id: "didit-session-declined",
+    status: "In Progress",
+    webhook_type: "status.updated",
+    timestamp: Math.floor(Date.now() / 1000) + 1,
+    decision: { id_verifications: [{ status: "Approved" }] },
+  });
+
+  assert.equal(response.status, 202);
+  assert.equal(response.body.data.applied, false);
+  assert.equal(response.body.data.ignoredReason, "INVALID_TRANSITION");
+  const submission = submissions.get("submission-declined");
+  assert.equal(submission.status, "PENDING_REVIEW");
+  assert.equal(submission.providerStatus, "Declined");
+  assert.equal(submission.documentVerificationStatus, "Declined");
+  assert.equal(auditEvents.at(-1).eventType, "DIDIT_RESULT_IGNORED");
+});
+
+test("ignores an out-of-order webhook that is older than the last applied event", async () => {
+  const base = Math.floor(Date.now() / 1000);
+  const newer = await postSignedV2({
+    event_id: "order-new-1",
+    session_id: "didit-session-order",
+    status: "In Review",
+    webhook_type: "status.updated",
+    timestamp: base,
+    decision: {
+      id_verifications: [{ status: "In Review" }],
+      face_matches: [{ status: "Approved" }],
+      liveness_checks: [{ status: "Approved" }],
+    },
+  });
+  assert.equal(newer.status, 202);
+  assert.equal(newer.body.data.applied, true);
+
+  const older = await postSignedV2({
+    event_id: "order-old-1",
+    session_id: "didit-session-order",
+    status: "Approved",
+    webhook_type: "status.updated",
+    timestamp: base - 60,
+    decision: {
+      id_verifications: [{ status: "Approved" }],
+      face_matches: [{ status: "Approved" }],
+      liveness_checks: [{ status: "Approved" }],
+    },
+  });
+
+  assert.equal(older.status, 202);
+  assert.equal(older.body.data.applied, false);
+  assert.equal(older.body.data.ignoredReason, "OUT_OF_ORDER_EVENT");
+  const submission = submissions.get("submission-order");
+  assert.equal(submission.providerStatus, "In Review");
+  assert.equal(submission.status, "PENDING_REVIEW");
+});
+
+test("never changes a submission that already reached a terminal decision", async () => {
+  const response = await postSignedV2({
+    event_id: "terminal-event-1",
+    session_id: "didit-session-terminal",
+    status: "Declined",
+    webhook_type: "status.updated",
+    timestamp: Math.floor(Date.now() / 1000) + 2,
+    decision: {
+      id_verifications: [{ status: "Declined" }],
+      face_matches: [{ status: "Declined" }],
+      liveness_checks: [{ status: "Declined" }],
+    },
+  });
+
+  assert.equal(response.status, 202);
+  assert.equal(response.body.data.applied, false);
+  assert.equal(response.body.data.ignoredReason, "TERMINAL_STATE");
+  const submission = submissions.get("submission-terminal");
+  assert.equal(submission.status, "APPROVED");
+  assert.equal(submission.providerStatus, "Approved");
+  assert.equal(submission.dataComparisonStatus, "MATCH");
+});
+
+test("a provider result cannot overwrite an existing applicant-data comparison", async () => {
+  const response = await postSignedV2({
+    event_id: "compare-event-1",
+    session_id: "didit-session-compare",
+    status: "Approved",
+    webhook_type: "status.updated",
+    timestamp: Math.floor(Date.now() / 1000) + 3,
+    decision: {
+      id_verifications: [{ status: "Approved" }],
+      face_matches: [{ status: "Approved" }],
+      liveness_checks: [{ status: "Approved" }],
+    },
+  });
+
+  assert.equal(response.status, 202);
+  assert.equal(response.body.data.applied, true);
+  const submission = submissions.get("submission-compare");
+  assert.equal(submission.status, "PENDING_REVIEW");
+  assert.equal(submission.dataComparisonStatus, "MATCH");
+  assert.deepEqual(submission.comparisonResults, [{ field: "firstName", status: "MATCH" }]);
 });

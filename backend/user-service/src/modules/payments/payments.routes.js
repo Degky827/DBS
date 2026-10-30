@@ -1,39 +1,25 @@
 const router = require("express").Router();
 
 const ROUTES = require("../../constants/routes");
-const env = require("../../config/env");
 const authenticate = require("../../middlewares/authenticate");
+const requireKycApproval = require("../../middlewares/requireKycApproval");
+const requireRole = require("../../middlewares/requireRole");
 const validate = require("../../middlewares/validate");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const usersService = require("../users/users.service");
-const ChapaAdapter = require("./chapa.adapter");
-const { createPaymentProviderBoundary } = require("./paymentProvider");
-const PaymentsService = require("./payments.service");
-const { depositSchema } = require("./payments.validation");
-
-const chapaAdapter = new ChapaAdapter({
-  secretKey: env.CHAPA_SECRET_KEY,
-  webhookSecret: env.CHAPA_WEBHOOK_SECRET,
-  baseUrl: env.CHAPA_BASE_URL,
-  callbackUrl: env.CHAPA_CALLBACK_URL,
-  returnUrl: env.CHAPA_RETURN_URL,
-});
-
-let paymentsService;
-
-const getPaymentsService = () => {
-  if (!paymentsService) {
-    const boundary = createPaymentProviderBoundary(chapaAdapter);
-    paymentsService = new PaymentsService(boundary);
-  }
-  return paymentsService;
-};
-
-// Exported for testing to inject mock providers
-const setCustomPaymentsService = (customService) => {
-  paymentsService = customService;
-};
+const {
+  ChapaAdapter,
+  getPaymentsService,
+  setCustomPaymentsService,
+} = require("./payments.factory");
+const withdrawalsService = require("./withdrawals.service");
+const paymentsHistoryService = require("./paymentsHistory.service");
+const {
+  depositSchema,
+  withdrawalSchema,
+  paymentHistorySchema,
+} = require("./payments.validation");
 
 const requireIdempotencyKey = (req, res, next) => {
   const key = req.get("Idempotency-Key");
@@ -49,31 +35,6 @@ const requireIdempotencyKey = (req, res, next) => {
   return next();
 };
 
-const createDeposit = async (req, res, next) => {
-  try {
-    const service = getPaymentsService();
-    const userId = await usersService.getResolvedUserId(req.user);
-    const profile = await usersService.getMyProfile(req.user);
-
-    const result = await service.initiateDeposit({
-      userId,
-      userProfile: profile.user,
-      amount: req.body.amount,
-      idempotencyKey: req.idempotencyKey,
-      returnUrl: req.body.returnUrl,
-    });
-
-    return ApiResponse.success(
-      res,
-      { payment: result.payment },
-      result.replayed ? "Deposit request replayed" : "Deposit initiated",
-      result.replayed ? 200 : 201
-    );
-  } catch (error) {
-    return next(error);
-  }
-};
-
 const requireConfiguredProvider = (req, res, next) => {
   try {
     getPaymentsService();
@@ -83,53 +44,139 @@ const requireConfiguredProvider = (req, res, next) => {
   }
 };
 
-const verifyDeposit = async (req, res, next) => {
-  try {
-    const service = getPaymentsService();
-    const userId = await usersService.getResolvedUserId(req.user);
-
-    const result = await service.verifyAndCredit(req.params.reference, userId);
-
-    return ApiResponse.success(
-      res,
-      { payment: result.payment },
-      result.payment.status === "COMPLETED"
-        ? "Payment verified and credited"
-        : `Payment status: ${result.payment.status}`
-    );
-  } catch (error) {
-    return next(error);
-  }
+const listPayments = async (req, res) => {
+  const userId = await usersService.getResolvedUserId(req.user);
+  const result = await paymentsHistoryService.listPayments(
+    userId,
+    req.paymentHistoryQuery
+  );
+  return ApiResponse.success(res, result, "Payments fetched");
 };
 
-const handleWebhook = async (req, res, next) => {
-  try {
-    const service = getPaymentsService();
-    const result = await service.handleWebhook(req);
-
-    return ApiResponse.success(
-      res,
-      { payment: result.payment },
-      "Webhook processed successfully"
-    );
-  } catch (error) {
-    return next(error);
+const validatePaymentHistoryQuery = (req, res, next) => {
+  const result = paymentHistorySchema.safeParse(req.query);
+  if (!result.success) {
+    const errors = {};
+    for (const issue of result.error.issues) {
+      const key = issue.path.length ? issue.path.join(".") : "_query";
+      if (!errors[key]) errors[key] = issue.message;
+    }
+    return next(ApiError.validation(errors));
   }
+  req.paymentHistoryQuery = result.data;
+  return next();
 };
 
-const createWithdrawalDisabled = (req, res, next) => {
+const createDeposit = async (req, res) => {
+  const service = getPaymentsService();
+  const userId = await usersService.getResolvedUserId(req.user);
+  const profile = await usersService.getMyProfile(req.user);
+
+  const result = await service.initiateDeposit({
+    userId,
+    userProfile: profile.user,
+    amount: req.body.amount,
+    idempotencyKey: req.idempotencyKey,
+  });
+
+  return ApiResponse.success(
+    res,
+    { payment: result.payment },
+    result.replayed ? "Deposit request replayed" : "Deposit initiated",
+    result.replayed ? 200 : 201
+  );
+};
+
+const verifyDeposit = async (req, res) => {
+  const service = getPaymentsService();
+  const userId = await usersService.getResolvedUserId(req.user);
+
+  const result = await service.verifyAndCredit(req.params.reference, userId);
+
+  return ApiResponse.success(
+    res,
+    { payment: result.payment },
+    result.payment.status === "COMPLETED"
+      ? "Payment verified and credited"
+      : `Payment status: ${result.payment.status}`
+  );
+};
+
+const handleWebhook = async (req, res) => {
+  const service = getPaymentsService();
+  const result = await service.handleWebhook(req);
+
+  return ApiResponse.success(
+    res,
+    { payment: result.payment },
+    "Webhook processed successfully"
+  );
+};
+
+const createDepositRefundUnsupported = (req, res, next) => {
   return next(
     ApiError.notImplemented(
-      "Chapa payouts are not supported by this service",
-      "WITHDRAWALS_NOT_SUPPORTED"
+      "Chapa refunds are not supported by this service; internal transfer reversals are available to administrators",
+      "PROVIDER_REFUND_UNSUPPORTED"
     )
   );
 };
+
+const createWithdrawal = async (req, res) => {
+  const userId = await usersService.getResolvedUserId(req.user);
+  const result = await withdrawalsService.initiateWithdrawal({
+    userId,
+    amount: req.body.amount,
+    idempotencyKey: req.idempotencyKey,
+  });
+
+  return ApiResponse.success(
+    res,
+    { withdrawal: result.withdrawal },
+    result.replayed
+      ? "Withdrawal request replayed"
+      : "Withdrawal reserved for payout",
+    result.replayed ? 200 : 201
+  );
+};
+
+const getWithdrawal = async (req, res) => {
+  const userId = await usersService.getResolvedUserId(req.user);
+  const result = await withdrawalsService.getWithdrawal(
+    userId,
+    req.params.reference
+  );
+  return ApiResponse.success(res, result, "Withdrawal fetched");
+};
+
+const cancelWithdrawal = async (req, res) => {
+  const userId = await usersService.getResolvedUserId(req.user);
+  const result = await withdrawalsService.cancelWithdrawal({
+    userId,
+    reference: req.params.reference,
+    reason: req.body?.reason ?? null,
+  });
+  return ApiResponse.success(
+    res,
+    { withdrawal: result.withdrawal },
+    result.replayed ? "Withdrawal already cancelled" : "Withdrawal cancelled",
+    result.replayed ? 200 : 200
+  );
+};
+
+// Authenticated payment history
+router.get(
+  ROUTES.PAYMENTS.ROOT,
+  authenticate,
+  validatePaymentHistoryQuery,
+  listPayments
+);
 
 // Authenticated deposit initiation
 router.post(
   ROUTES.PAYMENTS.DEPOSITS,
   authenticate,
+  requireKycApproval,
   requireConfiguredProvider,
   validate(depositSchema),
   requireIdempotencyKey,
@@ -140,22 +187,45 @@ router.post(
 router.get(
   ROUTES.PAYMENTS.DEPOSITS_VERIFY,
   authenticate,
+  requireKycApproval,
   verifyDeposit
 );
 
-// Webhook endpoint (unauthenticated, signature-protected)
+// Chapa Test Mode does not expose a refund API. Internal transfers are
+// reversed through the ledger instead; this route fails closed.
 router.post(
-  ROUTES.PAYMENTS.WEBHOOK,
-  handleWebhook
+  ROUTES.PAYMENTS.DEPOSIT_REFUNDS,
+  authenticate,
+  requireRole("ADMIN"),
+  createDepositRefundUnsupported
 );
 
-// Withdrawal endpoint remains explicitly disabled
+// Webhook endpoint (unauthenticated, signature-protected)
+router.post(ROUTES.PAYMENTS.WEBHOOK, handleWebhook);
+
+// Internal withdrawal lifecycle: funds are reserved on request and released
+// only by an explicit cancellation. No external payout is performed because
+// the configured provider has no payout capability.
 router.post(
   ROUTES.PAYMENTS.WITHDRAWALS,
   authenticate,
-  createWithdrawalDisabled
+  requireKycApproval,
+  validate(withdrawalSchema),
+  requireIdempotencyKey,
+  createWithdrawal
+);
+router.get(
+  ROUTES.PAYMENTS.WITHDRAWAL_BY_REFERENCE,
+  authenticate,
+  getWithdrawal
+);
+router.post(
+  ROUTES.PAYMENTS.WITHDRAWAL_CANCEL,
+  authenticate,
+  cancelWithdrawal
 );
 
 module.exports = router;
 module.exports.setCustomPaymentsService = setCustomPaymentsService;
+module.exports.getPaymentsService = getPaymentsService;
 module.exports.ChapaAdapter = ChapaAdapter;

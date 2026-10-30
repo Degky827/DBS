@@ -2,6 +2,7 @@ const prisma = require("../config/database");
 const ApiError = require("../utils/ApiError");
 const secureStorage = require("../utils/secureStorage");
 const userServiceClient = require("./userServiceClient");
+const { COMPARABLE_STATUSES, isComparable } = require("../constants/kycStatus");
 
 const FIELD_LABELS = {
   firstName: ["first name", "given name", "given names"],
@@ -84,10 +85,10 @@ async function compareSubmission(userId, authorization, submissionId) {
   if (!submission) {
     throw ApiError.notFound("KYC submission not found", "KYC_SUBMISSION_NOT_FOUND");
   }
-  if (!["DRAFT", "IN_PROGRESS", "NEEDS_RESUBMISSION"].includes(submission.status)) {
+  if (!isComparable(submission.status)) {
     throw ApiError.conflict(
       "Profile comparison is not available in this submission state",
-      "SUBMISSION_NOT_EDITABLE"
+      "SUBMISSION_NOT_COMPARABLE"
     );
   }
 
@@ -121,10 +122,20 @@ async function compareSubmission(userId, authorization, submissionId) {
       : "MATCH";
 
   await prisma.$transaction(async (tx) => {
-    await tx.kycSubmission.update({
-      where: { id: submissionId },
+    const updated = await tx.kycSubmission.updateMany({
+      where: {
+        id: submissionId,
+        userId,
+        status: { in: [...COMPARABLE_STATUSES] },
+      },
       data: { dataComparisonStatus: status, comparisonResults: outcomes },
     });
+    if (updated.count !== 1) {
+      throw ApiError.conflict(
+        "Profile comparison is not available in this submission state",
+        "SUBMISSION_NOT_COMPARABLE"
+      );
+    }
     await tx.kycAuditEvent.create({
       data: {
         submissionId,

@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, ArrowRight, Check, User, AtSign, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, User, AtSign, ShieldCheck, Eye, EyeOff } from "lucide-react";
 import PasswordStrength from "../../components/PasswordStrength";
 import { scorePassword } from "../../utils/passwordScore";
-import { registerUser, loginUser } from "../../services/authService";
+import { registerUser } from "../../services/authService";
 import { normalizeApiError } from "../../utils/apiError";
 import Alert from "../../components/ui/Alert";
 import { Spinner } from "../../components/ui/Spinner";
@@ -59,6 +59,8 @@ export default function Register() {
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const update = (key) => (e) =>
     setForm((f) => ({
@@ -121,12 +123,10 @@ export default function Register() {
 
     try {
       await registerUser(form);
-      try {
-        await loginUser(form.email, form.password);
-        navigate("/dashboard", { replace: true });
-      } catch {
-        navigate("/", { state: { registered: true } });
-      }
+      navigate("/verify-email", {
+        replace: true,
+        state: { email: form.email },
+      });
     } catch (err) {
       const { message, fields } = normalizeApiError(err);
       setServerError(message);
@@ -165,11 +165,18 @@ export default function Register() {
 
   return (
     <div>
-      <p className="eyebrow">Open an account</p>
-      <h1 className="mt-2 text-3xl font-extrabold">Create your profile</h1>
-      <p className="mt-2 text-[15px] text-ink-500">Four short steps — about two minutes.</p>
+      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-brand-700">
+        Open an account
+      </p>
+      <h1 className="mt-3 text-[32px] font-extrabold leading-tight text-midnight">
+        Create your profile
+      </h1>
+      <p className="mt-2 text-[15px] leading-relaxed text-muted">
+        Four short steps — about two minutes. You can finish identity verification from
+        your dashboard afterwards.
+      </p>
 
-      <ol className="mt-7 flex items-center">
+      <ol className="mt-7 flex items-center" aria-label="Registration progress">
         {STEPS.map((s, i) => {
           const done = i < step;
           const active = i === step;
@@ -177,11 +184,12 @@ export default function Register() {
             <li key={s.key} className="flex flex-1 items-center last:flex-none">
               <div className="flex flex-col items-center gap-1.5">
                 <span
+                  aria-current={active ? "step" : undefined}
                   className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-bold transition ${
                     done
-                      ? "border-navy-800 bg-navy-800 text-white"
+                      ? "border-brand-600 bg-brand-600 text-white"
                       : active
-                        ? "border-navy-800 bg-white text-navy-800 ring-4 ring-navy-500/10"
+                        ? "border-brand-600 bg-white text-brand-700 ring-4 ring-brand-600/10"
                         : "border-ink-200 bg-white text-ink-400"
                   }`}
                 >
@@ -189,14 +197,14 @@ export default function Register() {
                 </span>
                 <span
                   className={`text-[10px] font-bold uppercase tracking-wider ${
-                    active ? "text-navy-800" : "text-ink-400"
+                    active ? "text-midnight" : "text-ink-400"
                   }`}
                 >
                   {s.label}
                 </span>
               </div>
               {i < STEPS.length - 1 && (
-                <span className={`mx-2 mb-5 h-px flex-1 ${i < step ? "bg-navy-800" : "bg-ink-200"}`} />
+                <span className={`mx-2 mb-5 h-px flex-1 ${i < step ? "bg-brand-600" : "bg-ink-200"}`} />
               )}
             </li>
           );
@@ -212,7 +220,7 @@ export default function Register() {
           <motion.div key={step} {...stepMotion}>
             {step === 0 && (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="field-label" htmlFor="firstName">First name</label>
                     <input id="firstName" className="field-input" value={form.firstName} onChange={update("firstName")} placeholder="Ada" aria-invalid={errors.firstName ? "true" : undefined} />
@@ -230,7 +238,7 @@ export default function Register() {
                   {errors.lastName && <p className="field-error">{errors.lastName}</p>}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="field-label" htmlFor="dateOfBirth">Date of birth</label>
                     <input id="dateOfBirth" type="date" className="field-input" value={form.dateOfBirth} onChange={update("dateOfBirth")} aria-invalid={errors.dateOfBirth ? "true" : undefined} />
@@ -272,14 +280,34 @@ export default function Register() {
 
                 <div>
                   <label className="field-label" htmlFor="password">Password</label>
-                  <input id="password" type="password" className="field-input" value={form.password} onChange={update("password")} placeholder="••••••••" autoComplete="new-password" aria-invalid={errors.password ? "true" : undefined} />
+                  <div className="relative">
+                    <input id="password" type={showPassword ? "text" : "password"} className="field-input pr-11" value={form.password} onChange={update("password")} placeholder="••••••••" autoComplete="new-password" aria-invalid={errors.password ? "true" : undefined} />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 transition hover:text-brand-600"
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
                   <PasswordStrength password={form.password} />
                   {errors.password && <p className="field-error">{errors.password}</p>}
                 </div>
 
                 <div>
                   <label className="field-label" htmlFor="confirmPassword">Confirm password</label>
-                  <input id="confirmPassword" type="password" className="field-input" value={form.confirmPassword} onChange={update("confirmPassword")} placeholder="••••••••" autoComplete="new-password" aria-invalid={errors.confirmPassword ? "true" : undefined} />
+                  <div className="relative">
+                    <input id="confirmPassword" type={showConfirm ? "text" : "password"} className="field-input pr-11" value={form.confirmPassword} onChange={update("confirmPassword")} placeholder="••••••••" autoComplete="new-password" aria-invalid={errors.confirmPassword ? "true" : undefined} />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirm((v) => !v)}
+                      aria-label={showConfirm ? "Hide password confirmation" : "Show password confirmation"}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 transition hover:text-brand-600"
+                    >
+                      {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
                   {errors.confirmPassword && <p className="field-error">{errors.confirmPassword}</p>}
                 </div>
               </div>
@@ -301,7 +329,7 @@ export default function Register() {
                 <div>
                   <label className="field-label" htmlFor="securityAnswer">Security answer</label>
                   <input id="securityAnswer" className="field-input" value={form.securityAnswer} onChange={update("securityAnswer")} placeholder="Your answer" autoComplete="off" aria-invalid={errors.securityAnswer ? "true" : undefined} />
-                  <p className="mt-1.5 text-xs text-ink-400">Stored hashed — used only to recover your account.</p>
+                  <p className="mt-1.5 text-xs text-ink-400">Stored hashed — never shown in your profile.</p>
                   {errors.securityAnswer && <p className="field-error">{errors.securityAnswer}</p>}
                 </div>
 
@@ -335,9 +363,10 @@ export default function Register() {
                     </div>
                   ))}
                 </div>
-                <div className="rounded-lg border border-navy-100 bg-navy-50 px-4 py-3 text-[13px] leading-relaxed text-navy-700">
-                  After creating your account you will be signed in automatically. You can
-                  complete identity verification from your dashboard at any time.
+                <div className="rounded-xl border border-brand-100 bg-brand-50 px-4 py-3 text-[13px] leading-relaxed text-brand-700">
+                  Next we will email you a 6-digit code. You must confirm it before
+                  signing in. Identity verification can be completed from your
+                  dashboard afterwards.
                 </div>
               </div>
             )}
@@ -351,11 +380,11 @@ export default function Register() {
             </button>
           )}
           {step < STEPS.length - 1 ? (
-            <button type="button" onClick={next} className="btn-primary flex-1">
+            <button type="button" onClick={next} className="btn-brand flex-1">
               Continue <ArrowRight size={17} />
             </button>
           ) : (
-            <button type="submit" className="btn-primary flex-1" disabled={submitting}>
+            <button type="submit" className="btn-brand flex-1" disabled={submitting}>
               {submitting ? (
                 <>
                   <Spinner size={17} /> Creating account…
@@ -370,9 +399,9 @@ export default function Register() {
         </div>
       </form>
 
-      <p className="mt-7 text-center text-sm text-ink-500">
+      <p className="mt-7 text-center text-sm text-muted">
         Already have an account?{" "}
-        <Link to="/" className="link">Sign in</Link>
+        <Link to="/login" className="font-semibold text-brand-700 hover:underline">Sign in</Link>
       </p>
     </div>
   );

@@ -1,6 +1,9 @@
 const router = require("express").Router();
 const swaggerUi = require("swagger-ui-express");
 
+const apiDocsAccess = require("../../middlewares/apiDocsAccess");
+const apiDocsSecurity = require("../../middlewares/apiDocsSecurity");
+
 const spec = {
   openapi: "3.0.0",
   info: {
@@ -41,6 +44,8 @@ const spec = {
     "/status": {
       get: {
         summary: "Get the authenticated customer's latest KYC status",
+        description:
+          "Returns the latest submission with document metadata, provider check outcomes, and lifecycle timestamps. `submittedAt` is recorded when a provider result moves the submission into review and cleared when a new verification attempt starts; `reviewedAt` is recorded by the officer decision.",
         security: [{ bearerAuth: [] }],
         responses: {
           200: { description: "Latest submission status" },
@@ -118,35 +123,35 @@ const spec = {
           503: { description: "Didit is not configured or temporarily unavailable" },
         },
       },
-      "/submissions/{submissionId}/compare": {
-        post: {
-          summary: "Compare corrected OCR fields with user-service registered profile fields",
-          security: [{ bearerAuth: [] }],
-          responses: {
-            200: { description: "Field-level match, mismatch, or review-required outcomes" },
-            503: { description: "Registered profile service unavailable" },
-          },
+    },
+    "/submissions/{submissionId}/compare": {
+      post: {
+        summary: "Compare corrected OCR fields with user-service registered profile fields",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Field-level match, mismatch, or review-required outcomes" },
+          503: { description: "Registered profile service unavailable" },
         },
       },
-      "/officer/reviews": {
-        get: {
-          summary: "List KYC submissions awaiting an authorized officer",
-          security: [{ bearerAuth: [] }],
-          responses: {
-            200: { description: "Review queue" },
-            403: { description: "Officer role required" },
-          },
+    },
+    "/officer/reviews": {
+      get: {
+        summary: "List KYC submissions awaiting an authorized officer",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Review queue" },
+          403: { description: "Officer role required" },
         },
       },
-      "/officer/submissions/{submissionId}/decision": {
-        post: {
-          summary: "Approve or reject a submission with a reason",
-          security: [{ bearerAuth: [] }],
-          responses: {
-            200: { description: "Decision recorded" },
-            403: { description: "Officer role required or self-review prohibited" },
-            409: { description: "Approval requirements not met or invalid state" },
-          },
+    },
+    "/officer/submissions/{submissionId}/decision": {
+      post: {
+        summary: "Approve or reject a submission with a reason",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Decision recorded" },
+          403: { description: "Officer role required or self-review prohibited" },
+          409: { description: "Approval requirements not met or invalid state" },
         },
       },
     },
@@ -166,13 +171,24 @@ const spec = {
   },
 };
 
-router.get("/openapi.json", (req, res) => {
+// In production documentation is disabled by default and, when explicitly
+// enabled, requires HTTP Basic credentials. The relaxed Swagger CSP applies
+// only to these routes, never to application endpoints.
+router.get("/openapi.json", apiDocsAccess, apiDocsSecurity, (req, res) => {
   return res.json(spec);
 });
 
-router.use("/docs", swaggerUi.serve, swaggerUi.setup(spec, {
-  customSiteTitle: "KYC Service API",
-  explorer: false,
-}));
+router.use(
+  "/docs",
+  apiDocsAccess,
+  apiDocsSecurity,
+  swaggerUi.serve,
+  swaggerUi.setup(spec, {
+    customSiteTitle: "KYC Service API",
+    explorer: false,
+  })
+);
 
 module.exports = router;
+// Exposed for tooling/CI that validates the inline specification.
+module.exports.spec = spec;

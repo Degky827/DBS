@@ -11,6 +11,7 @@ import {
 } from "../../services/userService";
 import { normalizeApiError } from "../../utils/apiError";
 import { isUninitializedDate } from "../../utils/format";
+import { useAccount } from "../../context/AccountContext";
 import PageTransition, { StaggerGroup, StaggerItem } from "../../components/ui/PageTransition";
 import PageHeader from "../../components/ui/PageHeader";
 import Alert from "../../components/ui/Alert";
@@ -64,6 +65,7 @@ const createProfileForm = (profile = {}, registeredUser = {}) => ({
 export default function EditProfile() {
   const navigate = useNavigate();
   const authUser = useSelector((state) => state.auth.user);
+  const { refresh: refreshAccount } = useAccount();
 
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
@@ -220,6 +222,7 @@ export default function EditProfile() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setServerError("");
     setSuccess("");
     if (!validate()) return;
@@ -233,8 +236,9 @@ export default function EditProfile() {
     setSubmitting(true);
     try {
       await updateProfile(payload, avatarFile);
+      await refreshAccount({ silent: true });
       setSuccess("Profile updated successfully.");
-      setTimeout(() => navigate("/profile/view"), 700);
+      setTimeout(() => navigate("/profile"), 700);
     } catch (err) {
       const { message, fields } = normalizeApiError(err);
       if (Object.keys(fields).length) {
@@ -437,7 +441,7 @@ export default function EditProfile() {
           <StaggerItem className="flex items-center justify-end gap-3 pb-4">
             <button
               type="button"
-              onClick={() => navigate("/profile/view")}
+              onClick={() => navigate("/profile")}
               className="btn-ghost"
               disabled={submitting}
             >

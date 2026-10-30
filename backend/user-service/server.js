@@ -2,6 +2,10 @@ const env = require("./src/config/env");
 const app = require("./src/app");
 const prisma = require("./src/config/database");
 const logger = require("./src/config/logger");
+const {
+  startReconciliationJob,
+  stopReconciliationJob,
+} = require("./src/modules/payments/reconciliation.service");
 
 const MAX_DB_ATTEMPTS = 3;
 
@@ -49,6 +53,7 @@ function registerShutdown(server) {
     forceExit.unref();
 
     server.close(async () => {
+      stopReconciliationJob();
       await prisma.$disconnect();
       logger.info("Shutdown complete");
       process.exit(0);
@@ -74,6 +79,7 @@ async function start() {
   });
 
   registerShutdown(server);
+  startReconciliationJob();
 }
 
 start().catch((error) => {

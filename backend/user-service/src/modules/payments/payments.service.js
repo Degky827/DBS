@@ -2,7 +2,14 @@ const { Prisma } = require("@prisma/client");
 const crypto = require("crypto");
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
-const { toAmountString } = require("../wallets/money");
+const audit = require("../../utils/audit");
+const ledger = require("../ledger/ledger.service");
+const policies = require("../policies/policies.service");
+const {
+  toAmountString,
+  toMinorUnits,
+  fromMinorUnits,
+} = require("../wallets/money");
 
 const formatPayment = (payment) => ({
   id: payment.id,
@@ -57,6 +64,21 @@ class PaymentsService {
       throw ApiError.conflict("Wallet is inactive", "WALLET_INACTIVE");
     }
 
+    const principalCents = toMinorUnits(amountString);
+    const policy = await policies.getPolicy(
+      this.prisma,
+      "DEPOSIT",
+      wallet.currency
+    );
+    policies.assertAmountWithinPolicy(policy, principalCents);
+    const feeCents = policies.calculateFeeCents(policy, principalCents);
+    if (feeCents >= principalCents) {
+      throw ApiError.conflict(
+        "The configured deposit fee would consume the entire deposit",
+        "DEPOSIT_FEE_INVALID"
+      );
+    }
+
     const findExisting = () =>
       this.prisma.payment.findUnique({
         where: { userId_idempotencyKey: { userId, idempotencyKey } },
@@ -102,13 +124,16 @@ class PaymentsService {
       });
     }
 
+    audit("PAYMENT_DEPOSIT_INITIATED", {
+      userId,
+      paymentReference: payment.reference,
+      amount: amountString,
+      currency: payment.currency,
+    });
     return this.initializeProviderCheckout(payment, userProfile);
   }
 
-  async resumeOrReplay(
-    payment,
-    { userId, wallet, amountString, decimalAmount, idempotencyKey, userProfile }
-  ) {
+  async resumeOrReplay(payment, { wallet, amountString, userProfile }) {
     if (
       payment.walletId !== wallet.id ||
       payment.amount.toFixed(2) !== amountString
@@ -394,35 +419,82 @@ class PaymentsService {
         );
       }
 
-      await tx.$queryRaw(
-        Prisma.sql`SELECT "id" FROM "Wallet" WHERE "id" = ${current.walletId} FOR UPDATE`
+      const grossCents = toMinorUnits(current.amount.toFixed(2));
+      const depositPolicy = await policies.getPolicy(
+        tx,
+        "DEPOSIT",
+        current.currency
       );
-      const credit = await tx.wallet.updateMany({
-        where: {
-          id: current.walletId,
-          isActive: true,
-          currency: current.currency,
-        },
-        data: { balance: { increment: current.amount } },
-      });
-      if (credit.count !== 1) {
+      policies.assertAmountWithinPolicy(depositPolicy, grossCents);
+      const feeCents = policies.calculateFeeCents(depositPolicy, grossCents);
+      if (feeCents >= grossCents) {
         throw ApiError.conflict(
-          "Unable to credit an inactive or missing wallet",
-          "WALLET_INACTIVE"
+          "The configured deposit fee would consume the entire deposit",
+          "DEPOSIT_FEE_INVALID"
         );
       }
+      const netCents = grossCents - feeCents;
+      const businessDate = policies.businessDateFor(depositPolicy.timezone);
+      const feeString = fromMinorUnits(feeCents);
 
-      await tx.transaction.create({
+      const transaction = await tx.transaction.create({
         data: {
           type: "DEPOSIT",
+          status: "POSTED",
+          currency: current.currency,
           initiatedByUserId: current.userId,
           sourceWalletId: null,
           destinationWalletId: current.walletId,
           amount: current.amount,
+          feeAmount: new Prisma.Decimal(feeString),
+          businessDate: new Date(`${businessDate}T00:00:00.000Z`),
+          policySnapshot: policies.policySnapshot(depositPolicy, feeCents, {
+            businessDate,
+          }),
           idempotencyKey: `payment:${current.id}`,
           paymentId: current.id,
         },
       });
+
+      const postings = [
+        {
+          accountCode: ledger.ACCOUNT_CODES.PROVIDER_CLEARING,
+          direction: "DEBIT",
+          amount: current.amount.toFixed(2),
+        },
+        {
+          accountCode: `WALLET:${current.walletId}`,
+          direction: "CREDIT",
+          amount: fromMinorUnits(netCents),
+        },
+      ];
+      if (feeCents > 0n) {
+        postings.push({
+          accountCode: ledger.ACCOUNT_CODES.FEE_REVENUE,
+          direction: "CREDIT",
+          amount: feeString,
+        });
+      }
+
+      await ledger.postEntry({
+        tx,
+        eventType: "DEPOSIT",
+        eventRef: `payment:${current.id}`,
+        currency: current.currency,
+        description: `Deposit ${current.reference}`,
+        metadata: {
+          paymentReference: current.reference,
+          provider: current.provider,
+          providerRef: verification.providerRef,
+          grossAmount: current.amount.toFixed(2),
+          feeAmount: feeString,
+        },
+        createdByUserId: current.userId,
+        transactionId: transaction.id,
+        postings,
+        walletGuards: [{ walletId: current.walletId, requireActive: true }],
+      });
+
       const completed = await tx.payment.update({
         where: { id: current.id },
         data: {
@@ -437,9 +509,43 @@ class PaymentsService {
       });
     });
 
+    outcome.verification = {
+      status: verification.status,
+      rawStatus: verification.rawStatus ?? null,
+      providerRef: verification.providerRef ?? null,
+      amount: verification.amount ?? null,
+      currency: verification.currency ?? null,
+      merchantReference: verification.merchantReference ?? null,
+    };
+
     if (outcome.error) {
+      if (outcome.error.code.includes("MISMATCH")) {
+        audit("PAYMENT_VERIFICATION_REJECTED", {
+          userId: payment.userId,
+          paymentReference: payment.reference,
+          reason: outcome.error.code,
+        });
+      }
       throw ApiError.conflict(outcome.error.message, outcome.error.code);
     }
+
+    if (!outcome.alreadyProcessed) {
+      if (outcome.payment.status === "COMPLETED") {
+        audit("PAYMENT_COMPLETED", {
+          userId: payment.userId,
+          paymentReference: payment.reference,
+          amount: outcome.payment.amount,
+          currency: outcome.payment.currency,
+        });
+      } else if (outcome.payment.status === "FAILED") {
+        audit("PAYMENT_FAILED", {
+          userId: payment.userId,
+          paymentReference: payment.reference,
+          reason: outcome.payment.failureReason,
+        });
+      }
+    }
+
     return outcome;
   }
 }

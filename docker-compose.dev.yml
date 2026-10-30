@@ -1,0 +1,258 @@
+# Local development stack. Never deploy this file.
+#
+# Publishes service ports on 127.0.0.1, enables Swagger and pgAdmin, and uses
+# development-only secret defaults. Each service also writes an .env file for
+# running outside Docker (see the per-service .env.example files).
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d postgres
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# The SPA container is opt-in:
+#   docker compose -f docker-compose.dev.yml --profile spa up --build
+# Otherwise run `npm run dev` in frontend/ against the published APIs.
+
+name: meridian-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-meridian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-only-postgres-password}
+      POSTGRES_DB: auth_db
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/kyc-service/docker/init-database.sql:/docker-entrypoint-initdb.d/20-service-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auth-migrate:
+    build:
+      context: ./backend/auth-service
+      target: migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD:-dev-only-postgres-password}@postgres:5432/auth_db?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  auth-service:
+    build:
+      context: ./backend/auth-service
+      target: runtime
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: development
+      PORT: 5001
+      DB_ADAPTER: pg
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD:-dev-only-postgres-password}@postgres:5432/auth_db?schema=public
+      JWT_ALGORITHM: HS256
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-please-change-0123456789abcdef}
+      JWT_EXPIRES_IN: 15m
+      JWT_ISSUER: auth-service
+      JWT_AUDIENCE: banking-system
+      REFRESH_COOKIE_PATH: /api/auth
+      COOKIE_SECURE: "false"
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
+      CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+      TRUST_PROXY: 0
+      ENABLE_HSTS: "false"
+      ENABLE_API_DOCS: "true"
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Meridian Bank}
+      EMAIL_FROM_EMAIL: ${EMAIL_FROM_EMAIL:-no-reply@meridianbank.example}
+      EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
+    ports:
+      - "127.0.0.1:5001:5001"
+    depends_on:
+      auth-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5001/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  user-migrate:
+    build:
+      context: ./backend/user-service
+      target: migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD:-dev-only-postgres-password}@postgres:5432/user_db?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  user-service:
+    build:
+      context: ./backend/user-service
+      target: runtime
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: development
+      PORT: 5002
+      DB_ADAPTER: pg
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD:-dev-only-postgres-password}@postgres:5432/user_db?schema=public
+      AUTH_MODE: jwt
+      JWT_ALGORITHM: HS256
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-please-change-0123456789abcdef}
+      JWT_ISSUER: auth-service
+      JWT_AUDIENCE: banking-system
+      AUTH_SERVICE_URL: http://auth-service:5001/api/v1
+      KYC_SERVICE_URL: http://kyc-service:5003/api/v1/kyc
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
+      CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+      TRUST_PROXY: 0
+      ENABLE_HSTS: "false"
+      ENABLE_API_DOCS: "true"
+      AVATAR_UPLOAD_DIR: /app/uploads/avatars
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      CHAPA_SECRET_KEY: ${CHAPA_SECRET_KEY:-}
+      CHAPA_WEBHOOK_SECRET: ${CHAPA_WEBHOOK_SECRET:-}
+      CHAPA_BASE_URL: ${CHAPA_BASE_URL:-}
+      CHAPA_CALLBACK_URL: ${CHAPA_CALLBACK_URL:-}
+      CHAPA_RETURN_URL: ${CHAPA_RETURN_URL:-}
+    ports:
+      - "127.0.0.1:5002:5002"
+    volumes:
+      - user_uploads:/app/uploads
+    depends_on:
+      user-migrate:
+        condition: service_completed_successfully
+      auth-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5002/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  kyc-migrate:
+    build:
+      context: ./backend/kyc-service
+      target: migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD:-dev-only-postgres-password}@postgres:5432/kyc_db?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  kyc-service:
+    build:
+      context: ./backend/kyc-service
+      target: runtime
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: development
+      PORT: 5003
+      DB_ADAPTER: pg
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD:-dev-only-postgres-password}@postgres:5432/kyc_db?schema=public
+      JWT_ALGORITHM: HS256
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-please-change-0123456789abcdef}
+      JWT_ISSUER: auth-service
+      JWT_AUDIENCE: banking-system
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
+      USER_SERVICE_URL: http://user-service:5002/api/v1
+      AUTH_SERVICE_URL: http://auth-service:5001/api/v1
+      CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+      TRUST_PROXY: 0
+      ENABLE_HSTS: "false"
+      ENABLE_API_DOCS: "true"
+      STORAGE_DIR: /app/storage
+      STORAGE_ENCRYPTION_KEY: ${STORAGE_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      DIDIT_API_BASE_URL: https://verification.didit.me
+      DIDIT_API_KEY: ${DIDIT_API_KEY:-}
+      DIDIT_WORKFLOW_ID: ${DIDIT_WORKFLOW_ID:-}
+      DIDIT_WEBHOOK_SECRET: ${DIDIT_WEBHOOK_SECRET:-}
+      DIDIT_WEBHOOK_SECRET_PREVIOUS: ${DIDIT_WEBHOOK_SECRET_PREVIOUS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    ports:
+      - "127.0.0.1:5003:5003"
+    volumes:
+      - kyc_storage:/app/storage
+    depends_on:
+      kyc-migrate:
+        condition: service_completed_successfully
+      user-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5003/api/v1/kyc/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    profiles: ["spa"]
+    build:
+      context: ./frontend
+      args:
+        VITE_AUTH_API: ${VITE_AUTH_API:-/api/auth}
+        VITE_USER_API: ${VITE_USER_API:-/api/user}
+        VITE_KYC_API: ${VITE_KYC_API:-/api/kyc}
+    restart: unless-stopped
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      kyc-service:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-dev@meridian.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-dev-only-pgadmin-password}
+      PGADMIN_CONFIG_SERVER_MODE: "false"
+    ports:
+      - "127.0.0.1:5051:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+  user_uploads:
+  kyc_storage:

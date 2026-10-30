@@ -36,26 +36,31 @@ export default function ForgotPassword() {
   if (sent) {
     return (
       <PageTransition>
-        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-8 ring-emerald-50/60">
+        <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 ring-8 ring-emerald-50/60">
           <MailCheck size={22} />
         </span>
-        <h1 className="mt-5 text-3xl font-extrabold">Check your inbox</h1>
-        <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
+        <h1 className="mt-5 text-[32px] font-extrabold leading-tight text-midnight">
+          Check your inbox
+        </h1>
+        <p className="mt-2 text-[15px] leading-relaxed text-muted">
           If an account exists for{" "}
-          <span className="font-semibold text-navy-900">{email}</span>, a 6-digit reset
+          <span className="font-semibold text-midnight">{email}</span>, a 6-digit reset
           code is on its way. It expires in 10 minutes.
         </p>
 
         <button
           type="button"
-          className="btn-primary mt-6 w-full"
+          className="btn-brand mt-6 w-full"
           onClick={() => navigate("/reset-password", { state: { email } })}
         >
           I have the code <ArrowRight size={17} />
         </button>
 
-        <p className="mt-5 text-center text-sm text-ink-500">
-          <Link to="/" className="link inline-flex items-center gap-1.5">
+        <p className="mt-5 text-center text-sm text-muted">
+          <Link
+            to="/login"
+            className="inline-flex items-center gap-1.5 font-semibold text-brand-700 hover:underline"
+          >
             <ArrowLeft size={14} /> Back to sign in
           </Link>
         </p>
@@ -65,9 +70,13 @@ export default function ForgotPassword() {
 
   return (
     <PageTransition>
-      <p className="eyebrow">Account recovery</p>
-      <h1 className="mt-2 text-3xl font-extrabold">Forgot your password?</h1>
-      <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
+      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-brand-700">
+        Account recovery
+      </p>
+      <h1 className="mt-3 text-[32px] font-extrabold leading-tight text-midnight">
+        Forgot your password?
+      </h1>
+      <p className="mt-2 text-[15px] leading-relaxed text-muted">
         Enter the email on your account and we&apos;ll send a one-time code to reset it.
       </p>
 
@@ -87,7 +96,7 @@ export default function ForgotPassword() {
           {error && <p className="field-error">{error}</p>}
         </div>
 
-        <button type="submit" className="btn-primary w-full" disabled={submitting}>
+        <button type="submit" className="btn-brand w-full" disabled={submitting}>
           {submitting ? (
             <>
               <Spinner size={17} /> Sending code…
@@ -100,10 +109,12 @@ export default function ForgotPassword() {
         </button>
       </form>
 
-      <p className="mt-7 text-center text-sm text-ink-500">
+      <div className="mt-8 rounded-xl border border-ink-200 bg-ink-50 px-4 py-3 text-[12.5px] leading-relaxed text-muted">
         Remembered it?{" "}
-        <Link to="/" className="link">Back to sign in</Link>
-      </p>
+        <Link to="/login" className="font-semibold text-brand-700 hover:underline">
+          Back to sign in
+        </Link>
+      </div>
     </PageTransition>
   );
 }

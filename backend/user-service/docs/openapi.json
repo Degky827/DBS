@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Digital Banking - User Service (Phase 2, standalone)",
-    "version": "1.0.0",
-    "description": "Standalone user profile API for Phase 2 development. Uses opaque development sessions (AUTH_MODE=dev) so profile endpoints can be tested without auth-service. This authentication mode is NOT production-ready. See docs/INTEGRATION.md for the JWT integration plan. All responses use the envelope `{ success, message, data | errors }`. Password hashes are never returned.",
+    "title": "Digital Banking - User Service (Phase 3, standalone)",
+    "version": "1.1.0",
+    "description": "Standalone user profile and wallet API for development. Uses opaque development sessions (AUTH_MODE=dev) so profile endpoints can be tested without auth-service. This authentication mode is NOT production-ready. See docs/INTEGRATION.md for the JWT integration plan. Phase 3 posts every wallet change through a double-entry ledger; balances are liabilities and are never treated as revenue. All responses use the envelope `{ success, message, data | errors }`. Password hashes are never returned.",
     "contact": {
       "name": "User Service Team"
     },
@@ -41,7 +41,11 @@
     },
     {
       "name": "Payments",
-      "description": "Chapa Test Mode hosted deposits with server-side verification; withdrawals remain disabled"
+      "description": "Chapa Test Mode hosted deposits with server-side verification; internal withdrawal reservations with no payout provider"
+    },
+    {
+      "name": "Admin",
+      "description": "Privileged reversal, financial policy, and reconciliation operations (ADMIN role from the verified session)"
     }
   ],
   "paths": {
@@ -496,7 +500,7 @@
       "get": {
         "tags": ["Transactions"],
         "summary": "List the authenticated user's transaction history",
-        "description": "Returns a cursor-paginated transfer history visible to the authenticated user. Filter by direction and inclusive ISO 8601 date bounds.",
+        "description": "Returns a cursor-paginated transfer history visible to the authenticated user. Filter by direction, transaction type, status, reference search, and inclusive ISO 8601 date bounds. The summary reflects the applied filters across both directions.",
         "operationId": "listMyTransactions",
         "security": [{ "devBearer": [] }],
         "parameters": [
@@ -515,6 +519,24 @@
             "name": "direction",
             "in": "query",
             "schema": { "type": "string", "enum": ["all", "incoming", "outgoing"], "default": "all" }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Filter by transaction type.",
+            "schema": { "type": "string", "enum": ["TRANSFER", "DEPOSIT"] }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by the transaction's authoritative status.",
+            "schema": { "type": "string", "enum": ["POSTED", "PARTIALLY_REVERSED", "REVERSED"] }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive search within the transaction reference (3-100 characters).",
+            "schema": { "type": "string", "minLength": 3, "maxLength": 100 }
           },
           {
             "name": "from",
@@ -548,6 +570,40 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/v1/payments": {
+      "get": {
+        "tags": ["Payments"],
+        "summary": "List the authenticated user's payments",
+        "description": "Returns the authenticated user's deposits, newest first, as a cursor-paginated list. Requires an access token; only payments belonging to the caller are returned.",
+        "operationId": "listMyPayments",
+        "security": [{ "devBearer": [] }],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Payment id returned by the previous page.",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payments fetched",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentsResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
@@ -753,20 +809,192 @@
     "/api/v1/payments/withdrawals": {
       "post": {
         "tags": ["Payments"],
-        "summary": "Withdraw funds (not implemented)",
-        "description": "Payouts are unsupported and this endpoint never changes wallet balances.",
-        "operationId": "createWithdrawalUnavailable",
+        "summary": "Reserve funds for a withdrawal",
+        "description": "Internal withdrawal lifecycle only. The amount is debited from the wallet and credited to PLATFORM:WITHDRAWAL_RESERVED through a balanced journal entry. No external payout is performed because the configured provider (Chapa) exposes no payout capability; a pending withdrawal can only be cancelled, which reverses the reservation. Withdrawals with a non-zero configured fee are rejected until a payout provider is integrated.",
+        "operationId": "createWithdrawalReservation",
         "security": [{ "devBearer": [] }],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "minLength": 8, "maxLength": 128 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/WithdrawalRequest" },
+              "example": { "amount": "120.00" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Funds reserved; ledger entry posted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WithdrawalResponse" }
+              }
+            }
+          },
+          "200": {
+            "description": "Idempotent withdrawal replay",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WithdrawalResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "KYC approval required",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          },
+          "409": {
+            "description": "Insufficient balance, wallet inactive, policy limit, withdrawal fee unsupported, or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/withdrawals/{reference}": {
+      "get": {
+        "tags": ["Payments"],
+        "summary": "Get one of the authenticated user's withdrawals",
+        "operationId": "getMyWithdrawal",
+        "security": [{ "devBearer": [] }],
+        "parameters": [
+          {
+            "name": "reference",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Withdrawal fetched",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WithdrawalResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": {
+            "description": "Withdrawal not found or not owned by the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/withdrawals/{reference}/cancel": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Cancel a pending withdrawal reservation",
+        "description": "Posts a compensating journal entry that debits PLATFORM:WITHDRAWAL_RESERVED and credits the wallet, then marks the withdrawal CANCELLED. Cancelling an already-cancelled withdrawal is idempotent. No external payout is reversed because none was made.",
+        "operationId": "cancelMyWithdrawal",
+        "security": [{ "devBearer": [] }],
+        "parameters": [
+          {
+            "name": "reference",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 64 }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": { "type": "string", "maxLength": 500 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Withdrawal cancelled (or already cancelled)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WithdrawalResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": {
+            "description": "Withdrawal not found or not owned by the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          },
+          "409": {
+            "description": "Withdrawal is not in a cancellable state",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/deposits/{reference}/refunds": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Request a provider refund (unsupported)",
+        "description": "Chapa Test Mode exposes no refund API. This route fails closed with 501 and never changes ledger state; internal transfers are corrected through administrator reversals.",
+        "operationId": "createDepositRefundUnsupported",
+        "security": [{ "devBearer": [] }],
+        "parameters": [
+          {
+            "name": "reference",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 20 }
+          }
+        ],
         "responses": {
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "ADMIN role required",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          },
           "501": {
-            "description": "Payout flow is unsupported",
+            "description": "Provider refunds are unsupported",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
                 "example": {
                   "success": false,
-                  "message": "Chapa payouts are not supported by this service"
+                  "message": "Chapa refunds are not supported by this service; internal transfer reversals are available to administrators",
+                  "code": "PROVIDER_REFUND_UNSUPPORTED"
                 }
               }
             }
@@ -800,6 +1028,85 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": {
             "description": "Transaction not found or not visible to the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/transactions/{reference}/reversals": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Reverse a posted transfer (full or partial)",
+        "description": "Administrator-only compensating reversal. The original journal entry is never edited or deleted; a new balanced journal entry is posted that links to the original. Omitting `amount` reverses the remaining reversible amount. The same Idempotency-Key replays the previously posted reversal. Legacy transactions migrated from the pre-ledger schema (status LEGACY) cannot be reversed.",
+        "operationId": "reverseTransaction",
+        "security": [{ "devBearer": [] }],
+        "parameters": [
+          {
+            "name": "reference",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "minLength": 8, "maxLength": 128 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ReversalRequest" },
+              "example": {
+                "amount": "4.00",
+                "reason": "Customer dispute upheld"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Reversal posted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReversalResponse" }
+              }
+            }
+          },
+          "200": {
+            "description": "Idempotent reversal replay",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReversalResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "ADMIN role required",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          },
+          "404": {
+            "description": "Transaction not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          },
+          "409": {
+            "description": "Legacy transaction, already fully reversed, amount exceeds remaining reversible amount, or concurrent reversal conflict",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
@@ -888,6 +1195,129 @@
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
                 "example": { "success": false, "message": "Internal server error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/financial-policies": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List configured financial policies",
+        "description": "Returns the active limits and fee configuration per policy type and currency. All money fields are decimal strings with two fractional digits.",
+        "operationId": "listFinancialPolicies",
+        "security": [{ "devBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Policies fetched",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FinancialPoliciesResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "ADMIN role required",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/financial-policies/{type}": {
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Update a financial policy with an audited reason",
+        "description": "Every change requires a reason of at least 10 characters and writes a FinancialPolicyRevision snapshot with the acting administrator. Limits apply server-side at request time; the day boundary is evaluated in the policy timezone.",
+        "operationId": "updateFinancialPolicy",
+        "security": [{ "devBearer": [] }],
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "enum": ["TRANSFER", "DEPOSIT", "WITHDRAWAL"] }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PolicyUpdateRequest" },
+              "example": {
+                "dailyOutgoingCount": 7,
+                "reason": "Raise the pilot daily transfer count"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Policy updated and revision recorded",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FinancialPolicyResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "ADMIN role required",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          },
+          "404": {
+            "description": "Policy type/currency not configured",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/payments/reconciliation": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Run payment reconciliation for stale pending deposits",
+        "description": "Re-verifies pending payments older than the stale threshold against the trusted provider and records one attempt per payment. A provider timeout never marks a payment failed; ambiguous outcomes are flagged MANUAL_REVIEW. Repeated or concurrent runs cannot double-credit because completion is idempotent.",
+        "operationId": "runPaymentReconciliation",
+        "security": [{ "devBearer": [] }],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ReconciliationRequest" },
+              "example": { "olderThanMinutes": 15, "limit": 50 }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reconciliation run completed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReconciliationResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "ADMIN role required",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
               }
             }
           }
@@ -1060,16 +1490,246 @@
       },
       "Transaction": {
         "type": "object",
-        "required": ["id", "reference", "type", "sourceWalletId", "destinationWalletId", "amount", "createdAt"],
+        "required": ["id", "reference", "type", "status", "currency", "sourceWalletId", "destinationWalletId", "amount", "feeAmount", "reversedAmount", "createdAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "reference": { "type": "string", "format": "uuid" },
           "type": { "type": "string", "enum": ["TRANSFER", "DEPOSIT"] },
+          "status": {
+            "type": "string",
+            "enum": ["POSTED", "PARTIALLY_REVERSED", "REVERSED", "LEGACY"],
+            "description": "LEDGER provenance. LEGACY rows predate the ledger migration and cannot be reversed through the ledger."
+          },
+          "currency": { "type": "string", "pattern": "^[A-Z]{3}$", "example": "ETB" },
           "sourceWalletId": { "type": "string", "format": "uuid", "nullable": true },
           "destinationWalletId": { "type": "string", "format": "uuid" },
           "amount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "feeAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "reversedAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "ledgerEntryReference": {
+            "type": "string",
+            "nullable": true,
+            "example": "JRN-1c9ec08e914c4a8a8774aca833f8d101",
+            "description": "Journal entry that posted this transaction; null for LEGACY rows."
+          },
           "createdAt": { "type": "string", "format": "date-time" }
         }
+      },
+      "ReversalRequest": {
+        "type": "object",
+        "required": ["reason"],
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "type": "string",
+            "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$",
+            "description": "Optional positive amount. Omit to reverse the remaining reversible amount."
+          },
+          "reason": { "type": "string", "minLength": 5, "maxLength": 500 }
+        }
+      },
+      "Reversal": {
+        "type": "object",
+        "required": ["id", "reference", "transactionId", "amount", "currency", "reason", "actorUserId", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "reference": { "type": "string", "format": "uuid" },
+          "transactionId": { "type": "string", "format": "uuid" },
+          "amount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+          "reason": { "type": "string" },
+          "actorUserId": { "type": "string", "format": "uuid" },
+          "ledgerEntryReference": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ReversalResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "transaction": { "$ref": "#/components/schemas/Transaction" },
+                  "reversal": { "$ref": "#/components/schemas/Reversal" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "WithdrawalRequest": {
+        "type": "object",
+        "required": ["amount"],
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "type": "string",
+            "pattern": "^[1-9]\\d{0,16}(?:\\.\\d{1,2})?$",
+            "example": "120.00",
+            "description": "Positive ETB amount with at most two fractional digits."
+          }
+        }
+      },
+      "Withdrawal": {
+        "type": "object",
+        "required": ["id", "reference", "status", "amount", "currency", "walletId", "businessDate", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "reference": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["PENDING", "CANCELLED"],
+            "description": "Internal lifecycle only. There is no COMPLETED state because no payout provider is integrated."
+          },
+          "amount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+          "walletId": { "type": "string", "format": "uuid" },
+          "businessDate": { "type": "string", "format": "date" },
+          "ledgerEntryReference": { "type": "string", "nullable": true },
+          "failureReason": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "WithdrawalResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "withdrawal": { "$ref": "#/components/schemas/Withdrawal" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "FinancialPolicy": {
+        "type": "object",
+        "required": ["id", "type", "currency", "minAmount", "maxAmount", "dailyOutgoingAmount", "dailyOutgoingCount", "feeType", "feeFlat", "feeBps", "feeMin", "timezone", "isActive"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "type": { "type": "string", "enum": ["TRANSFER", "DEPOSIT", "WITHDRAWAL"] },
+          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+          "minAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "maxAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "dailyOutgoingAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "dailyOutgoingCount": { "type": "integer", "minimum": 0 },
+          "feeType": { "type": "string", "enum": ["NONE", "FLAT", "PERCENTAGE", "FLAT_PLUS_PERCENTAGE"] },
+          "feeFlat": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "feeBps": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "feeMin": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+          "feeMax": { "type": "string", "pattern": "^\\d+\\.\\d{2}$", "nullable": true },
+          "timezone": { "type": "string", "example": "Africa/Addis_Ababa" },
+          "isActive": { "type": "boolean" },
+          "effectiveFrom": { "type": "string", "format": "date-time" },
+          "createdBy": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "FinancialPolicyResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "policy": { "$ref": "#/components/schemas/FinancialPolicy" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "FinancialPoliciesResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "policies": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/FinancialPolicy" }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PolicyUpdateRequest": {
+        "type": "object",
+        "required": ["reason"],
+        "additionalProperties": false,
+        "properties": {
+          "currency": { "type": "string", "pattern": "^[A-Z]{3}$", "default": "ETB" },
+          "minAmount": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
+          "maxAmount": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
+          "dailyOutgoingAmount": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
+          "dailyOutgoingCount": { "type": "integer", "minimum": 0, "maximum": 100000 },
+          "feeType": { "type": "string", "enum": ["NONE", "FLAT", "PERCENTAGE", "FLAT_PLUS_PERCENTAGE"] },
+          "feeFlat": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
+          "feeMin": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
+          "feeMax": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$", "nullable": true },
+          "feeBps": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "timezone": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "reason": { "type": "string", "minLength": 10, "maxLength": 500 }
+        }
+      },
+      "ReconciliationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "olderThanMinutes": { "type": "integer", "minimum": 1, "maximum": 10080 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+        }
+      },
+      "ReconciliationResultItem": {
+        "type": "object",
+        "required": ["paymentReference", "outcome"],
+        "properties": {
+          "paymentReference": { "type": "string" },
+          "outcome": {
+            "type": "string",
+            "enum": ["MATCHED", "PENDING", "MISMATCH", "MANUAL_REVIEW", "ERROR"],
+            "description": "MATCHED means the provider state was applied locally. PENDING means the provider still reports an unresolved state. MISMATCH means amount/currency/reference disagreement; no credit is posted."
+          },
+          "paymentStatus": { "type": "string", "nullable": true },
+          "errorCode": { "type": "string", "nullable": true }
+        }
+      },
+      "ReconciliationResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "checked": { "type": "integer" },
+                  "cutoff": { "type": "string", "format": "date-time" },
+                  "results": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/ReconciliationResultItem" }
+                  }
+                }
+              }
+            }
+          }
+        ]
       },
       "TransferResponse": {
         "allOf": [
@@ -1103,13 +1763,28 @@
                     "type": "array",
                     "items": { "$ref": "#/components/schemas/Transaction" }
                   },
+                  "summary": {
+                    "type": "object",
+                    "required": ["total", "incomingAmount", "outgoingAmount"],
+                    "description": "Totals for every transaction matching the applied date, type, status, and reference filters, across both directions. Outgoing includes fees.",
+                    "properties": {
+                      "total": { "type": "integer", "minimum": 0 },
+                      "incomingAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
+                      "outgoingAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" }
+                    }
+                  },
                   "page": {
                     "type": "object",
-                    "required": ["limit", "hasMore", "nextCursor"],
+                    "required": ["limit", "hasMore", "nextCursor", "total"],
                     "properties": {
                       "limit": { "type": "integer" },
                       "hasMore": { "type": "boolean" },
-                      "nextCursor": { "type": "string", "format": "uuid", "nullable": true }
+                      "nextCursor": { "type": "string", "format": "uuid", "nullable": true },
+                      "total": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of transactions matching the current filters, unaffected by pagination."
+                      }
                     }
                   }
                 }
@@ -1159,6 +1834,35 @@
                 "type": "object",
                 "properties": {
                   "payment": { "$ref": "#/components/schemas/Payment" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PaymentsResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "payments": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/Payment" }
+                  },
+                  "page": {
+                    "type": "object",
+                    "required": ["limit", "hasMore", "nextCursor", "total"],
+                    "properties": {
+                      "limit": { "type": "integer" },
+                      "hasMore": { "type": "boolean" },
+                      "nextCursor": { "type": "string", "format": "uuid", "nullable": true },
+                      "total": { "type": "integer", "minimum": 0 }
+                    }
+                  }
                 }
               }
             }

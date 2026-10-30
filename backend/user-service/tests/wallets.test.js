@@ -24,6 +24,9 @@ const assert = require("node:assert/strict");
 const request = require("supertest");
 const app = require("../src/app");
 const prisma = require("../src/config/database");
+const kycEligibility = require("../src/services/kycEligibility");
+const ledger = require("../src/modules/ledger/ledger.service");
+const { toMinorUnits, fromMinorUnits } = require("../src/modules/wallets/money");
 
 const users = {};
 const tokens = {};
@@ -36,9 +39,10 @@ const fixtureNames = [
   "concurrentRecipient",
   "rollbackSender",
   "rollbackRecipient",
+  "admin",
 ];
 
-const createUserAndSession = async (label) => {
+const createUserAndSession = async (label, role = "USER") => {
   const suffix = randomUUID().replace(/-/g, "");
   const user = await prisma.userProfile.create({
     data: {
@@ -50,6 +54,7 @@ const createUserAndSession = async (label) => {
       dateOfBirth: new Date("1990-01-01T00:00:00.000Z"),
       gender: "other",
       passwordHash: "wallet-test-only",
+      role,
     },
   });
   const token = randomBytes(48).toString("hex");
@@ -65,6 +70,69 @@ const createUserAndSession = async (label) => {
 };
 
 const auth = (label) => `Bearer ${tokens[label]}`;
+
+const approveKyc = () =>
+  kycEligibility.setKycClient({
+    async getUserKycStatus() {
+      return { status: "APPROVED", isApproved: true };
+    },
+  });
+
+// Wallet.balance is a projection of the wallet's ledger account. Tests fund
+// wallets through a balanced opening-balance entry instead of writing balances
+// directly, matching how production money enters the ledger.
+const fundWallet = async (walletId, amount) =>
+  prisma.$transaction((tx) =>
+    ledger.postEntry({
+      tx,
+      eventType: "TEST_FUNDING",
+      eventRef: `test-funding:${randomUUID()}`,
+      currency: "ETB",
+      description: "Test funding from opening equity",
+      postings: [
+        {
+          accountCode: ledger.ACCOUNT_CODES.OPENING_BALANCE,
+          direction: "DEBIT",
+          amount,
+        },
+        {
+          accountCode: `WALLET:${walletId}`,
+          direction: "CREDIT",
+          amount,
+        },
+      ],
+    })
+  );
+
+// Near-limit funding needs a fresh asset account each time so the accumulated
+// opening-equity balance cannot overflow the supported decimal range.
+const fundWalletFromNewAsset = async (walletId, amount) => {
+  const account = await prisma.ledgerAccount.create({
+    data: {
+      code: `TEST:FUNDING:${randomUUID()}`,
+      name: "Test funding asset",
+      type: "ASSET",
+      normalBalance: "DEBIT",
+      currency: "ETB",
+    },
+  });
+  return prisma.$transaction((tx) =>
+    ledger.postEntry({
+      tx,
+      eventType: "TEST_FUNDING",
+      eventRef: `test-funding:${randomUUID()}`,
+      currency: "ETB",
+      description: "Test funding from a dedicated asset account",
+      postings: [
+        { accountId: account.id, direction: "DEBIT", amount },
+        { accountCode: `WALLET:${walletId}`, direction: "CREDIT", amount },
+      ],
+    })
+  );
+};
+
+const ledgerBalance = async (walletId) =>
+  (await prisma.ledgerAccount.findUnique({ where: { walletId } })).balance.toFixed(2);
 
 const createWallet = async (label) =>
   request(app)
@@ -88,21 +156,21 @@ const walletBalance = async (label) => {
 };
 
 before(async () => {
+  approveKyc();
   await prisma.$connect();
   for (const label of fixtureNames) {
-    await createUserAndSession(label);
+    await createUserAndSession(label, label === "admin" ? "ADMIN" : "USER");
   }
 });
 
 after(async () => {
+  kycEligibility.setKycClient(null);
   const userIds = fixtureNames.map((label) => users[label]?.id).filter(Boolean);
   try {
-    await prisma.transaction.deleteMany({
-      where: { initiatedByUserId: { in: userIds } },
-    });
-    await prisma.wallet.deleteMany({ where: { userId: { in: userIds } } });
+    // Posted ledger records are immutable by design, so financial fixtures are
+    // intentionally left in the disposable test database; only sessions are
+    // removed to keep the suite repeatable.
     await prisma.devSession.deleteMany({ where: { userId: { in: userIds } } });
-    await prisma.userProfile.deleteMany({ where: { id: { in: userIds } } });
   } finally {
     await prisma.$disconnect();
   }
@@ -123,6 +191,56 @@ test("wallet creation is authenticated and limited to one per customer", async (
 
   const unauthenticated = await request(app).post("/api/v1/wallets").send({});
   assert.equal(unauthenticated.status, 401);
+});
+
+test("wallet creation and transfers reject users without KYC approval", async () => {
+  kycEligibility.setKycClient({
+    async getUserKycStatus() {
+      return { status: "PENDING_REVIEW", isApproved: false };
+    },
+  });
+
+  try {
+    const balanceBefore = await walletBalance("owner");
+    const create = await createWallet("owner");
+    assert.equal(create.status, 403);
+    assert.equal(create.body.code, "KYC_NOT_APPROVED");
+
+    const move = await transfer(
+      "owner",
+      wallets.recipient.id,
+      "1.00",
+      `kyc_rejected_${randomUUID()}`
+    );
+    assert.equal(move.status, 403);
+    assert.equal(move.body.code, "KYC_NOT_APPROVED");
+    assert.equal(await walletBalance("owner"), balanceBefore);
+  } finally {
+    approveKyc();
+  }
+});
+
+test("financial operations fail closed when KYC status is unavailable", async () => {
+  kycEligibility.setKycClient({
+    async getUserKycStatus() {
+      throw new Error("kyc-service down");
+    },
+  });
+
+  try {
+    const balanceBefore = await walletBalance("owner");
+    const move = await transfer(
+      "owner",
+      wallets.recipient.id,
+      "1.00",
+      `kyc_unavailable_${randomUUID()}`
+    );
+    assert.equal(move.status, 503);
+    assert.equal(move.body.code, "KYC_STATUS_UNAVAILABLE");
+    assert.equal(await walletBalance("owner"), balanceBefore);
+  } finally {
+    approveKyc();
+  }
 });
 
 test("balance retrieval and wallet access are restricted to the owner", async () => {
@@ -188,10 +306,7 @@ test("transfer rejects invalid and self-recipient wallets", async () => {
 });
 
 test("successful transfers update balances and are idempotent", async () => {
-  await prisma.wallet.update({
-    where: { id: wallets.owner.id },
-    data: { balance: "100.00" },
-  });
+  await fundWallet(wallets.owner.id, "100.00");
 
   const key = `successful_${randomUUID()}`;
   const created = await transfer("owner", wallets.recipient.id, "20.25", key);
@@ -207,6 +322,8 @@ test("successful transfers update balances and are idempotent", async () => {
   );
   assert.equal(await walletBalance("owner"), "79.75");
   assert.equal(await walletBalance("recipient"), "20.25");
+  assert.equal(await ledgerBalance(wallets.owner.id), "79.75");
+  assert.equal(await ledgerBalance(wallets.recipient.id), "20.25");
 
   const secondTransfer = await transfer(
     "owner",
@@ -246,6 +363,39 @@ test("successful transfers update balances and are idempotent", async () => {
     .set("Authorization", auth("recipient"));
   assert.equal(incomingHistory.status, 200);
   assert.equal(incomingHistory.body.data.transactions.length, 2);
+
+  assert.equal(senderHistory.body.data.summary.total, 2);
+  assert.equal(senderHistory.body.data.summary.incomingAmount, "0.00");
+  assert.equal(senderHistory.body.data.summary.outgoingAmount, "21.25");
+  assert.equal(incomingHistory.body.data.summary.incomingAmount, "21.25");
+  assert.equal(incomingHistory.body.data.summary.outgoingAmount, "0.00");
+
+  const referenceSearch = await request(app)
+    .get(
+      `/api/v1/transactions?type=TRANSFER&status=POSTED&q=${encodeURIComponent(
+        created.body.data.transaction.reference.slice(0, 8)
+      )}`
+    )
+    .set("Authorization", auth("owner"));
+  assert.equal(referenceSearch.status, 200);
+  assert.equal(referenceSearch.body.data.transactions.length, 1);
+  assert.equal(referenceSearch.body.data.summary.total, 1);
+
+  const wrongType = await request(app)
+    .get("/api/v1/transactions?type=DEPOSIT")
+    .set("Authorization", auth("owner"));
+  assert.equal(wrongType.status, 200);
+  assert.equal(wrongType.body.data.transactions.length, 0);
+
+  const invalidStatus = await request(app)
+    .get("/api/v1/transactions?status=PENDING")
+    .set("Authorization", auth("owner"));
+  assert.equal(invalidStatus.status, 400);
+
+  const invalidSearch = await request(app)
+    .get("/api/v1/transactions?q=ab")
+    .set("Authorization", auth("owner"));
+  assert.equal(invalidSearch.status, 400);
 
   const invalidFilter = await request(app)
     .get("/api/v1/transactions?limit=101")
@@ -351,10 +501,7 @@ test("transfers reject inactive source or destination wallets", async () => {
 });
 
 test("concurrent transfers cannot spend the same balance twice", async () => {
-  await prisma.wallet.update({
-    where: { id: wallets.concurrentSender.id },
-    data: { balance: "100.00" },
-  });
+  await fundWallet(wallets.concurrentSender.id, "100.00");
 
   const responses = await Promise.all([
     transfer(
@@ -413,14 +560,11 @@ test("concurrent transfers cannot spend the same balance twice", async () => {
 });
 
 test("a failed destination credit rolls back the source debit and transaction", async () => {
-  await prisma.wallet.update({
-    where: { id: wallets.rollbackSender.id },
-    data: { balance: "10.00" },
-  });
-  await prisma.wallet.update({
-    where: { id: wallets.rollbackRecipient.id },
-    data: { balance: "99999999999999999.99" },
-  });
+  await fundWallet(wallets.rollbackSender.id, "10.00");
+  await fundWalletFromNewAsset(
+    wallets.rollbackRecipient.id,
+    "99999999999999999.98"
+  );
 
   const idempotencyKey = `rollback_${randomUUID()}`;
   const response = await transfer(
@@ -434,7 +578,7 @@ test("a failed destination credit rolls back the source debit and transaction", 
   assert.equal(await walletBalance("rollbackSender"), "10.00");
   assert.equal(
     await walletBalance("rollbackRecipient"),
-    "99999999999999999.99"
+    "99999999999999999.98"
   );
   assert.equal(
     await prisma.transaction.count({
@@ -447,6 +591,195 @@ test("a failed destination credit rolls back the source debit and transaction", 
   );
 });
 
+test("transfer reversal is admin-only, idempotent, partial, and ledger-linked", async () => {
+  await fundWallet(wallets.owner.id, "50.00");
+  const beforeOwner = await walletBalance("owner");
+  const beforeRecipient = await walletBalance("recipient");
+
+  const created = await transfer(
+    "owner",
+    wallets.recipient.id,
+    "10.00",
+    `reversal_target_${randomUUID()}`
+  );
+  assert.equal(created.status, 201);
+  const reference = created.body.data.transaction.reference;
+  const original = await prisma.transaction.findUnique({
+    where: { reference },
+    select: { id: true, journalEntry: { select: { id: true } } },
+  });
+  const reverse = (token, key, amount) =>
+    request(app)
+      .post(`/api/v1/transactions/${reference}/reversals`)
+      .set("Authorization", `Bearer ${tokens[token]}`)
+      .set("Idempotency-Key", key)
+      .send({ amount, reason: "Customer dispute" });
+
+  const forbidden = await reverse("owner", `rev_user_${randomUUID()}`, "4.00");
+  assert.equal(forbidden.status, 403);
+  assert.equal(forbidden.body.code, "FORBIDDEN_ROLE");
+
+  const key = `rev_${randomUUID()}`;
+  const partial = await reverse("admin", key, "4.00");
+  assert.equal(partial.status, 201);
+  assert.equal(partial.body.data.transaction.status, "PARTIALLY_REVERSED");
+  assert.equal(partial.body.data.transaction.reversedAmount, "4.00");
+  assert.equal(partial.body.data.reversal.amount, "4.00");
+  assert.match(partial.body.data.reversal.ledgerEntryReference, /^JRN-/);
+
+  const replay = await reverse("admin", key, "4.00");
+  assert.equal(replay.status, 200);
+  assert.equal(
+    replay.body.data.reversal.reference,
+    partial.body.data.reversal.reference
+  );
+  assert.equal(
+    await walletBalance("owner"),
+    fromMinorUnits(toMinorUnits(beforeOwner) - 600n)
+  );
+  assert.equal(
+    await walletBalance("recipient"),
+    fromMinorUnits(toMinorUnits(beforeRecipient) + 600n)
+  );
+
+  const beyondRemaining = await reverse("admin", `rev_over_${randomUUID()}`, "7.00");
+  assert.equal(beyondRemaining.status, 409);
+  assert.equal(beyondRemaining.body.code, "REVERSAL_EXCEEDS_REMAINING");
+
+  const reusedKey = await reverse("admin", key, "3.00");
+  assert.equal(reusedKey.status, 409);
+  assert.equal(reusedKey.body.code, "IDEMPOTENCY_KEY_REUSED");
+
+  const restKey = `rev_rest_${randomUUID()}`;
+  const rest = await reverse("admin", restKey, "6.00");
+  assert.equal(rest.status, 201);
+  assert.equal(rest.body.data.transaction.status, "REVERSED");
+  assert.equal(rest.body.data.transaction.reversedAmount, "10.00");
+  assert.equal(await walletBalance("owner"), beforeOwner);
+  assert.equal(await walletBalance("recipient"), beforeRecipient);
+
+  const restReplay = await reverse("admin", restKey, "6.00");
+  assert.equal(restReplay.status, 200);
+  assert.equal(
+    restReplay.body.data.reversal.reference,
+    rest.body.data.reversal.reference
+  );
+  assert.equal(restReplay.body.data.transaction.status, "REVERSED");
+
+  const alreadyReversed = await reverse(
+    "admin",
+    `rev_again_${randomUUID()}`,
+    "1.00"
+  );
+  assert.equal(alreadyReversed.status, 409);
+  assert.equal(alreadyReversed.body.code, "TRANSACTION_ALREADY_REVERSED");
+
+  const reversalEntry = await prisma.journalEntry.findUnique({
+    where: { reference: rest.body.data.reversal.ledgerEntryReference },
+    include: { postings: true },
+  });
+  assert.equal(reversalEntry.reversalOfId, original.journalEntry.id);
+  const debit = reversalEntry.postings
+    .filter((posting) => posting.direction === "DEBIT")
+    .reduce((total, posting) => total + Number(posting.amount), 0);
+  const credit = reversalEntry.postings
+    .filter((posting) => posting.direction === "CREDIT")
+    .reduce((total, posting) => total + Number(posting.amount), 0);
+  assert.equal(debit, credit);
+});
+
+test("replaying a full-remaining reversal that omitted the amount returns the original result", async () => {
+  await fundWallet(wallets.owner.id, "10.00");
+  const created = await transfer(
+    "owner",
+    wallets.recipient.id,
+    "10.00",
+    `no_amount_target_${randomUUID()}`
+  );
+  assert.equal(created.status, 201);
+  const reference = created.body.data.transaction.reference;
+
+  const partial = await request(app)
+    .post(`/api/v1/transactions/${reference}/reversals`)
+    .set("Authorization", auth("admin"))
+    .set("Idempotency-Key", `rev_partial_${randomUUID()}`)
+    .send({ amount: "4.00", reason: "Partial dispute" });
+  assert.equal(partial.status, 201);
+
+  const restKey = `rev_rest_no_amount_${randomUUID()}`;
+  const sendRest = () =>
+    request(app)
+      .post(`/api/v1/transactions/${reference}/reversals`)
+      .set("Authorization", auth("admin"))
+      .set("Idempotency-Key", restKey)
+      .send({ reason: "Remaining dispute" });
+
+  const rest = await sendRest();
+  assert.equal(rest.status, 201);
+  assert.equal(rest.body.data.transaction.status, "REVERSED");
+  assert.equal(rest.body.data.reversal.amount, "6.00");
+
+  const replay = await sendRest();
+  assert.equal(replay.status, 200);
+  assert.equal(
+    replay.body.data.reversal.reference,
+    rest.body.data.reversal.reference
+  );
+  assert.equal(replay.body.data.transaction.status, "REVERSED");
+});
+
+test("legacy transactions have no ledger entry and cannot be reversed", async () => {
+  const legacy = await prisma.transaction.create({
+    data: {
+      initiatedByUserId: users.owner.id,
+      type: "TRANSFER",
+      status: "LEGACY",
+      currency: "ETB",
+      sourceWalletId: wallets.owner.id,
+      destinationWalletId: wallets.recipient.id,
+      amount: "1.00",
+      idempotencyKey: `legacy_${randomUUID()}`,
+      businessDate: new Date("2026-01-01T00:00:00.000Z"),
+    },
+  });
+
+  const response = await request(app)
+    .post(`/api/v1/transactions/${legacy.reference}/reversals`)
+    .set("Authorization", `Bearer ${tokens.admin}`)
+    .set("Idempotency-Key", `legacy_rev_${randomUUID()}`)
+    .send({ reason: "Legacy adjustment" });
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, "LEGACY_TRANSACTION");
+  assert.equal(
+    await prisma.journalEntry.count({ where: { transactionId: legacy.id } }),
+    0
+  );
+});
+
+test("posted ledger records cannot be updated or deleted", async () => {
+  const posting = await prisma.ledgerPosting.findFirst();
+  assert.ok(posting);
+
+  await assert.rejects(
+    prisma.ledgerPosting.update({
+      where: { id: posting.id },
+      data: { amount: "1.00" },
+    }),
+    /immutable/
+  );
+  await assert.rejects(
+    prisma.ledgerPosting.delete({ where: { id: posting.id } }),
+    /immutable/
+  );
+  await assert.rejects(
+    prisma.journalEntry.update({
+      where: { id: posting.journalEntryId },
+      data: { description: "tampered" },
+    }),
+    /immutable/
+  );
+});
+
 test("OpenAPI includes wallet and transaction endpoints", async () => {
   const response = await request(app).get("/api/v1/openapi.json");
   assert.equal(response.status, 200);
@@ -454,24 +787,22 @@ test("OpenAPI includes wallet and transaction endpoints", async () => {
   assert.ok(response.body.paths["/api/v1/wallets/me"]);
   assert.ok(response.body.paths["/api/v1/transactions/transfers"]);
   assert.ok(response.body.paths["/api/v1/transactions/{reference}"]);
+  assert.ok(response.body.paths["/api/v1/transactions/{reference}/reversals"]);
   assert.ok(response.body.paths["/api/v1/payments/deposits"]);
   assert.ok(response.body.paths["/api/v1/payments/withdrawals"]);
+  assert.ok(response.body.paths["/api/v1/payments/withdrawals/{reference}/cancel"]);
 });
 
-test("external payment operations are disabled without a provider", async () => {
+test("deposit initiation is disabled without a configured provider", async () => {
   const before = await walletBalance("owner");
-  for (const endpoint of ["/api/v1/payments/deposits", "/api/v1/payments/withdrawals"]) {
-    const response = await request(app)
-      .post(endpoint)
-      .set("Authorization", auth("owner"))
-      .send({ amount: "20.00" });
-    assert.equal(response.status, 501);
-    assert.equal(response.body.success, false);
-    assert.equal(
-      response.body.message,
-      "External payments are unavailable until a payment provider is configured"
-    );
-  }
+
+  const response = await request(app)
+    .post("/api/v1/payments/deposits")
+    .set("Authorization", auth("owner"))
+    .send({ amount: "20.00" });
+  assert.equal(response.status, 501);
+  assert.equal(response.body.success, false);
+  assert.equal(response.body.code, "PAYMENT_PROVIDER_NOT_CONFIGURED");
   assert.equal(await walletBalance("owner"), before);
 
   const unauthorized = await request(app)

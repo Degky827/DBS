@@ -36,7 +36,7 @@ const changeAuthPassword = async ({ email, currentPassword, newPassword }) => {
     );
   }
 
-  let payload = null;
+  let payload;
   try {
     payload = await response.json();
   } catch {
@@ -61,6 +61,7 @@ const changeAuthPassword = async ({ email, currentPassword, newPassword }) => {
       Object.values(errors).find((value) => typeof value === "string");
     throw ApiError.badRequest(
       validationMessage || message,
+      payload?.code || "BAD_REQUEST",
       errors
     );
   }

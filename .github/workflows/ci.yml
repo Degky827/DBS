@@ -1,0 +1,452 @@
+name: CI Pipeline
+
+on:
+  pull_request:
+    branches: ['main', 'develop', 'dev']
+  push:
+    branches: ['main', 'develop', 'dev']
+
+# Cancel in-progress runs for the same PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  # Test-only credentials
+  POSTGRES_USER: meridian_test
+  POSTGRES_PASSWORD: ci-test-only-password-not-for-production
+  JWT_SECRET: ci-test-jwt-secret-0123456789abcdef0123456789abcdef
+  INTERNAL_SERVICE_KEY: ci-test-internal-key-0123456789abcdef0123456789abcdef
+  STORAGE_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+jobs:
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/auth-service/package-lock.json
+            backend/user-service/package-lock.json
+            backend/kyc-service/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Check frontend formatting
+        working-directory: frontend
+        run: npm run format:check || echo "Prettier check will be added"
+
+  test-auth-service:
+    name: Test Auth Service
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_DB: auth_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/auth-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend/auth-service
+        run: npm ci
+
+      - name: Lint auth-service
+        working-directory: backend/auth-service
+        run: npm run lint
+
+      - name: Generate Prisma client
+        working-directory: backend/auth-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/auth_test?schema=public
+        run: npx prisma generate
+
+      - name: Run migrations
+        working-directory: backend/auth-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/auth_test?schema=public
+        run: npx prisma migrate deploy
+
+      - name: Run tests
+        working-directory: backend/auth-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/auth_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          BCRYPT_ROUNDS: '4'
+          LOG_LEVEL: silent
+          CORS_ORIGIN: http://localhost:5173
+          ENABLE_API_DOCS: 'false'
+          COOKIE_SECURE: 'false'
+        run: npm test
+
+  test-user-service:
+    name: Test User Service
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_DB: user_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/user-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend/user-service
+        run: npm ci
+
+      - name: Lint user-service
+        working-directory: backend/user-service
+        run: npm run lint
+
+      - name: Generate Prisma client
+        working-directory: backend/user-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/user_test?schema=public
+        run: npx prisma generate
+
+      - name: Run migrations
+        working-directory: backend/user-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/user_test?schema=public
+        run: npx prisma migrate deploy
+
+      # The cross-service test starts the real kyc-service against its own
+      # migrated database. Without these steps the five integration tests
+      # silently skip, so provision the dependency and let the suite fail
+      # loudly if it is missing.
+      - name: Create KYC test database
+        env:
+          PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
+        run: psql -h localhost -U ${{ env.POSTGRES_USER }} -d user_test -c 'CREATE DATABASE kyc_test;'
+
+      - name: Install KYC service dependencies
+        working-directory: backend/kyc-service
+        run: npm ci
+
+      - name: Generate KYC Prisma client
+        working-directory: backend/kyc-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
+        run: npx prisma generate
+
+      - name: Run KYC migrations for cross-service test
+        working-directory: backend/kyc-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
+        run: npx prisma migrate deploy
+
+      - name: Run all user-service tests
+        working-directory: backend/user-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/user_test?schema=public
+          WALLET_TEST_DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/user_test?schema=public
+          KYC_TEST_DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
+          AUTH_MODE: dev
+          DEV_API_KEY: ''
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          BCRYPT_ROUNDS: '4'
+          LOG_LEVEL: silent
+          ENABLE_API_DOCS: 'true'
+        run: npm run test:all
+
+  test-kyc-service:
+    name: Test KYC Service
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_DB: kyc_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/kyc-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend/kyc-service
+        run: npm ci
+
+      - name: Lint kyc-service
+        working-directory: backend/kyc-service
+        run: npm run lint
+
+      - name: Generate Prisma client
+        working-directory: backend/kyc-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
+        run: npx prisma generate
+
+      - name: Run migrations
+        working-directory: backend/kyc-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
+        run: npx prisma migrate deploy
+
+      - name: Run tests
+        working-directory: backend/kyc-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          STORAGE_ENCRYPTION_KEY: ${{ env.STORAGE_ENCRYPTION_KEY }}
+          BCRYPT_ROUNDS: '4'
+          LOG_LEVEL: silent
+          ENABLE_API_DOCS: 'false'
+        run: npm test
+
+  test-frontend:
+    name: Test Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run tests
+        working-directory: frontend
+        run: npm test
+
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    needs: [lint, test-frontend]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_AUTH_API: /api/auth
+          VITE_USER_API: /api/user
+          VITE_KYC_API: /api/kyc
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7
+
+  build-docker-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [test-auth-service, test-user-service, test-kyc-service, build-frontend]
+    strategy:
+      matrix:
+        service: [auth-service, user-service, kyc-service]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.service }} image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/${{ matrix.service }}
+          target: runtime
+          push: false
+          tags: meridian/${{ matrix.service }}:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-frontend-docker:
+    name: Build Frontend Docker Image
+    runs-on: ubuntu-latest
+    needs: [build-frontend]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: false
+          build-args: |
+            VITE_AUTH_API=/api/auth
+            VITE_USER_API=/api/user
+            VITE_KYC_API=/api/kyc
+          tags: meridian/frontend:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  validate-openapi:
+    name: Validate OpenAPI Specs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install swagger-cli
+        run: npm install -g @apidevtools/swagger-cli
+
+      - name: Validate auth-service OpenAPI YAML
+        working-directory: backend/auth-service/docs
+        run: swagger-cli validate openapi.yaml
+
+      # The runtime serves openapi.json (Swagger UI + GET /openapi.json), while
+      # openapi.yaml is served separately. Both must stay valid.
+      - name: Validate auth-service OpenAPI JSON
+        working-directory: backend/auth-service/docs
+        run: swagger-cli validate openapi.json
+
+      - name: Validate user-service OpenAPI
+        working-directory: backend/user-service/docs
+        run: swagger-cli validate openapi.json
+
+      - name: Validate kyc-service OpenAPI
+        working-directory: backend/kyc-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/kyc_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          STORAGE_ENCRYPTION_KEY: ${{ env.STORAGE_ENCRYPTION_KEY }}
+        run: |
+          npm ci
+          node -e "const spec = require('./src/routes/v1/docs.routes').spec; require('fs').writeFileSync('/tmp/kyc-openapi.json', JSON.stringify(spec));"
+          swagger-cli validate /tmp/kyc-openapi.json
+
+  security-audit:
+    name: Dependency Security Audit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth-service, user-service, kyc-service, frontend]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Run npm audit for ${{ matrix.service }}
+        working-directory: ${{ matrix.service == 'frontend' && 'frontend' || format('backend/{0}', matrix.service) }}
+        run: |
+          npm audit --audit-level=moderate || true
+        continue-on-error: true
+
+  all-checks-complete:
+    name: All Checks Complete
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - test-auth-service
+      - test-user-service
+      - test-kyc-service
+      - test-frontend
+      - build-frontend
+      - build-docker-images
+      - build-frontend-docker
+      - validate-openapi
+      - security-audit
+    steps:
+      - name: Summary
+        run: echo "All CI checks passed successfully!"

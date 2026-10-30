@@ -1,1 +1,25 @@
+# Environment / secret material
 .env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+
+# Runtime data and generated artifacts
+node_modules/
+dist/
+build/
+coverage/
+*.log
+storage/
+uploads/
+*.pid
+*.seed
+.eslintcache
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.idea/
+*.sw?

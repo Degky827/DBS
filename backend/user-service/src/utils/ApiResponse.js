@@ -7,9 +7,10 @@ const ApiResponse = {
     });
   },
 
-  error(res, statusCode, message, errors = null) {
+  error(res, statusCode, message, errors = null, code = null) {
     const payload = { success: false, message };
     if (errors) payload.errors = errors;
+    if (code) payload.code = code;
     return res.status(statusCode).json(payload);
   },
 };

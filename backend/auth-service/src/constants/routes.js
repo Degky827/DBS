@@ -3,6 +3,7 @@ const API_PREFIX = "/api/v1";
 const ROUTES = Object.freeze({
   API_PREFIX,
   HEALTH: "/health",
+  READY: "/ready",
   DOCS: "/docs",
   OPENAPI: "/openapi.json",
   OPENAPI_YAML: "/openapi.yaml",
@@ -16,6 +17,7 @@ const ROUTES = Object.freeze({
     LOGOUT: "/logout",
     FORGOT_PASSWORD: "/forgot-password",
     RESET_PASSWORD: "/reset-password",
+    NOTIFICATION_PREFERENCES: "/me/notification-preferences",
   }),
   INTERNAL: Object.freeze({
     CHANGE_PASSWORD: "/users/change-password",

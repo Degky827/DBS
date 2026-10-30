@@ -1,6 +1,16 @@
 const prisma = require("../src/config/database");
 const { hashPassword } = require("../src/utils/password.util");
 
+// Demo profiles use well-known passwords. They exist only for local
+// development and must never be created in a production database.
+if ((process.env.NODE_ENV || "development") === "production") {
+  console.error(
+    "[seed] Refusing to seed demo profiles while NODE_ENV=production. " +
+      "Provision profiles through the application instead."
+  );
+  process.exit(1);
+}
+
 const SEED_USERS = [
   {
     email: "demo.user@user.local",
@@ -31,6 +41,8 @@ const SEED_USERS = [
 ];
 
 async function seed() {
+  console.warn("[seed] Creating development-only demo profiles with known passwords.");
+
   for (const entry of SEED_USERS) {
     const passwordHash = await hashPassword(entry.password);
 

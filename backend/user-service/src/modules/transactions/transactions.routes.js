@@ -4,11 +4,14 @@ const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const ROUTES = require("../../constants/routes");
 const authenticate = require("../../middlewares/authenticate");
+const requireKycApproval = require("../../middlewares/requireKycApproval");
+const requireRole = require("../../middlewares/requireRole");
 const validate = require("../../middlewares/validate");
 const usersService = require("../users/users.service");
 const walletsService = require("../wallets/wallets.service");
 const {
   transferSchema,
+  reversalSchema,
   transactionHistorySchema,
 } = require("../wallets/wallets.validation");
 
@@ -71,9 +74,27 @@ const getTransaction = async (req, res) => {
   return ApiResponse.success(res, result, "Transaction fetched");
 };
 
+const reverseTransaction = async (req, res) => {
+  const actorUserId = await usersService.getResolvedUserId(req.user);
+  const result = await walletsService.reverseTransaction({
+    actorUserId,
+    reference: req.params.reference,
+    amount: req.body.amount ?? null,
+    reason: req.body.reason,
+    idempotencyKey: req.idempotencyKey,
+  });
+  return ApiResponse.success(
+    res,
+    { transaction: result.transaction, reversal: result.reversal },
+    result.replayed ? "Reversal already processed" : "Reversal posted",
+    result.replayed ? 200 : 201
+  );
+};
+
 router.post(
   ROUTES.TRANSACTIONS.TRANSFERS,
   authenticate,
+  requireKycApproval,
   validate(transferSchema),
   requireIdempotencyKey,
   createTransfer
@@ -85,5 +106,16 @@ router.get(
   listTransactions
 );
 router.get(ROUTES.TRANSACTIONS.BY_REFERENCE, authenticate, getTransaction);
+
+// Reversals are a privileged financial operation. The actor is taken from the
+// verified session/JWT role, never from request input.
+router.post(
+  ROUTES.TRANSACTIONS.REVERSALS,
+  authenticate,
+  requireRole("ADMIN"),
+  validate(reversalSchema),
+  requireIdempotencyKey,
+  reverseTransaction
+);
 
 module.exports = router;

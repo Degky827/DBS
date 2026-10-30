@@ -1,5 +1,6 @@
 const documentService = require("../services/documentService");
 const ApiResponse = require("../utils/ApiResponse");
+const { setPrivateDocumentHeaders } = require("../utils/documentHeaders");
 
 async function upload(req, res) {
   const document = await documentService.uploadDocument({
@@ -21,8 +22,7 @@ async function get(req, res) {
 
 async function content(req, res) {
   const result = await documentService.getDocumentContent(req.user.id, req.params.documentId);
-  res.set("Cache-Control", "private, no-store");
-  res.set("X-Content-Type-Options", "nosniff");
+  setPrivateDocumentHeaders(res);
   return res.type(result.mimeType).send(result.content);
 }
 

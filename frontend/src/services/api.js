@@ -1,49 +1,36 @@
 import axios from "axios";
 import store from "../store";
-import { setUser, updateTokens, logout } from "../store/authSlice";
+import { clearSession } from "../store/authSlice";
+import { refreshSession } from "./session";
 
-export const authApi = axios.create({
-  baseURL: import.meta.env.VITE_AUTH_API,
+const createApi = (baseURL, { withCredentials = false } = {}) =>
+  axios.create({ baseURL, withCredentials, timeout: 20000 });
+
+export const authApi = createApi(import.meta.env.VITE_AUTH_API, {
+  withCredentials: true,
 });
+export const userApi = createApi(import.meta.env.VITE_USER_API);
+export const kycApi = createApi(import.meta.env.VITE_KYC_API);
 
-export const userApi = axios.create({
-  baseURL: import.meta.env.VITE_USER_API,
-});
+// These endpoints either establish a session or are the refresh/logout calls
+// themselves. A 401 from them must never trigger another refresh attempt.
+const SESSION_ENDPOINTS = [
+  "/auth/login",
+  "/auth/refresh",
+  "/auth/logout",
+  "/auth/register",
+  "/auth/verify-email",
+  "/auth/resend-otp",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+];
 
-export const kycApi = axios.create({
-  baseURL: import.meta.env.VITE_KYC_API,
-});
-
-let refreshPromise = null;
-
-const refreshAccessToken = async () => {
-  if (refreshPromise) return refreshPromise;
-
-  refreshPromise = (async () => {
-    try {
-      const { refreshToken } = store.getState().auth.tokens;
-      if (!refreshToken) throw new Error("No refresh token");
-
-      const { data } = await axios.post(
-        `${import.meta.env.VITE_AUTH_API}/auth/refresh`,
-        { refreshToken }
-      );
-
-      const { accessToken, refreshToken: newRefreshToken, user } = data.data;
-      store.dispatch(updateTokens({ accessToken, refreshToken: newRefreshToken }));
-      store.dispatch(setUser(user));
-      return accessToken;
-    } finally {
-      refreshPromise = null;
-    }
-  })();
-
-  return refreshPromise;
-};
+const isSessionEndpoint = (url = "") =>
+  SESSION_ENDPOINTS.some((endpoint) => url.includes(endpoint));
 
 const attachAuthInterceptors = (instance) => {
   instance.interceptors.request.use((config) => {
-    const { accessToken } = store.getState().auth.tokens || {};
+    const { accessToken } = store.getState().auth;
     if (accessToken) {
       config.headers.Authorization = `Bearer ${accessToken}`;
     }
@@ -54,34 +41,32 @@ const attachAuthInterceptors = (instance) => {
     (response) => response,
     async (error) => {
       const originalRequest = error.config;
+      const status = error.response?.status;
 
-      if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
-        const { accessToken } = store.getState().auth.tokens || {};
-        if (!accessToken) {
-          store.dispatch(logout());
-          window.location.href = "/";
-          return Promise.reject(error);
-        }
-
-        originalRequest._retry = true;
-
-        try {
-          const newToken = await refreshAccessToken();
-          originalRequest.headers.Authorization = `Bearer ${newToken}`;
-          return instance(originalRequest);
-        } catch (refreshError) {
-          store.dispatch(logout());
-          window.location.href = "/";
-          return Promise.reject(refreshError);
-        }
+      if (
+        status !== 401 ||
+        !originalRequest ||
+        originalRequest._retry ||
+        isSessionEndpoint(originalRequest.url)
+      ) {
+        return Promise.reject(error);
       }
 
-      if (error.response?.status === 401 && originalRequest?._retry) {
-        store.dispatch(logout());
-        window.location.href = "/";
-      }
+      originalRequest._retry = true;
 
-      return Promise.reject(error);
+      try {
+        const accessToken = await refreshSession();
+        originalRequest.headers = {
+          ...originalRequest.headers,
+          Authorization: `Bearer ${accessToken}`,
+        };
+        return instance(originalRequest);
+      } catch (refreshError) {
+        // A failed refresh means the session is gone. Routing components
+        // react to the cleared state; no hard reload or retry loop is used.
+        store.dispatch(clearSession());
+        return Promise.reject(refreshError);
+      }
     }
   );
 };

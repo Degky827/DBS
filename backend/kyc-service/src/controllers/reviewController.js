@@ -2,8 +2,18 @@ const reviewService = require("../services/reviewService");
 const ApiResponse = require("../utils/ApiResponse");
 
 async function queue(req, res) {
-  const submissions = await reviewService.getQueue();
-  return ApiResponse.success(res, submissions, "Review queue fetched");
+  const result = await reviewService.getQueue(req.reviewQuery);
+  return ApiResponse.success(res, result, "Review queue fetched");
+}
+
+async function stats(req, res) {
+  const result = await reviewService.getStats();
+  return ApiResponse.success(res, result, "Review statistics fetched");
+}
+
+async function get(req, res) {
+  const result = await reviewService.getSubmission(req.params.submissionId);
+  return ApiResponse.success(res, result, "KYC submission fetched");
 }
 
 async function decide(req, res) {
@@ -16,4 +26,4 @@ async function decide(req, res) {
   return ApiResponse.success(res, result, "Review decision recorded");
 }
 
-module.exports = { queue, decide };
+module.exports = { queue, stats, get, decide };

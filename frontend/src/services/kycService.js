@@ -31,7 +31,13 @@ export const getKycDocumentContent = async (documentId) => {
   };
 };
 
-export const uploadKycDocument = async ({ submissionId, documentType, side, file }) => {
+export const uploadKycDocument = async ({
+  submissionId,
+  documentType,
+  side,
+  file,
+  onProgress,
+}) => {
   const formData = new FormData();
   formData.append("document", file);
   formData.append("documentType", documentType);
@@ -39,6 +45,10 @@ export const uploadKycDocument = async ({ submissionId, documentType, side, file
 
   const { data } = await kycApi.post(`/submissions/${submissionId}/documents`, formData, {
     headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (event) => {
+      if (!onProgress || !event.total) return;
+      onProgress(Math.min(100, Math.round((event.loaded * 100) / event.total)));
+    },
   });
 
   return data.data;
@@ -65,8 +75,20 @@ export const startVerificationSession = async (submissionId) => {
 };
 
 // Officer endpoints (server enforces ADMIN / OFFICER / VERIFICATION_OFFICER)
-export const getOfficerReviews = async () => {
-  const { data } = await kycApi.get("/officer/reviews");
+export const getOfficerReviews = async (params) => {
+  const { data } = await kycApi.get("/officer/reviews", { params });
+  return data.data;
+};
+
+export const getOfficerReviewStats = async () => {
+  const { data } = await kycApi.get("/officer/reviews/stats");
+  return data.data;
+};
+
+export const getOfficerSubmission = async (submissionId) => {
+  const { data } = await kycApi.get(
+    `/officer/submissions/${encodeURIComponent(submissionId)}`
+  );
   return data.data;
 };
 
@@ -78,23 +100,25 @@ export const submitOfficerDecision = async (submissionId, { decision, reason }) 
   return data.data;
 };
 
-// Remembers the last uploaded document id per submission so the review UI can
-// reload it after a page refresh (the status endpoint does not list documents).
-const documentKey = (submissionId) => `meridian_kyc_document_${submissionId}`;
-
-export const rememberKycDocumentId = (submissionId, documentId) => {
-  try {
-    if (submissionId && documentId) localStorage.setItem(documentKey(submissionId), documentId);
-    else if (submissionId) localStorage.removeItem(documentKey(submissionId));
-  } catch {
-    // storage unavailable — ignore
-  }
+// Evidence blobs are fetched with the officer's bearer token and turned into
+// short-lived object URLs; callers must revoke them when closing the review.
+export const getOfficerSubmissionDocuments = async (submissionId) => {
+  const { data } = await kycApi.get(`/officer/submissions/${submissionId}/documents`);
+  return data.data;
 };
 
-export const recallKycDocumentId = (submissionId) => {
-  try {
-    return submissionId ? localStorage.getItem(documentKey(submissionId)) : null;
-  } catch {
-    return null;
-  }
+export const getOfficerDocumentContent = async (documentId) => {
+  const response = await kycApi.get(`/officer/documents/${documentId}/content`, {
+    responseType: "blob",
+  });
+
+  const blob = response.data;
+  const mimeType =
+    response.headers["content-type"] || blob.type || "application/octet-stream";
+
+  return {
+    url: URL.createObjectURL(blob),
+    mimeType,
+  };
 };
+

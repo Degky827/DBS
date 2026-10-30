@@ -1,0 +1,20 @@
+const cors = require("cors");
+
+const env = require("../config/env");
+
+// The user service authenticates with the Authorization header, so browser
+// credentials (cookies) are not needed and are deliberately disabled.
+const corsMiddleware = cors({
+  origin(origin, callback) {
+    if (!origin) return callback(null, false);
+    return callback(null, env.CORS_ORIGINS.includes(origin));
+  },
+  credentials: false,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type", "Accept", "X-Request-Id", "Idempotency-Key"],
+  exposedHeaders: ["Retry-After", "X-Request-Id"],
+  maxAge: 600,
+  optionsSuccessStatus: 204,
+});
+
+module.exports = corsMiddleware;

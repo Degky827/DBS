@@ -1,7 +1,7 @@
 {
   "name": "user-service",
   "version": "1.0.0",
-  "description": "Standalone user profile service for the Digital Banking System (Phase 2)",
+  "description": "Standalone user and wallet service for the Digital Banking System (Phase 3 ledger)",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
@@ -12,10 +12,23 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "db:seed": "node prisma/seed.js",
     "db:reset": "prisma migrate reset",
+    "ledger:verify": "node prisma/verifyLedger.js",
     "test": "node --test tests/app.test.js",
+    "test:kyc": "node --test tests/kycEligibility.test.js",
     "test:wallets": "node --test tests/wallets.test.js",
     "test:payments": "node --test tests/payments.test.js",
-    "test:payments-adapter": "node --test tests/chapa.adapter.test.js"
+    "test:payments-adapter": "node --test tests/chapa.adapter.test.js",
+    "test:ledger": "node --test tests/ledger.test.js",
+    "test:policies": "node --test tests/policies.test.js",
+    "test:admin": "node --test tests/admin.test.js",
+    "test:financial-integrity": "node --test tests/financialIntegrity.test.js",
+    "test:integration": "node --test tests/kycService.integration.test.js",
+    "test:phase3": "node --test --test-concurrency=1 tests/wallets.test.js tests/payments.test.js tests/ledger.test.js tests/policies.test.js",
+    "test:all": "node --test --test-concurrency=1 tests/**/*.test.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{js,json,md}\"",
+    "format:check": "prettier --check \"**/*.{js,json,md}\""
   },
   "keywords": [
     "user",
@@ -44,7 +57,10 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.10.0",
     "nodemon": "^3.1.14",
+    "prettier": "^3.4.2",
     "prisma": "^7.10.0",
     "supertest": "^7.1.4"
   }

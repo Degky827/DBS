@@ -1,9 +1,11 @@
 const crypto = require("crypto");
+const { Prisma } = require("@prisma/client");
 const sharp = require("sharp");
 const prisma = require("../config/database");
 const ApiError = require("../utils/ApiError");
 const secureStorage = require("../utils/secureStorage");
 const ocrProvider = require("../providers/tesseractOcrProvider");
+const { EDITABLE_STATUSES, isEditable } = require("../constants/kycStatus");
 
 const IMAGE_TYPES = [
   {
@@ -86,7 +88,7 @@ function buildFields(text, confidence) {
     .map((value, index) => {
       const match =
         value.match(
-          /^(first\s*name|given\s*names?|last\s*name|surname|family\s*name|date of birth|birth date|dob)\s*[:\-]?\s+(.+)$/i
+          /^(first\s*name|given\s*names?|last\s*name|surname|family\s*name|date of birth|birth date|dob)\s*[:-]?\s+(.+)$/i
         ) || value.match(/^([^:]{2,50}):\s*(.+)$/);
       return {
         key: `field_${index + 1}`,
@@ -138,6 +140,19 @@ async function uploadDocument({ userId, submissionId, file, documentType, side }
     const extractedFields = buildFields(recognized.text, recognized.confidence);
 
     await prisma.$transaction(async (tx) => {
+      const invalidated = await tx.kycSubmission.updateMany({
+        where: { id: submissionId, status: { in: [...EDITABLE_STATUSES] } },
+        data: {
+          dataComparisonStatus: null,
+          comparisonResults: Prisma.DbNull,
+        },
+      });
+      if (invalidated.count !== 1) {
+        throw ApiError.conflict(
+          "Documents can only be changed on a draft or resubmission",
+          "SUBMISSION_NOT_EDITABLE"
+        );
+      }
       await tx.kycDocument.create({
         data: {
           id: documentId,
@@ -238,7 +253,7 @@ async function getDocumentContent(userId, documentId) {
 
 async function correctFields(userId, documentId, corrections) {
   const document = await getDocument(userId, documentId);
-  if (!["DRAFT", "NEEDS_RESUBMISSION"].includes(document.submission.status)) {
+  if (!isEditable(document.submission.status)) {
     throw ApiError.conflict(
       "OCR fields can only be changed on a draft or resubmission",
       "SUBMISSION_NOT_EDITABLE"
@@ -265,6 +280,19 @@ async function correctFields(userId, documentId, corrections) {
   };
 
   await prisma.$transaction(async (tx) => {
+    const invalidated = await tx.kycSubmission.updateMany({
+      where: { id: document.submissionId, status: { in: [...EDITABLE_STATUSES] } },
+      data: {
+        dataComparisonStatus: null,
+        comparisonResults: Prisma.DbNull,
+      },
+    });
+    if (invalidated.count !== 1) {
+      throw ApiError.conflict(
+        "OCR fields can only be changed on a draft or resubmission",
+        "SUBMISSION_NOT_EDITABLE"
+      );
+    }
     await tx.kycDocument.update({
       where: { id: documentId },
       data: {
@@ -288,8 +316,25 @@ async function correctFields(userId, documentId, corrections) {
 
 async function deleteDocument(userId, documentId) {
   const document = await getDocument(userId, documentId);
+  if (!isEditable(document.submission.status)) {
+    throw ApiError.conflict(
+      "Documents cannot be removed after verification has started",
+      "SUBMISSION_NOT_EDITABLE"
+    );
+  }
   await prisma.$transaction(async (tx) => {
-    await tx.kycDocument.delete({ where: { id: documentId } });
+    const removed = await tx.kycDocument.deleteMany({
+      where: {
+        id: documentId,
+        submission: { status: { in: [...EDITABLE_STATUSES] } },
+      },
+    });
+    if (removed.count !== 1) {
+      throw ApiError.conflict(
+        "Documents cannot be removed after verification has started",
+        "SUBMISSION_NOT_EDITABLE"
+      );
+    }
     await tx.kycAuditEvent.create({
       data: {
         submissionId: document.submissionId,
@@ -302,10 +347,132 @@ async function deleteDocument(userId, documentId) {
   await secureStorage.removeStoredFile(document.storageKey);
 }
 
+const OFFICER_DOCUMENT_SELECT = {
+  id: true,
+  submissionId: true,
+  documentType: true,
+  mimeType: true,
+  fileName: true,
+  fileSizeBytes: true,
+  side: true,
+  status: true,
+  createdAt: true,
+};
+
+async function recordOfficerDocumentAccess(officerId, eventType, payload) {
+  await prisma.kycAuditEvent.create({
+    data: {
+      submissionId: payload.submissionId,
+      eventType,
+      actorId: officerId,
+      payload,
+    },
+  });
+}
+
+async function listSubmissionDocumentsForOfficer(officerId, submissionId) {
+  const submission = await prisma.kycSubmission.findUnique({
+    where: { id: submissionId },
+    select: { id: true, status: true },
+  });
+  if (!submission) {
+    throw ApiError.notFound("KYC submission not found", "KYC_SUBMISSION_NOT_FOUND");
+  }
+  const rows = await prisma.kycDocument.findMany({
+    where: { submissionId },
+    orderBy: { createdAt: "asc" },
+    select: OFFICER_DOCUMENT_SELECT,
+  });
+  const documents = rows.map((document) => ({
+    id: document.id,
+    submissionId: document.submissionId,
+    documentType: document.documentType,
+    mimeType: document.mimeType,
+    fileName: document.fileName,
+    fileSizeBytes: document.fileSizeBytes,
+    side: document.side,
+    status: document.status,
+    createdAt: document.createdAt,
+  }));
+  await recordOfficerDocumentAccess(officerId, "OFFICER_DOCUMENTS_LISTED", {
+    submissionId,
+    documentIds: documents.map((document) => document.id),
+    count: documents.length,
+  });
+  return { submission, documents };
+}
+
+async function findOfficerDocument(documentId) {
+  const document = await prisma.kycDocument.findUnique({
+    where: { id: documentId },
+    select: {
+      ...OFFICER_DOCUMENT_SELECT,
+      ocrText: true,
+      ocrConfidence: true,
+      extractedData: true,
+      storageKey: true,
+      submission: { select: { id: true, status: true } },
+    },
+  });
+  if (!document) {
+    throw ApiError.notFound("KYC document not found", "KYC_DOCUMENT_NOT_FOUND");
+  }
+  return document;
+}
+
+async function getDocumentForOfficer(officerId, documentId) {
+  const document = await findOfficerDocument(documentId);
+  let extractedData = null;
+  if (document.extractedData) {
+    try {
+      extractedData = JSON.parse(
+        secureStorage.decryptSensitiveValue(document.extractedData)
+      );
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw ApiError.internal("Stored OCR data is invalid");
+    }
+  }
+  const { storageKey: _storageKey, submission, ...metadata } = document;
+  await recordOfficerDocumentAccess(officerId, "OFFICER_DOCUMENT_ACCESSED", {
+    submissionId: document.submissionId,
+    documentId,
+  });
+  return {
+    ...metadata,
+    submission: { id: submission.id, status: submission.status },
+    extractedData,
+  };
+}
+
+async function getDocumentContentForOfficer(officerId, documentId) {
+  const document = await findOfficerDocument(documentId);
+  let content;
+  try {
+    content = await secureStorage.decryptFromStorage(document.storageKey);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw ApiError.notFound(
+        "KYC document evidence is unavailable",
+        "KYC_DOCUMENT_UNAVAILABLE"
+      );
+    }
+    throw error;
+  }
+  await recordOfficerDocumentAccess(officerId, "OFFICER_DOCUMENT_CONTENT_ACCESSED", {
+    submissionId: document.submissionId,
+    documentId,
+  });
+  return { content, mimeType: document.mimeType };
+}
+
 module.exports = {
   uploadDocument,
   getDocument,
   getDocumentContent,
   correctFields,
   deleteDocument,
+  listSubmissionDocumentsForOfficer,
+  getDocumentForOfficer,
+  getDocumentContentForOfficer,
 };

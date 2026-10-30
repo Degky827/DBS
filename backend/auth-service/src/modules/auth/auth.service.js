@@ -1,4 +1,7 @@
+const crypto = require("crypto");
+
 const prisma = require("../../config/database");
+const env = require("../../config/env");
 const userRepository = require("../../repositories/user.repository");
 const otpRepository = require("../../repositories/otp.repository");
 const ApiError = require("../../utils/ApiError");
@@ -21,9 +24,17 @@ const {
   hashOtp,
   compareOtp,
   otpExpiry,
+  MAX_OTP_ATTEMPTS,
   OTP_PURPOSES,
 } = require("../../utils/otp.util");
-const { sendOtpEmail } = require("../../services/email.service");
+const {
+  sendOtpEmail,
+  sendSecurityAlertEmail,
+} = require("../../services/email.service");
+
+const EMAIL_DELIVERY_ERROR = "EMAIL_DELIVERY_FAILED";
+const RESEND_ACKNOWLEDGEMENT =
+  "If the account exists, a new verification code has been sent";
 
 const toPublicUser = (user) => ({
   id: user.id,
@@ -43,24 +54,27 @@ const toPublicUser = (user) => ({
 const deliverOtp = async ({ userId, email, otp, purpose }) => {
   try {
     const { delivered } = await sendOtpEmail({ to: email, otp, purpose });
+    audit(delivered ? "OTP_ISSUED" : "OTP_EMAIL_NOT_CONFIGURED", { userId, purpose });
     if (!delivered) {
-      logger.info({ email, purpose, otp }, "OTP issued (logged, email not configured)");
+      logger.warn(
+        { email, purpose },
+        "OTP email transport is not configured"
+      );
     }
-    audit("OTP_ISSUED", { userId, purpose });
     return delivered;
   } catch (error) {
     audit("OTP_EMAIL_FAILED", { userId, purpose });
     logger.warn(
-      { email, purpose, otp, error: error.message },
-      "OTP email delivery failed — falling back to logging the code"
+      { email, purpose, error: error.message },
+      "OTP email delivery failed"
     );
     return false;
   }
 };
 
-const issueOtp = async (user, purpose) => {
+const issueOtp = async (user, purpose, { awaitDelivery = true } = {}) => {
   const otp = generateOtp();
-  await otpRepository.create({
+  await otpRepository.createReplacingActive({
     userId: user.id,
     email: user.email,
     codeHash: await hashOtp(otp),
@@ -68,8 +82,55 @@ const issueOtp = async (user, purpose) => {
     expiresAt: otpExpiry(),
   });
 
-  await deliverOtp({ userId: user.id, email: user.email, otp, purpose });
-  return otp;
+  const delivery = deliverOtp({
+    userId: user.id,
+    email: user.email,
+    otp,
+    purpose,
+  });
+
+  if (!awaitDelivery) {
+    // deliverOtp records its own failures; the catch keeps an unexpected
+    // rejection from becoming an unhandled promise rejection.
+    delivery.catch((error) => {
+      logger.warn(
+        { email: user.email, purpose, error: error.message },
+        "Background OTP delivery failed"
+      );
+    });
+    return { delivered: true };
+  }
+
+  return { delivered: await delivery };
+};
+
+const verifyOtpRecord = async ({ user, record, otp, errorMessage, failureEvent }) => {
+  if (!user || !record) {
+    audit(failureEvent, { userId: user?.id || null });
+    throw new ApiError(400, errorMessage, "INVALID_OTP");
+  }
+
+  const matches = await compareOtp(otp, record.codeHash);
+  if (!matches) {
+    const attempts = await otpRepository.incrementAttempts(record.id);
+    const exhausted = attempts.attempts >= MAX_OTP_ATTEMPTS;
+    if (exhausted) {
+      await otpRepository.consumeIfActive(record.id);
+    }
+    audit(failureEvent, {
+      userId: user.id,
+      attempts: attempts.attempts,
+      exhausted,
+    });
+    throw new ApiError(400, errorMessage, "INVALID_OTP");
+  }
+
+  const consumed = await otpRepository.consumeIfActive(record.id);
+  if (consumed.count !== 1) {
+    audit(failureEvent, { userId: user.id, reason: "ALREADY_USED" });
+    throw new ApiError(400, errorMessage, "INVALID_OTP");
+  }
+  return true;
 };
 
 const issueEmailVerificationOtp = (user) =>
@@ -113,7 +174,7 @@ const register = async (input) => {
         securityAnswerHash,
         acceptedTerms: true,
         acceptedTermsAt: new Date(),
-        isEmailVerified: true,
+        isEmailVerified: false,
       },
     });
 
@@ -131,38 +192,40 @@ const register = async (input) => {
     return { user: newUser, otp: code };
   });
 
-  await deliverOtp({
+  audit("REGISTER_SUCCESS", { userId: user.id });
+
+  const delivered = await deliverOtp({
     userId: user.id,
     email: user.email,
     otp,
     purpose: OTP_PURPOSES.EMAIL_VERIFICATION,
   });
+  if (!delivered) {
+    throw ApiError.serviceUnavailable(
+      "Your account was created, but the verification email could not be sent. Please request a new code.",
+      EMAIL_DELIVERY_ERROR
+    );
+  }
 
-  audit("REGISTER_SUCCESS", { userId: user.id });
-
-  return { user: toPublicUser(user) };
+  return { user: toPublicUser(user), verificationEmailSent: true };
 };
 
 const verifyEmail = async (input) => {
   const email = input.email.toLowerCase();
   const user = await userRepository.findByEmail(email);
-
   const record = await otpRepository.findLatestActive(
     email,
     OTP_PURPOSES.EMAIL_VERIFICATION
   );
 
-  const valid =
-    user && record && record.expiresAt.getTime() > Date.now()
-      ? await compareOtp(input.otp, record.codeHash)
-      : false;
+  await verifyOtpRecord({
+    user,
+    record,
+    otp: input.otp,
+    errorMessage: "Invalid or expired verification code",
+    failureEvent: "OTP_VERIFY_FAILED",
+  });
 
-  if (!valid) {
-    audit("OTP_VERIFY_FAILED", { email });
-    throw new ApiError(400, "Invalid or expired verification code", "INVALID_OTP");
-  }
-
-  await otpRepository.consume(record.id);
   const updated = await userRepository.markEmailVerified(user.id);
   audit("EMAIL_VERIFIED", { userId: user.id });
 
@@ -174,16 +237,25 @@ const resendOtp = async (input) => {
   const user = await userRepository.findByEmail(email);
 
   if (!user) {
-    return { message: "If the account exists, a new verification code has been sent" };
+    return { message: RESEND_ACKNOWLEDGEMENT };
   }
 
+  // Respond the same way as for an unknown address so resend cannot be used
+  // to probe which emails are registered or already verified.
   if (user.isEmailVerified) {
-    throw new ApiError(400, "Email is already verified", "EMAIL_ALREADY_VERIFIED");
+    audit("OTP_RESEND_SKIPPED", { userId: user.id, reason: "ALREADY_VERIFIED" });
+    return { message: RESEND_ACKNOWLEDGEMENT };
   }
 
-  await issueEmailVerificationOtp(user);
+  const { delivered } = await issueEmailVerificationOtp(user);
+  if (!delivered) {
+    throw ApiError.serviceUnavailable(
+      "A verification email could not be sent right now. Please try again later.",
+      EMAIL_DELIVERY_ERROR
+    );
+  }
 
-  return { message: "If the account exists, a new verification code has been sent" };
+  return { message: RESEND_ACKNOWLEDGEMENT };
 };
 
 const login = async (input) => {
@@ -216,6 +288,7 @@ const login = async (input) => {
   await refreshTokenRepository.create({
     userId: user.id,
     tokenHash: hashRefreshToken(refreshToken),
+    familyId: crypto.randomUUID(),
     expiresAt: refreshTokenExpiry(),
   });
   audit("LOGIN_SUCCESS", { userId: user.id });
@@ -233,78 +306,208 @@ const getMe = async (userId) => {
   return { user: toPublicUser(user) };
 };
 
-const refresh = async (input) => {
-  const tokenHash = hashRefreshToken(input.refreshToken);
-  const record = await refreshTokenRepository.findActiveByHash(tokenHash);
+const toNotificationPreferences = (user) => ({
+  securityEmailAlerts: user.securityEmailAlerts !== false,
+});
 
-  if (!record || record.expiresAt.getTime() <= Date.now()) {
-    audit("REFRESH_FAILED", {});
-    throw ApiError.unauthorized("Invalid or expired refresh token", "INVALID_REFRESH_TOKEN");
+const getNotificationPreferences = async (userId) => {
+  const user = await userRepository.findById(userId);
+
+  if (!user) {
+    throw ApiError.notFound("Account not found", "USER_NOT_FOUND");
   }
 
-  await refreshTokenRepository.revoke(record.id);
-
-  const accessToken = signAccessToken(record.user);
-  const refreshToken = generateRefreshToken();
-  await refreshTokenRepository.create({
-    userId: record.user.id,
-    tokenHash: hashRefreshToken(refreshToken),
-    expiresAt: refreshTokenExpiry(),
-  });
-  audit("TOKEN_REFRESHED", { userId: record.user.id });
-
-  return { user: toPublicUser(record.user), accessToken, refreshToken };
+  return { preferences: toNotificationPreferences(user) };
 };
 
-const logout = async (input) => {
+const updateNotificationPreferences = async (userId, input) => {
+  const user = await userRepository.updateNotificationPreferences(userId, {
+    securityEmailAlerts: input.securityEmailAlerts,
+  });
+
+  return { preferences: toNotificationPreferences(user) };
+};
+
+const sendPasswordChangedAlert = async (user, via) => {
+  if (!user?.email || user.securityEmailAlerts === false) return;
+
+  try {
+    await sendSecurityAlertEmail({
+      to: user.email,
+      changedAt: new Date(),
+      via,
+    });
+  } catch (error) {
+    // The password change already succeeded; alert delivery must never undo it.
+    logger.error(
+      { userId: user.id, via, error: error.message },
+      "Failed to send password change alert"
+    );
+  }
+};
+
+const INVALID_REFRESH_MESSAGE = "Invalid or expired refresh token";
+
+const rotatedRecently = (record) =>
+  Boolean(
+    record?.rotatedAt &&
+      Date.now() - record.rotatedAt.getTime() <= env.REFRESH_TOKEN_GRACE_MS
+  );
+
+const refresh = async (input) => {
   const tokenHash = hashRefreshToken(input.refreshToken);
-  const record = await refreshTokenRepository.findActiveByHash(tokenHash);
+  const record = await refreshTokenRepository.findByHash(tokenHash);
+
+  if (!record || !record.user) {
+    audit("REFRESH_FAILED", { reason: "NOT_FOUND" });
+    throw ApiError.unauthorized(INVALID_REFRESH_MESSAGE, "INVALID_REFRESH_TOKEN");
+  }
+
+  if (record.expiresAt.getTime() <= Date.now()) {
+    await refreshTokenRepository.revokeFamily(record.familyId);
+    audit("REFRESH_FAILED", { userId: record.user.id, reason: "EXPIRED" });
+    throw ApiError.unauthorized(INVALID_REFRESH_MESSAGE, "INVALID_REFRESH_TOKEN");
+  }
+
+  if (record.revokedAt) {
+    // A just-rotated token can be presented by a second tab whose request was
+    // already in flight. Do not revoke the family for this benign race; the
+    // browser has already received the successor cookie from the winner.
+    if (rotatedRecently(record)) {
+      audit("REFRESH_RACE", { userId: record.user.id });
+      throw ApiError.conflict(
+        "Session refresh already in progress; retry with the updated cookie",
+        "REFRESH_RACE"
+      );
+    }
+
+    await refreshTokenRepository.revokeFamily(record.familyId);
+    audit("REFRESH_TOKEN_REUSE_DETECTED", {
+      userId: record.user.id,
+      familyId: record.familyId,
+    });
+    throw ApiError.unauthorized(
+      "Refresh token has been revoked",
+      "REFRESH_TOKEN_REUSED"
+    );
+  }
+
+  const rotated = await prisma.$transaction(async (tx) => {
+    const now = new Date();
+    const claimed = await tx.refreshToken.updateMany({
+      where: { id: record.id, revokedAt: null },
+      data: { revokedAt: now, rotatedAt: now },
+    });
+
+    if (claimed.count !== 1) return { raced: true };
+
+    const nextRefreshToken = generateRefreshToken();
+    const nextTokenHash = hashRefreshToken(nextRefreshToken);
+
+    await tx.refreshToken.create({
+      data: {
+        userId: record.userId,
+        tokenHash: nextTokenHash,
+        familyId: record.familyId,
+        expiresAt: refreshTokenExpiry(),
+      },
+    });
+
+    await tx.refreshToken.update({
+      where: { id: record.id },
+      data: { replacedByTokenHash: nextTokenHash },
+    });
+
+    return { raced: false, token: nextRefreshToken };
+  });
+
+  if (rotated.raced) {
+    const latest = await refreshTokenRepository.findByHash(tokenHash);
+    if (rotatedRecently(latest)) {
+      audit("REFRESH_RACE", { userId: record.user.id });
+      throw ApiError.conflict(
+        "Session refresh already in progress; retry with the updated cookie",
+        "REFRESH_RACE"
+      );
+    }
+
+    await refreshTokenRepository.revokeFamily(record.familyId);
+    audit("REFRESH_TOKEN_REUSE_DETECTED", {
+      userId: record.user.id,
+      familyId: record.familyId,
+    });
+    throw ApiError.unauthorized(
+      "Refresh token has been revoked",
+      "REFRESH_TOKEN_REUSED"
+    );
+  }
+
+  const accessToken = signAccessToken(record.user);
+  audit("TOKEN_REFRESHED", { userId: record.user.id });
+
+  return {
+    user: toPublicUser(record.user),
+    accessToken,
+    refreshToken: rotated.token,
+  };
+};
+
+const logout = async (refreshToken) => {
+  if (!refreshToken) return { message: "Logged out" };
+
+  const record = await refreshTokenRepository.findByHash(
+    hashRefreshToken(refreshToken)
+  );
 
   if (record) {
-    await refreshTokenRepository.revoke(record.id);
-    audit("LOGOUT", { userId: record.user.id });
+    await refreshTokenRepository.revokeFamily(record.familyId);
+    audit("LOGOUT", { userId: record.userId });
   }
 
   return { message: "Logged out" };
 };
+
+const PASSWORD_RESET_ACK =
+  "If the account exists, a password reset code has been sent";
 
 const forgotPassword = async (input) => {
   const email = input.email.toLowerCase();
   const user = await userRepository.findByEmail(email);
 
   if (user) {
-    await issueOtp(user, OTP_PURPOSES.PASSWORD_RESET);
+    // Delivery runs in the background so response latency does not reveal
+    // whether the address is registered.
+    await issueOtp(user, OTP_PURPOSES.PASSWORD_RESET, { awaitDelivery: false });
+  } else {
+    // Comparable hashing work for unknown addresses keeps response timing
+    // similar to the registered-account path.
+    await hashOtp(generateOtp());
   }
 
-  return {
-    message: "If the account exists, a password reset code has been sent",
-  };
+  return { message: PASSWORD_RESET_ACK };
 };
 
 const resetPassword = async (input) => {
   const email = input.email.toLowerCase();
   const user = await userRepository.findByEmail(email);
-
   const record = await otpRepository.findLatestActive(
     email,
     OTP_PURPOSES.PASSWORD_RESET
   );
 
-  const valid =
-    user && record && record.expiresAt.getTime() > Date.now()
-      ? await compareOtp(input.otp, record.codeHash)
-      : false;
+  await verifyOtpRecord({
+    user,
+    record,
+    otp: input.otp,
+    errorMessage: "Invalid or expired reset code",
+    failureEvent: "PASSWORD_RESET_FAILED",
+  });
 
-  if (!valid) {
-    audit("PASSWORD_RESET_FAILED", { email });
-    throw new ApiError(400, "Invalid or expired reset code", "INVALID_OTP");
-  }
-
-  await otpRepository.consume(record.id);
   const passwordHash = await hashPassword(input.newPassword);
   await userRepository.updatePassword(user.id, passwordHash);
   await refreshTokenRepository.revokeAllForUser(user.id);
   audit("PASSWORD_RESET_SUCCESS", { userId: user.id });
+  await sendPasswordChangedAlert(user, "PASSWORD_RESET");
 
   return { message: "Password has been reset" };
 };
@@ -313,6 +516,8 @@ module.exports = {
   register,
   login,
   getMe,
+  getNotificationPreferences,
+  updateNotificationPreferences,
   verifyEmail,
   resendOtp,
   refresh,

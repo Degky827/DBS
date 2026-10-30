@@ -1,8 +1,8 @@
-# User Service (Phase 2 — standalone)
+# User Service
 
-Independent Express service for **profile management** and **authenticated wallet transfers**. Built for standalone development without connecting to `auth-service`.
+Independent Express service for **profile management** and **authenticated wallet transfers**.
 
-> **Not production-ready.** Authentication uses opaque development sessions (`AUTH_MODE=dev`). See [docs/INTEGRATION.md](docs/INTEGRATION.md) for the JWT integration plan.
+> **Authentication modes.** `AUTH_MODE=jwt` verifies access tokens from `auth-service` and is required in production. `AUTH_MODE=dev` uses opaque development sessions for standalone work and is rejected when `NODE_ENV=production`. Profile IDs are still separate from the auth-service user ID (`sub`); see [docs/INTEGRATION.md](docs/INTEGRATION.md).
 
 ## Service Overview
 
@@ -16,8 +16,7 @@ The User Service manages user profile information for the Digital Banking and Id
 - Transfer wallet funds atomically and retrieve authorized transfer history
 
 **Separations:**
-- Does NOT own authentication tokens or sessions in production
-- Does NOT integrate with `auth-service` JWT yet
+- Does NOT own authentication tokens or sessions; it verifies auth-service access tokens in `AUTH_MODE=jwt`
 - Does NOT share a database with `auth-service`
 
 ## Technology Stack
@@ -35,7 +34,7 @@ The User Service manages user profile information for the Digital Banking and Id
 | Node.js | >= 18.x |
 | PostgreSQL | >= 14 |
 | npm | >= 9 |
-| Docker (optional) | For local Postgres via `banking-postgres` |
+| Docker (optional) | For local Postgres via the dev Compose stack |
 
 ## Port & Database
 
@@ -50,17 +49,17 @@ The User Service manages user profile information for the Digital Banking and Id
 
 ### 1. Create the development database
 
-Using the existing local Postgres (e.g. Docker `banking-postgres` on port 5432):
+Using the development Compose Postgres (adjust the container and user if customized):
 
 ```bash
-# from host
-docker exec -it banking-postgres psql -U auth -d postgres -c "CREATE DATABASE user_db;"
+docker compose -f docker-compose.dev.yml up -d postgres
+docker exec -it meridian-dev-postgres-1 psql -U meridian -d postgres -c "CREATE DATABASE user_db;"
 ```
 
 Or with a local `psql`:
 
 ```bash
-createdb -U auth user_db
+createdb -U meridian user_db
 ```
 
 Do **not** run this against `auth_db`.
@@ -79,7 +78,7 @@ Key variables (see `.env.example` for placeholders):
 |---|---|---|
 | `PORT` | `5002` | |
 | `DATABASE_URL` | `postgresql://DB_USER:DB_PASSWORD@localhost:5432/user_db?schema=public` | Dedicated DB |
-| `AUTH_MODE` | `dev` | Must stay `dev` for standalone work |
+| `AUTH_MODE` | `dev` (schema default) | Use `jwt` when auth-service is available; `dev` is rejected in production |
 | `DEV_SESSION_TTL_MS` | `28800000` (8h) | Dev session lifetime |
 | `DEV_API_KEY` | empty | If set, require header `X-Dev-Api-Key` |
 | `BCRYPT_ROUNDS` | `12` | |
@@ -159,11 +158,22 @@ Use only a Chapa Test Mode private key. Live keys and arbitrary API hosts are re
 
 `POST /api/v1/payments/deposits` requires authentication and an `Idempotency-Key`; it accepts positive ETB decimal strings of at least `1.00`. Reusing a key with identical parameters returns the same payment; changing the amount returns `409`. `GET /api/v1/payments/deposits/{reference}/verify` requires the payment owner and checks the provider directly. `POST /api/v1/payments/webhook` is unauthenticated but rejects unsigned/invalid raw-body signatures and processes payment events only after server-side verification. Duplicate delivery hashes are stored and repeated processing cannot double-credit. Pending verification remains pending; stale pending events cannot revert a completed or failed state, while a later successful authoritative verification can complete a formerly failed payment. Amount, currency, or merchant-reference mismatches never credit funds.
 
-Withdrawals remain disabled and return `501`; no payout has been implemented. Refunds, reversals, disputes, and production/live payments are also out of scope. Provider status reconciliation and administrative review for mismatches remain operational requirements before any live-money rollout.
+Withdrawals use an internal reservation lifecycle only. `POST /api/v1/payments/withdrawals` debits the wallet and credits `PLATFORM:WITHDRAWAL_RESERVED`; `GET /api/v1/payments/withdrawals/{reference}` returns the owner's request; `POST /api/v1/payments/withdrawals/{reference}/cancel` posts the compensating entry. No payout provider is integrated, so there is no `COMPLETED` withdrawal state and no external transfer is fabricated. Withdrawals with a configured fee are rejected until payout accounting exists. Provider refunds remain unsupported (`501`).
+
+### Phase 3 ledger, reversals, policies, and reconciliation
+
+Every wallet movement is posted through a double-entry ledger. Wallet balances are customer liabilities, not platform revenue; deposits debit `PLATFORM:PROVIDER_CLEARING` and credit the wallet liability, and fees (when configured) credit `PLATFORM:FEE_REVENUE`. Posted entries are immutable and must balance per currency. `Wallet.balance` is a database-checked projection of its ledger account. See [docs/phase3-ledger.md](docs/phase3-ledger.md) for the account model, journal examples, lifecycle states, and guarantees.
+
+Administrators can reverse internal transfers with `POST /api/v1/transactions/{reference}/reversals` (full or partial, reason required, idempotent). Pre-ledger transactions are marked `LEGACY` and cannot be reversed through the ledger. Transaction responses now include `status`, `currency`, `feeAmount`, `reversedAmount`, and `ledgerEntryReference`.
+
+Financial limits and fees are stored in `FinancialPolicy`, enforced server-side, and changed only by ADMINs through `GET/PATCH /api/v1/admin/financial-policies` with an audited reason. Business dates use the policy timezone. Stale pending deposits are re-verified by `POST /api/v1/admin/payments/reconciliation` or by the optional in-process scheduler (`RECONCILIATION_ENABLED`). A provider timeout is never treated as failure and mismatches are recorded for manual review without crediting funds.
+
+`npm run ledger:verify` runs read-only checks for entry balance, account/wallet projection, transaction/reversal/withdrawal consistency, payment completion, and legacy provenance.
+
 
 ### Phase 4 migration and test setup
 
-The additive `20261027100000_wallet_transactions` migration creates the ETB wallet and internal transfer tables. The `20261027110000_payments_chapa` migration adds payment records, transaction-to-payment linkage for deposits, and deduplicated webhook-delivery records. Both migrations must be applied to the user-service database before deploying this code; do not apply them to a permanent database without approval:
+The additive `20261027100000_wallet_transactions` migration creates the ETB wallet and internal transfer tables. The `20261027110000_payments_chapa` migration adds payment records, transaction-to-payment linkage for deposits, and deduplicated webhook-delivery records. The `20261028120000_double_entry_ledger` migration adds the ledger, policy, withdrawal, and reconciliation tables, marks pre-ledger transactions `LEGACY`, and snapshots positive wallet balances into balanced opening entries. Apply migrations only after backing up and verifying on a disposable copy; see [docs/phase3-ledger.md](docs/phase3-ledger.md) for the procedure and rollback limits:
 
 ```bash
 npx prisma generate
@@ -173,6 +183,13 @@ npx prisma migrate deploy
 Wallet integration tests require a separate PostgreSQL database whose name ends in `_test`. Set `WALLET_TEST_DATABASE_URL` only in the test process (for example, `postgresql://auth:auth@localhost:5432/user_service_test?schema=public`), apply migrations to it with `npx prisma migrate deploy`, and run `npm run test:wallets`. The test file refuses database names without the `_test` suffix. The existing user-service regression suite runs with `npm test`.
 
 Payment integration tests use `WALLET_TEST_DATABASE_URL` and refuse database names without the `_test` suffix. After deploying migrations to that isolated database, run `npm run test:payments`. `npm run test:payments-adapter` runs mocked Chapa v2 request and webhook-signature tests without database or network access.
+
+Phase 3 suites (`test:ledger`, `test:policies`) also require the isolated `_test` database. Run them sequentially because they share policy and wallet state:
+
+```bash
+WALLET_TEST_DATABASE_URL='postgresql://auth:auth@localhost:5432/user_phase3_test?schema=public' npm run test:phase3
+DATABASE_URL='postgresql://auth:auth@localhost:5432/user_phase3_test?schema=public' npm run ledger:verify
+```
 
 ### Permitted profile update fields
 

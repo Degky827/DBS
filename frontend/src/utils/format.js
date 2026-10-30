@@ -1,3 +1,13 @@
+export const formatCurrency = (amount, currency = "ETB") => {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency || "ETB",
+    minimumFractionDigits: 2,
+  }).format(value);
+};
+
 export const formatDate = (iso, options) => {
   if (!iso) return "—";
   const d = new Date(iso);

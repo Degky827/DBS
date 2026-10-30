@@ -7,6 +7,7 @@ const path = require("path");
 
 process.env.NODE_ENV = process.env.NODE_ENV || "test";
 process.env.AUTH_MODE = "dev";
+process.env.AUTH_SERVICE_URL = "https://auth.test/api/v1";
 process.env.ENABLE_API_DOCS = "true";
 process.env.AUTH_RATE_LIMIT_MAX = "1000";
 process.env.RATE_LIMIT_MAX = "10000";
@@ -475,7 +476,7 @@ test("profile photo upload rejects unauthenticated, unsupported, and spoofed fil
       contentType: "image/png",
     });
   assert.equal(spoofed.status, 400);
-  assert.equal(spoofed.body.code, undefined);
+  assert.equal(spoofed.body.code, "INVALID_AVATAR_CONTENT");
   assert.match(spoofed.body.message, /content does not match/);
 
   const tooLarge = await request(app)

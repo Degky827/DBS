@@ -99,14 +99,6 @@ const passwordField = (label) =>
       `${label} must contain at least one uppercase letter, one lowercase letter and one number`
     );
 
-const refreshSchema = z.object({
-  refreshToken: requiredString("refreshToken").trim().min(1, "refreshToken is required"),
-});
-
-const logoutSchema = z.object({
-  refreshToken: requiredString("refreshToken").trim().min(1, "refreshToken is required"),
-});
-
 const forgotPasswordSchema = z.object({
   email: emailField,
 });
@@ -132,13 +124,20 @@ const loginSchema = z.object({
     .max(72, "password must not exceed 72 characters"),
 });
 
+const notificationPreferencesSchema = z
+  .object({
+    securityEmailAlerts: z.boolean({
+      error: "securityEmailAlerts must be true or false",
+    }),
+  })
+  .strict("notification preferences only accept known fields");
+
 module.exports = {
   registerSchema,
   loginSchema,
   verifyEmailSchema,
   resendOtpSchema,
-  refreshSchema,
-  logoutSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  notificationPreferencesSchema,
 };

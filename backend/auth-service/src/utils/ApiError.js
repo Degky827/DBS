@@ -37,6 +37,13 @@ class ApiError extends Error {
     return new ApiError(429, message, code);
   }
 
+  static serviceUnavailable(
+    message = "Service temporarily unavailable",
+    code = "SERVICE_UNAVAILABLE"
+  ) {
+    return new ApiError(503, message, code);
+  }
+
   static internal(message = "Internal server error", details = null) {
     return new ApiError(500, message, "INTERNAL_ERROR", details);
   }

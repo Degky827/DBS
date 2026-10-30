@@ -1,11 +1,13 @@
 import { authApi } from "./api";
 import store from "../store";
-import { setCredentials, logout } from "../store/authSlice";
+import { setSession, clearSession } from "../store/authSlice";
 
 export const loginUser = async (email, password) => {
   const { data } = await authApi.post("/auth/login", { email, password });
-  const { user, accessToken, refreshToken } = data.data;
-  store.dispatch(setCredentials({ user, accessToken, refreshToken }));
+  // auth-service sets the refresh token as an HttpOnly cookie and returns
+  // only the short-lived access token to JavaScript.
+  const { user, accessToken } = data.data;
+  store.dispatch(setSession({ user, accessToken }));
   return data.data;
 };
 
@@ -44,6 +46,16 @@ export const getMe = async () => {
   return data.data;
 };
 
+export const getNotificationPreferences = async () => {
+  const { data } = await authApi.get("/auth/me/notification-preferences");
+  return data.data;
+};
+
+export const updateNotificationPreferences = async (preferences) => {
+  const { data } = await authApi.patch("/auth/me/notification-preferences", preferences);
+  return data.data;
+};
+
 export const forgotPassword = async (email) => {
   const { data } = await authApi.post("/auth/forgot-password", { email });
   return data;
@@ -61,13 +73,12 @@ export const resetPassword = async (email, otp, newPassword, confirmNewPassword)
 
 export const logoutUser = async () => {
   try {
-    const { refreshToken } = store.getState().auth.tokens || {};
-    if (refreshToken) {
-      await authApi.post("/auth/logout", { refreshToken });
-    }
+    // The refresh cookie is sent automatically; the server revokes the token
+    // family and clears the cookie.
+    await authApi.post("/auth/logout");
   } catch {
-    // ignore network errors on logout
+    // Local state is cleared even when the server cannot be reached.
   } finally {
-    store.dispatch(logout());
+    store.dispatch(clearSession());
   }
 };

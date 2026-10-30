@@ -26,6 +26,12 @@ const userRepository = {
     );
   },
 
+  updateNotificationPreferences(id, preferences) {
+    return withRetry(() =>
+      prisma.user.update({ where: { id }, data: preferences })
+    );
+  },
+
   create(data) {
     return withRetry(() => prisma.user.create({ data }));
   },

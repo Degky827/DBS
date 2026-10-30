@@ -12,7 +12,11 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
     "test": "node --test tests/**/*.test.js",
-    "test:ocr": "node tests/ocr-smoke.js"
+    "test:ocr": "node tests/ocr-smoke.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{js,json,md}\"",
+    "format:check": "prettier --check \"**/*.{js,json,md}\""
   },
   "keywords": [
     "kyc",
@@ -42,7 +46,10 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.10.0",
     "nodemon": "^3.1.14",
+    "prettier": "^3.4.2",
     "prisma": "^7.10.0",
     "supertest": "^7.1.4"
   }

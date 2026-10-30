@@ -32,10 +32,51 @@ const submissions = new Map([
     faceMatchStatus: "Approved",
     livenessStatus: "Approved",
   }],
+  ["submission-review-compare", {
+    id: "submission-review-compare",
+    userId: "customer-1",
+    status: "PENDING_REVIEW",
+    providerStatus: "Approved",
+    documentVerificationStatus: "Approved",
+    dataComparisonStatus: null,
+    faceMatchStatus: "Approved",
+    livenessStatus: "Approved",
+  }],
+  ["submission-no-evidence", {
+    id: "submission-no-evidence",
+    userId: "customer-1",
+    status: "PENDING_REVIEW",
+    providerStatus: "Approved",
+    documentVerificationStatus: "Approved",
+    dataComparisonStatus: "MATCH",
+    faceMatchStatus: "Approved",
+    livenessStatus: "Approved",
+  }],
+  ["submission-declined-provider", {
+    id: "submission-declined-provider",
+    userId: "customer-1",
+    status: "PENDING_REVIEW",
+    providerStatus: "Declined",
+    documentVerificationStatus: "Declined",
+    dataComparisonStatus: "MATCH",
+    faceMatchStatus: "Approved",
+    livenessStatus: "Approved",
+  }],
+  ["submission-not-pending", {
+    id: "submission-not-pending",
+    userId: "customer-1",
+    status: "DRAFT",
+    providerStatus: "Approved",
+    documentVerificationStatus: "Approved",
+    dataComparisonStatus: "MATCH",
+    faceMatchStatus: "Approved",
+    livenessStatus: "Approved",
+  }],
 ]);
 const auditEvents = [];
 const reviewEvents = [];
 let ocrDocuments = [];
+let evidenceCount = 1;
 const fakePrisma = {
   $transaction: async (callback) => callback(fakePrisma),
   kycSubmission: {
@@ -45,6 +86,10 @@ const fakePrisma = {
     },
     findMany: async ({ where }) =>
       [...submissions.values()].filter((submission) => submission.status === where.status),
+    count: async ({ where }) =>
+      [...submissions.values()].filter(
+        (submission) => !where?.status || submission.status === where.status
+      ).length,
     findUnique: async ({ where }) => {
       const submission = submissions.get(where.id);
       return submission ? { ...submission } : null;
@@ -56,13 +101,23 @@ const fakePrisma = {
     },
     updateMany: async ({ where, data }) => {
       const submission = submissions.get(where.id);
-      if (!submission || submission.status !== where.status) return { count: 0 };
+      if (!submission) return { count: 0 };
+      if (where.userId && submission.userId !== where.userId) return { count: 0 };
+      const statusFilter = where.status;
+      const statusMatches =
+        typeof statusFilter === "string"
+          ? submission.status === statusFilter
+          : Array.isArray(statusFilter?.in)
+            ? statusFilter.in.includes(submission.status)
+            : true;
+      if (!statusMatches) return { count: 0 };
       Object.assign(submission, data);
       return { count: 1 };
     },
   },
   kycDocument: {
     findMany: async () => ocrDocuments,
+    count: async ({ where }) => (where?.submissionId ? evidenceCount : 0),
   },
   kycAuditEvent: {
     create: async ({ data }) => {
@@ -231,4 +286,98 @@ test("users without an officer role cannot access the review queue", async () =>
     .get("/api/v1/kyc/officer/reviews")
     .set("Authorization", `Bearer ${customerToken}`);
   assert.equal(response.status, 403);
+});
+
+test("comparison can complete during review and then satisfy the approval requirements", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ success: true, data: { user: profile } }),
+  });
+  ocrDocuments = [
+    makeDocument([
+      ["First Name", "Ada"],
+      ["Last Name", "Lovelace"],
+      ["Date of Birth", "13/12/1815"],
+    ]),
+  ];
+
+  try {
+    const comparison = await request(app)
+      .post("/api/v1/kyc/submissions/submission-review-compare/compare")
+      .set("Authorization", `Bearer ${customerToken}`)
+      .send({});
+    assert.equal(comparison.status, 200);
+    assert.equal(comparison.body.data.status, "MATCH");
+    assert.equal(
+      submissions.get("submission-review-compare").dataComparisonStatus,
+      "MATCH"
+    );
+
+    const approved = await request(app)
+      .post("/api/v1/kyc/officer/submissions/submission-review-compare/decision")
+      .set("Authorization", `Bearer ${officerToken}`)
+      .send({ decision: "APPROVE", reason: "Comparison completed while in review." });
+    assert.equal(approved.status, 200);
+    assert.equal(approved.body.data.status, "APPROVED");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("approval is rejected when no identity document evidence exists", async () => {
+  evidenceCount = 0;
+  try {
+    const response = await request(app)
+      .post("/api/v1/kyc/officer/submissions/submission-no-evidence/decision")
+      .set("Authorization", `Bearer ${officerToken}`)
+      .send({ decision: "APPROVE", reason: "Attempted approval without evidence." });
+    assert.equal(response.status, 409);
+    assert.match(response.body.message, /identity document/i);
+    assert.equal(submissions.get("submission-no-evidence").status, "PENDING_REVIEW");
+  } finally {
+    evidenceCount = 1;
+  }
+});
+
+test("approval is rejected when the provider declined verification", async () => {
+  const response = await request(app)
+    .post("/api/v1/kyc/officer/submissions/submission-declined-provider/decision")
+    .set("Authorization", `Bearer ${officerToken}`)
+    .send({ decision: "APPROVE", reason: "Attempted approval after decline." });
+  assert.equal(response.status, 409);
+  assert.match(response.body.message, /Approval requires/i);
+  assert.equal(submissions.get("submission-declined-provider").status, "PENDING_REVIEW");
+});
+
+test("approval is rejected when the applicant comparison failed", async () => {
+  submissions.get("submission-mismatch").status = "PENDING_REVIEW";
+  submissions.get("submission-mismatch").dataComparisonStatus = "MISMATCH";
+  const response = await request(app)
+    .post("/api/v1/kyc/officer/submissions/submission-mismatch/decision")
+    .set("Authorization", `Bearer ${officerToken}`)
+    .send({ decision: "APPROVE", reason: "Attempted approval after mismatch." });
+  assert.equal(response.status, 409);
+  assert.equal(submissions.get("submission-mismatch").status, "PENDING_REVIEW");
+});
+
+test("a decision cannot be recorded for a submission that is not awaiting review", async () => {
+  const response = await request(app)
+    .post("/api/v1/kyc/officer/submissions/submission-not-pending/decision")
+    .set("Authorization", `Bearer ${officerToken}`)
+    .send({ decision: "APPROVE", reason: "Attempted invalid transition." });
+  assert.equal(response.status, 409);
+  assert.equal(submissions.get("submission-not-pending").status, "DRAFT");
+});
+
+test("the officer queue only lists submissions awaiting review", async () => {
+  const response = await request(app)
+    .get("/api/v1/kyc/officer/reviews")
+    .set("Authorization", `Bearer ${officerToken}`);
+  assert.equal(response.status, 200);
+  const ids = response.body.data.submissions.map((submission) => submission.id);
+  assert.equal(ids.includes("submission-no-evidence"), true);
+  assert.equal(ids.includes("submission-match"), false);
+  assert.equal(ids.includes("submission-not-pending"), false);
 });

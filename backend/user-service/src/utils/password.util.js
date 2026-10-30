@@ -12,7 +12,7 @@ const hashPassword = async (plainPassword) => {
 const comparePassword = async (plainPassword, passwordHash) => {
   try {
     return await bcrypt.compare(plainPassword, passwordHash);
-  } catch (error) {
+  } catch {
     throw ApiError.internal("Unable to verify password");
   }
 };

@@ -35,7 +35,7 @@ export default function VerifyEmail() {
     try {
       await verifyEmail(email, code);
       if (isAuthenticated) navigate("/dashboard", { replace: true });
-      else navigate("/", { state: { verified: true }, replace: true });
+      else navigate("/login", { state: { verified: true }, replace: true });
     } catch (err) {
       const { message } = normalizeApiError(err);
       setServerError(message);
@@ -61,13 +61,17 @@ export default function VerifyEmail() {
 
   return (
     <div>
-      <p className="eyebrow">Verification</p>
-      <h1 className="mt-2 text-3xl font-extrabold">Confirm your email</h1>
-      <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
+      <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+        <MailCheck size={20} />
+      </span>
+      <h1 className="mt-4 text-[32px] font-extrabold leading-tight text-midnight">
+        Confirm your email
+      </h1>
+      <p className="mt-2 text-[15px] leading-relaxed text-muted">
         {emailAsked ? (
           <>
             Enter the 6-digit code sent to{" "}
-            <span className="font-semibold text-navy-900">{email}</span>.
+            <span className="font-semibold text-midnight">{email}</span>.
           </>
         ) : (
           "Enter your email address and the 6-digit code we sent you."
@@ -99,7 +103,7 @@ export default function VerifyEmail() {
 
       <button
         type="button"
-        className="btn-primary mt-6 w-full"
+        className="btn-brand mt-6 w-full"
         disabled={otp.length < 6 || submitting || !/^\S+@\S+\.\S+$/.test(email)}
         onClick={() => verify(otp)}
       >
@@ -114,15 +118,18 @@ export default function VerifyEmail() {
         )}
       </button>
 
-      <div className="mt-5 flex items-center justify-between text-[13px]">
-        <Link to="/" className="inline-flex items-center gap-1.5 font-semibold text-ink-400 hover:text-navy-600">
+      <div className="mt-5 flex items-center justify-between gap-3 text-[13px]">
+        <Link
+          to="/login"
+          className="inline-flex items-center gap-1.5 font-semibold text-muted transition hover:text-midnight"
+        >
           <ArrowLeft size={14} /> Back to sign in
         </Link>
         <button
           type="button"
           onClick={resend}
           disabled={countdown > 0}
-          className="inline-flex items-center gap-1.5 font-semibold text-navy-600 disabled:text-ink-400"
+          className="inline-flex items-center gap-1.5 font-semibold text-brand-700 transition disabled:text-ink-400"
         >
           <RotateCw size={14} />
           {countdown > 0 ? `Resend in ${countdown}s` : "Resend code"}
@@ -133,9 +140,9 @@ export default function VerifyEmail() {
         {resent ? "A new code has been requested for your email." : ""}
       </Alert>
 
-      <div className="mt-8 rounded-lg border border-ink-200 bg-ink-50 px-4 py-3 text-[13px] leading-relaxed text-ink-500">
-        Codes are valid for 10 minutes and can be used once. Request a new one if
-        yours has expired.
+      <div className="mt-8 rounded-xl border border-ink-200 bg-ink-50 px-4 py-3 text-[12.5px] leading-relaxed text-muted">
+        Codes are valid for 10 minutes and can be used once. Request a new one if yours
+        has expired.
       </div>
     </div>
   );

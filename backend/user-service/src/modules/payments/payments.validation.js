@@ -20,4 +20,26 @@ const depositSchema = z
   })
   .strict();
 
-module.exports = { depositSchema };
+const withdrawalSchema = z
+  .object({
+    amount: z
+      .string()
+      .refine(
+        isValidAmount,
+        "Amount must be a positive decimal with at most two places"
+      ),
+  })
+  .strict();
+
+const paymentHistorySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(50).default(10),
+    cursor: z.uuid().optional(),
+  })
+  .strict();
+
+module.exports = {
+  depositSchema,
+  withdrawalSchema,
+  paymentHistorySchema,
+};

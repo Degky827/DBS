@@ -8,6 +8,9 @@ const usersRoutes = require("../../modules/users/users.routes");
 const walletsRoutes = require("../../modules/wallets/wallets.routes");
 const transactionsRoutes = require("../../modules/transactions/transactions.routes");
 const paymentsRoutes = require("../../modules/payments/payments.routes");
+const reconciliationRoutes = require("../../modules/payments/reconciliation.routes");
+const policiesRoutes = require("../../modules/policies/policies.routes");
+const adminRoutes = require("../../modules/admin/admin.routes");
 
 router.use("/", healthRoutes);
 
@@ -20,5 +23,8 @@ router.use("/", usersRoutes);
 router.use("/", walletsRoutes);
 router.use("/", transactionsRoutes);
 router.use("/", paymentsRoutes);
+router.use("/", reconciliationRoutes);
+router.use("/", policiesRoutes);
+router.use("/", adminRoutes);
 
 module.exports = router;

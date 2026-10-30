@@ -1,7 +1,9 @@
 const userRepository = require("../../repositories/user.repository");
 const refreshTokenRepository = require("../../repositories/refreshToken.repository");
 const ApiError = require("../../utils/ApiError");
+const logger = require("../../config/logger");
 const audit = require("../../utils/audit");
+const { sendSecurityAlertEmail } = require("../../services/email.service");
 const {
   comparePassword,
   hashPassword,
@@ -38,6 +40,22 @@ const changePasswordForUser = async ({ email, currentPassword, newPassword }) =>
   await refreshTokenRepository.revokeAllForUser(user.id);
 
   audit("PASSWORD_CHANGED", { userId: user.id, via: "internal" });
+
+  if (user.securityEmailAlerts !== false) {
+    try {
+      await sendSecurityAlertEmail({
+        to: user.email,
+        changedAt: new Date(),
+        via: "PASSWORD_CHANGE",
+      });
+    } catch (error) {
+      // The credential change is already committed; alert delivery is best effort.
+      logger.error(
+        { userId: user.id, error: error.message },
+        "Failed to send password change alert"
+      );
+    }
+  }
 
   return { message: "Password has been changed. Other sessions were revoked." };
 };
