@@ -12,11 +12,7 @@ export const createMyWallet = async () => {
   return walletFromResponse(response);
 };
 
-export const transferFunds = async ({
-  destinationWalletId,
-  amount,
-  idempotencyKey,
-}) => {
+export const transferFunds = async ({ destinationWalletId, amount, idempotencyKey }) => {
   const response = await userApi.post(
     "/transactions/transfers",
     { destinationWalletId, amount },
@@ -34,9 +30,17 @@ export const listMyTransactions = async ({
   direction = "all",
   from,
   to,
+  type,
+  status,
+  q,
 } = {}) => {
   const response = await userApi.get("/transactions", {
-    params: { limit, cursor, direction, from, to },
+    params: { limit, cursor, direction, from, to, type, status, q },
   });
   return response.data.data;
+};
+
+export const getMyTransaction = async (reference) => {
+  const response = await userApi.get(`/transactions/${encodeURIComponent(reference)}`);
+  return response.data.data.transaction;
 };
