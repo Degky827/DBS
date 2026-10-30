@@ -86,6 +86,10 @@ const fakePrisma = {
     },
     findMany: async ({ where }) =>
       [...submissions.values()].filter((submission) => submission.status === where.status),
+    count: async ({ where }) =>
+      [...submissions.values()].filter(
+        (submission) => !where?.status || submission.status === where.status
+      ).length,
     findUnique: async ({ where }) => {
       const submission = submissions.get(where.id);
       return submission ? { ...submission } : null;
@@ -372,7 +376,7 @@ test("the officer queue only lists submissions awaiting review", async () => {
     .get("/api/v1/kyc/officer/reviews")
     .set("Authorization", `Bearer ${officerToken}`);
   assert.equal(response.status, 200);
-  const ids = response.body.data.map((submission) => submission.id);
+  const ids = response.body.data.submissions.map((submission) => submission.id);
   assert.equal(ids.includes("submission-no-evidence"), true);
   assert.equal(ids.includes("submission-match"), false);
   assert.equal(ids.includes("submission-not-pending"), false);

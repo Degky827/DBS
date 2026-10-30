@@ -11,7 +11,13 @@ const reviewController = require("../../controllers/reviewController");
 const authenticate = require("../../middlewares/authenticate");
 const requireOfficer = require("../../middlewares/requireOfficer");
 const validate = require("../../middlewares/validate");
-const { reviewDecisionSchema } = require("../../validators/review.validation");
+const validateQuery = require("../../middlewares/validateQuery");
+const validateParams = require("../../middlewares/validateParams");
+const { submissionParamsSchema } = require("../../validators/params.validation");
+const {
+  reviewDecisionSchema,
+  reviewQueueSchema,
+} = require("../../validators/review.validation");
 
 router.use("/", healthRoutes);
 
@@ -23,7 +29,26 @@ router.use("/", submissionRoutes);
 router.use("/", documentRoutes);
 router.use("/", officerDocumentRoutes);
 router.use("/", internalRoutes);
-router.get("/officer/reviews", authenticate, requireOfficer, reviewController.queue);
+router.get(
+  "/officer/reviews/stats",
+  authenticate,
+  requireOfficer,
+  reviewController.stats
+);
+router.get(
+  "/officer/reviews",
+  authenticate,
+  requireOfficer,
+  validateQuery(reviewQueueSchema),
+  reviewController.queue
+);
+router.get(
+  "/officer/submissions/:submissionId",
+  authenticate,
+  requireOfficer,
+  validateParams(submissionParamsSchema),
+  reviewController.get
+);
 router.post(
   "/officer/submissions/:submissionId/decision",
   authenticate,
