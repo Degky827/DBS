@@ -10,6 +10,7 @@ const {
   refreshLimiter,
 } = require("../../middlewares/rateLimiter");
 const authController = require("./auth.controller");
+const mfaRoutes = require("../mfa/mfa.routes");
 const {
   registerSchema,
   loginSchema,
@@ -25,6 +26,8 @@ router.use((req, res, next) => {
   res.set("Pragma", "no-cache");
   next();
 });
+
+router.use(mfaRoutes);
 
 // Ordinary authenticated account reads use only the global limiter.
 router.get(ROUTES.AUTH.ME, authenticate, authController.me);

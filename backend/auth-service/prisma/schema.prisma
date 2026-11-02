@@ -24,10 +24,27 @@ model User {
     role              String    @default("USER")
     isEmailVerified   Boolean   @default(false)
     securityEmailAlerts Boolean @default(true)
+    // ACTIVE | FROZEN | SUSPENDED | CLOSED. FROZEN still permits sign-in for
+    // read-only account access; SUSPENDED and CLOSED cannot authenticate.
+    status            String    @default("ACTIVE")
+    statusReason      String?
+    statusChangedAt   DateTime?
+    statusChangedBy   String?
+    closedAt          DateTime?
+    mfaEnabled        Boolean   @default(false)
+    mfaSecretEncrypted String?
+    mfaRecoveryCodeHashes String[] @default([])
+    mfaEnrolledAt     DateTime?
     createdAt         DateTime  @default(now())
     updatedAt         DateTime  @updatedAt
+    // Access tokens issued before this instant are rejected. Set when the
+    // password changes or all sessions are revoked.
+    tokenValidAfter   DateTime?
     otpCodes          OtpCode[]
     refreshTokens     RefreshToken[]
+    revokedAccessTokens AccessTokenRevocation[]
+
+    @@index([status])
 }
 
 model OtpCode {
@@ -53,6 +70,9 @@ model RefreshToken {
     // Tokens issued by one login share a family id. Detecting reuse of any
     // rotated ancestor revokes every active token in the family.
     familyId            String
+    // Hard ceiling for the whole login session. Rotation may extend expiresAt
+    // up to this instant but never beyond it.
+    familyExpiresAt     DateTime?
     replacedByTokenHash String?
     expiresAt           DateTime
     revokedAt           DateTime?
@@ -61,4 +81,17 @@ model RefreshToken {
 
     @@index([userId])
     @@index([familyId])
+}
+
+model AccessTokenRevocation {
+    id        String   @id @default(uuid())
+    jti       String   @unique
+    userId    String
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    reason    String
+    expiresAt DateTime
+    createdAt DateTime @default(now())
+
+    @@index([userId])
+    @@index([expiresAt])
 }

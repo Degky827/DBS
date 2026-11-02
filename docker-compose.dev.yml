@@ -62,17 +62,24 @@ services:
       JWT_AUDIENCE: banking-system
       REFRESH_COOKIE_PATH: /api/auth
       COOKIE_SECURE: "false"
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:-}
+      MFA_ISSUER: ${MFA_ISSUER:-Meridian Bank}
+      MFA_CHALLENGE_TTL_MS: ${MFA_CHALLENGE_TTL_MS:-300000}
+      STEP_UP_TTL_MS: ${STEP_UP_TTL_MS:-600000}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
       CORS_ORIGIN: http://localhost:5173,http://localhost:8080
       TRUST_PROXY: 0
       ENABLE_HSTS: "false"
       ENABLE_API_DOCS: "true"
       LOG_LEVEL: ${LOG_LEVEL:-debug}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       BREVO_API_KEY: ${BREVO_API_KEY:-}
       EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-}
       EMAIL_FROM: ${EMAIL_FROM:-Meridian Bank}
       EMAIL_FROM_EMAIL: ${EMAIL_FROM_EMAIL:-no-reply@meridianbank.example}
       EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
+      EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-}
+      EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-587}
     ports:
       - "127.0.0.1:5001:5001"
     depends_on:
@@ -120,6 +127,7 @@ services:
       JWT_AUDIENCE: banking-system
       AUTH_SERVICE_URL: http://auth-service:5001/api/v1
       KYC_SERVICE_URL: http://kyc-service:5003/api/v1/kyc
+      STEP_UP_TTL_MS: ${STEP_UP_TTL_MS:-600000}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
       CORS_ORIGIN: http://localhost:5173,http://localhost:8080
       TRUST_PROXY: 0
@@ -127,6 +135,7 @@ services:
       ENABLE_API_DOCS: "true"
       AVATAR_UPLOAD_DIR: /app/uploads/avatars
       LOG_LEVEL: ${LOG_LEVEL:-debug}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       CHAPA_SECRET_KEY: ${CHAPA_SECRET_KEY:-}
       CHAPA_WEBHOOK_SECRET: ${CHAPA_WEBHOOK_SECRET:-}
       CHAPA_BASE_URL: ${CHAPA_BASE_URL:-}
@@ -195,6 +204,7 @@ services:
       DIDIT_WEBHOOK_SECRET: ${DIDIT_WEBHOOK_SECRET:-}
       DIDIT_WEBHOOK_SECRET_PREVIOUS: ${DIDIT_WEBHOOK_SECRET_PREVIOUS:-}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     ports:
       - "127.0.0.1:5003:5003"
     volumes:

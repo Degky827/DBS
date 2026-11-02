@@ -15,6 +15,13 @@ model KycSubmission {
   updatedAt                   DateTime  @updatedAt
   submittedAt                 DateTime?
   reviewedAt                  DateTime?
+  // Approval is time-boxed and can be explicitly revoked by an officer or by
+  // a provider expiry event. Expiry/revocation is evaluated on every status
+  // read rather than relying on a background job.
+  approvedAt                  DateTime?
+  approvalExpiresAt           DateTime?
+  revokedAt                   DateTime?
+  revokedReason               String?
   verificationScore           Float?
   decisionReason              String?
   comparisonResults           Json?

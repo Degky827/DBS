@@ -89,6 +89,28 @@ test("Chapa v2 verification converts integer minor units and returns the verifie
   });
 });
 
+test("Chapa verification surfaces unrecognized statuses instead of treating them as pending", async () => {
+  const adapter = new ChapaAdapter({
+    ...adapterConfig,
+    fetchImpl: async () =>
+      response({
+        status: "success",
+        data: {
+          merchant_reference: "d_testref",
+          chapa_reference: "CH-UNKNOWN",
+          status: "REVIEW_HOLD",
+          amount: 500,
+          currency: "ETB",
+        },
+      }),
+  });
+
+  const verified = await adapter.getStatus("d_testref");
+  assert.equal(verified.status, "UNKNOWN");
+  assert.equal(verified.rawStatus, "REVIEW_HOLD");
+  assert.equal(verified.amount, "5.00");
+});
+
 test("webhook verification uses exact raw bytes and rejects parsed-body fallbacks", () => {
   const adapter = new ChapaAdapter(adapterConfig);
   const rawBody = Buffer.from('{"event":"payment.success", "amount":"1234"}');

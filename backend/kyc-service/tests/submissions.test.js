@@ -96,6 +96,29 @@ test("customer creates an owned submission after profile lookup", async () => {
   }
 });
 
+test("creating a submission again returns the existing editable application", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ success: true, data: { user: { id: "profile-456" } } }),
+  });
+
+  try {
+    const response = await request(app)
+      .post("/api/v1/kyc/submissions")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.id, "submission-1");
+    assert.equal(response.body.data.reused, true);
+    assert.equal(submissions.length, 1);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("status lookup is scoped to the authenticated customer's token subject", async () => {
   const response = await request(app)
     .get("/api/v1/kyc/status")

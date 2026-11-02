@@ -40,4 +40,13 @@ const uploadLimiter = rateLimit({
   handler: buildHandler("Too many document uploads, please try again later"),
 });
 
-module.exports = { globalLimiter, uploadLimiter };
+// Provider callbacks are unauthenticated and mounted before the global limiter,
+// so they need their own budget to cap signature-verification load.
+const webhookLimiter = rateLimit({
+  ...commonOptions,
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  limit: env.WEBHOOK_RATE_LIMIT_MAX,
+  handler: buildHandler("Too many webhook requests, please try again later"),
+});
+
+module.exports = { globalLimiter, uploadLimiter, webhookLimiter };

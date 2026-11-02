@@ -25,7 +25,14 @@ async function createSession(userId, submissionId) {
   if (!submission) {
     throw ApiError.notFound("KYC submission not found", "KYC_SUBMISSION_NOT_FOUND");
   }
-  if (submission.providerSessionId && submission.providerSessionUrlEncrypted) {
+  // Only an in-flight verification may reuse its provider session. A
+  // resubmission (or an expired/abandoned session) must start a fresh session,
+  // otherwise the applicant is sent back to an already-finished Didit flow.
+  if (
+    submission.status === SUBMISSION_STATUS.IN_PROGRESS &&
+    submission.providerSessionId &&
+    submission.providerSessionUrlEncrypted
+  ) {
     return {
       sessionId: submission.providerSessionId,
       sessionUrl: secureStorage.decryptSensitiveValue(
@@ -234,8 +241,17 @@ async function processWebhook(event, authenticationMethod) {
       const submissionUpdate = {};
       let applied = false;
       let ignoredReason = null;
+      const targetStatus = providerStatus
+        ? submissionStatusForProvider(providerStatus)
+        : null;
+      // A provider expiry is the one event allowed to move an approved
+      // submission out of its terminal state: the verification is no longer
+      // valid, so the approval must be revoked.
+      const revokesApproval =
+        current.status === SUBMISSION_STATUS.APPROVED &&
+        targetStatus === SUBMISSION_STATUS.NEEDS_RESUBMISSION;
 
-      if (isTerminal(current.status)) {
+      if (isTerminal(current.status) && !revokesApproval) {
         ignoredReason = "TERMINAL_STATE";
       } else if (
         latestEvent?.eventTimestamp &&
@@ -244,7 +260,6 @@ async function processWebhook(event, authenticationMethod) {
         ignoredReason = "OUT_OF_ORDER_EVENT";
       } else {
         if (providerStatus) {
-          const targetStatus = submissionStatusForProvider(providerStatus);
           if (targetStatus && !canTransition(current.status, targetStatus)) {
             ignoredReason = "INVALID_TRANSITION";
           } else {
@@ -253,6 +268,10 @@ async function processWebhook(event, authenticationMethod) {
               submissionUpdate.status = targetStatus;
               if (targetStatus === SUBMISSION_STATUS.PENDING_REVIEW) {
                 submissionUpdate.submittedAt = eventTimestamp;
+              }
+              if (revokesApproval) {
+                submissionUpdate.revokedAt = eventTimestamp;
+                submissionUpdate.revokedReason = `Provider status: ${providerStatus}`;
               }
             }
           }

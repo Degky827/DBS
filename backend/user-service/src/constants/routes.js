@@ -30,6 +30,8 @@ const ROUTES = Object.freeze({
     ANALYTICS: "/admin/analytics",
     USERS: "/admin/users",
     USER_BY_ID: "/admin/users/:userId",
+    USER_STATUS: "/admin/users/:userId/status",
+    USER_MFA_RESET: "/admin/users/:userId/mfa/reset",
     AUDIT_LOGS: "/admin/audit-logs",
     FINANCIAL_POLICIES: "/admin/financial-policies",
     FINANCIAL_POLICY: "/admin/financial-policies/:type",

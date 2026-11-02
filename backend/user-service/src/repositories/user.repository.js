@@ -39,6 +39,7 @@ const userRepository = {
           bio: true,
           avatarUrl: true,
           role: true,
+          accountStatus: true,
           passwordChangedAt: true,
           createdAt: true,
           updatedAt: true,

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import AuthLayout from "../layouts/AuthLayout";
@@ -7,6 +7,7 @@ import StaffLayout from "../layouts/StaffLayout";
 import NotFound from "../pages/errors/NotFound";
 import Forbidden from "../pages/errors/Forbidden";
 import ProtectedRoute from "../components/ProtectedRoute";
+import StepUpPrompt from "../components/security/StepUpPrompt";
 
 const Landing = lazy(() => import("../pages/public/Landing"));
 const Login = lazy(() => import("../pages/auth/Login"));
@@ -101,6 +102,36 @@ function ScrollToTop() {
   return null;
 }
 
+const pathLabel = (pathname) => {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length === 0) return "Home";
+  return segments[segments.length - 1]
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+};
+
+// Announces client-side navigation to screen readers, which otherwise receive
+// no signal when the route changes.
+function RouteAnnouncer() {
+  const { pathname } = useLocation();
+  const regionRef = useRef(null);
+
+  useEffect(() => {
+    if (regionRef.current) {
+      regionRef.current.textContent = `Navigated to ${pathLabel(pathname)}`;
+    }
+  }, [pathname]);
+
+  return (
+    <div
+      ref={regionRef}
+      aria-live="polite"
+      aria-atomic="true"
+      className="sr-only"
+    />
+  );
+}
+
 function AppRoutes() {
   const dispatch = useDispatch();
   const status = useSelector((state) => state.auth.status);
@@ -119,6 +150,8 @@ function AppRoutes() {
   return (
     <BrowserRouter>
       <ScrollToTop />
+      <RouteAnnouncer />
+      <StepUpPrompt />
       <Suspense fallback={<RouteLoading />}>
         <Routes>
           <Route path="/" element={<Landing />} />

@@ -57,7 +57,11 @@ const ALLOWED_TRANSITIONS = Object.freeze({
     SUBMISSION_STATUS.IN_PROGRESS,
     SUBMISSION_STATUS.PENDING_REVIEW,
   ]),
-  [SUBMISSION_STATUS.APPROVED]: new Set(),
+  // An approval can be revoked explicitly by an officer or by a provider
+  // expiry event, which sends the applicant back to resubmission.
+  [SUBMISSION_STATUS.APPROVED]: new Set([
+    SUBMISSION_STATUS.NEEDS_RESUBMISSION,
+  ]),
   [SUBMISSION_STATUS.REJECTED]: new Set(),
 });
 

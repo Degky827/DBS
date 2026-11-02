@@ -6,9 +6,10 @@ const webhookRoutes = require("./routes/v1/webhook.routes");
 const securityMiddlewares = require("./middlewares/security");
 const corsMiddleware = require("./middlewares/cors");
 const requestLogger = require("./middlewares/requestLogger");
-const { globalLimiter } = require("./middlewares/rateLimiter");
+const { globalLimiter, webhookLimiter } = require("./middlewares/rateLimiter");
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
+const metrics = require("./utils/metrics");
 
 const app = express();
 
@@ -23,10 +24,16 @@ app.disable("x-powered-by");
 app.use(...securityMiddlewares);
 app.use(requestLogger);
 
+// Scraped by Prometheus over the internal network; excluded from request logs
+// and rate limits so a scrape burst cannot throttle real traffic.
+app.use(metrics.httpMiddleware());
+app.get("/metrics", metrics.metricsHandler);
+
 app.use(corsMiddleware);
 
 app.use(
   "/api/v1/kyc/webhooks",
+  webhookLimiter,
   express.raw({ type: "application/json", limit: "1mb" }),
   webhookRoutes
 );

@@ -36,38 +36,39 @@
 - Docker Compose 2.20+
 - OpenSSL 3.0+
 - GPG 2.2+ (for backup encryption)
-- Load balancer with TLS termination (Nginx, HAProxy, AWS ALB, etc.)
+- Load balancer with TLS termination (optional; the bundled Nginx can terminate TLS)
 
 ### Network Requirements
 
 ```
-┌─────────────────┐
-│  Load Balancer  │  HTTPS (443)
-│  (TLS Endpoint) │
-└────────┬────────┘
-         │
-    ┌────▼────────────────┐
-    │  Docker Host        │
-    │  Port 8080 (HTTP)   │
-    └────────────────────┬┘
-             │
-    ┌────────▼──────────────────┐
-    │  Docker Network (bridge)   │
-    ├────────────────────────────┤
-    │  - Frontend (Nginx:80)     │
-    │  - Auth Service (5001)     │
-    │  - User Service (5002)     │
-    │  - KYC Service (5003)      │
-    │  - PostgreSQL (5432)       │
-    └────────────────────────────┘
+┌──────────────────────────────────────────┐
+│  Browser  ── HTTPS (443) ──┐              │
+└────────────────────────────┼──────────────┘
+                             │
+                    ┌────────▼────────────────┐
+                    │  Docker Host            │
+                    │  Frontend Nginx         │
+                    │  80 (redirect/ACME)     │
+                    │  443 (TLS termination)  │
+                    └────────┬────────────────┘
+                             │
+                    ┌────────▼──────────────────┐
+                    │  Docker Network (bridge)   │
+                    ├────────────────────────────┤
+                    │  - Auth Service (5001)     │
+                    │  - User Service (5002)     │
+                    │  - KYC Service (5003)      │
+                    │  - PostgreSQL (5432)       │
+                    └────────────────────────────┘
 ```
 
 **Security:**
-- Only port 8080 exposed to load balancer
+- Only frontend ports 80 (redirect + ACME) and 443 (HTTPS) are exposed
+- For `TLS_ENABLED=false`, publish only `FRONTEND_HTTP_PORT` behind a trusted
+  TLS-terminating load balancer
 - All internal services on private Docker network
 - PostgreSQL NOT exposed externally
-- TLS 1.2+ at load balancer
-- HSTS enabled
+- TLS 1.2/1.3 with HSTS emitted by the frontend container
 
 > **Note:** Earlier drafts of this guide included Redis and RabbitMQ.
 > Neither is used by the application code yet, so both were removed from the
@@ -109,7 +110,9 @@ Edit `.env` and set:
 
 # Public HTTPS origin (MUST be https:// in production)
 APP_ORIGIN=https://bank.yourdomain.com
-FRONTEND_PORT=8080
+FRONTEND_HTTP_PORT=80
+FRONTEND_HTTPS_PORT=443
+TLS_ENABLED=true
 
 # Database
 POSTGRES_USER=meridian
@@ -193,6 +196,90 @@ az keyvault secret set \
 vault kv put secret/meridian/production @.env
 ```
 
+Every secret can also be read from a file through a `<NAME>_FILE` variable
+(see [environment-setup.md](./environment-setup.md#file-based-secrets)).
+Compose only forwards variables named in the service environment, so mount the
+files and add the variables with an override:
+
+```yaml
+# docker-compose.secrets.yml
+services:
+  auth-service:
+    environment:
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      INTERNAL_SERVICE_KEY_FILE: /run/secrets/internal_service_key
+      MFA_ENCRYPTION_KEY_FILE: /run/secrets/mfa_encryption_key
+    volumes:
+      - ./secrets:/run/secrets:ro
+  user-service:
+    environment:
+      INTERNAL_SERVICE_KEY_FILE: /run/secrets/internal_service_key
+    volumes:
+      - ./secrets:/run/secrets:ro
+  kyc-service:
+    environment:
+      INTERNAL_SERVICE_KEY_FILE: /run/secrets/internal_service_key
+      STORAGE_ENCRYPTION_KEY_FILE: /run/secrets/storage_encryption_key
+    volumes:
+      - ./secrets:/run/secrets:ro
+```
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
+```
+
+The file value takes precedence over the plain variable, and an unreadable file
+aborts startup.
+
+### 6. TLS Certificates
+
+The frontend container terminates TLS by default. It reads:
+
+| File | Required | Notes |
+|---|---|---|
+| `certs/tls.crt` | Yes | PEM certificate followed by the intermediate/full chain |
+| `certs/tls.key` | Yes | PEM private key without a passphrase |
+
+`TLS_ENABLED=true` makes container startup fail if either file is missing, which
+prevents an accidental plaintext deployment. HTTP requests on port 80 redirect
+to HTTPS, except `/healthz` and `/.well-known/acme-challenge/`.
+
+Obtain a CA-issued certificate through your normal process (ACME, corporate CA,
+or commercial CA) and place the files in `./certs`. For Let's Encrypt with the
+certbot webroot method:
+
+```bash
+# ./certbot/www is mounted read-only at /var/www/certbot in the container.
+mkdir -p certbot/www certs
+sudo certbot certonly --webroot -w ./certbot/www \
+  -d bank.yourdomain.com --email ops@yourdomain.com --agree-tos --non-interactive
+
+# Copy the live files into the Compose certificate directory.
+sudo install -m 644 /etc/letsencrypt/live/bank.yourdomain.com/fullchain.pem certs/tls.crt
+sudo install -m 600 /etc/letsencrypt/live/bank.yourdomain.com/privkey.pem certs/tls.key
+```
+
+After renewal, copy the new files and reload Nginx:
+
+```bash
+docker compose exec frontend nginx -s reload
+```
+
+Do not commit key material: `certs/` and `certbot/` are gitignored.
+
+For a disposable test environment, generate a self-signed certificate:
+
+```bash
+CERT_HOSTNAME=localhost ./scripts/generate-self-signed-cert.sh
+```
+
+This triggers browser trust warnings; never use it for production.
+
+**Upstream TLS termination:** set `TLS_ENABLED=false`, do not publish port 443,
+and terminate TLS at the load balancer. The container serves plain HTTP and
+derives HSTS from `X-Forwarded-Proto`; the load balancer must send
+`X-Forwarded-Proto: https`.
+
 ---
 
 ## Initial Deployment
@@ -211,7 +298,7 @@ git checkout v1.0.0
 git verify-tag v1.0.0
 
 # 4. Create required directories
-sudo mkdir -p /var/lib/meridian/{postgres,redis,rabbitmq,uploads,storage}
+sudo mkdir -p /var/lib/meridian/{uploads,storage}
 sudo chown -R 1000:1000 /var/lib/meridian
 ```
 
@@ -219,7 +306,7 @@ sudo chown -R 1000:1000 /var/lib/meridian
 
 ```bash
 # Start PostgreSQL only
-docker compose up -d postgres redis rabbitmq
+docker compose up -d postgres
 
 # Wait for health checks
 sleep 30
@@ -228,7 +315,7 @@ sleep 30
 docker compose ps
 
 # Check logs
-docker compose logs postgres redis rabbitmq
+docker compose logs postgres
 ```
 
 ### Step 3: Run Migrations
@@ -252,10 +339,10 @@ docker compose up -d auth-service user-service kyc-service
 # Wait for health checks
 sleep 45
 
-# Verify health
-curl -f http://localhost:8080/api/auth/health || echo "Auth service not ready"
-curl -f http://localhost:8080/api/user/health || echo "User service not ready"
-curl -f http://localhost:8080/api/kyc/health || echo "KYC service not ready"
+# Verify health (public origin; use --cacert for a private CA)
+curl -f https://bank.yourdomain.com/api/auth/health || echo "Auth service not ready"
+curl -f https://bank.yourdomain.com/api/user/health || echo "User service not ready"
+curl -f https://bank.yourdomain.com/api/kyc/health || echo "KYC service not ready"
 ```
 
 ### Step 5: Start Frontend
@@ -264,8 +351,9 @@ curl -f http://localhost:8080/api/kyc/health || echo "KYC service not ready"
 # Start frontend (Nginx)
 docker compose up -d frontend
 
-# Verify
-curl -f http://localhost:8080/ || echo "Frontend not ready"
+# Verify TLS termination and redirect
+curl -f https://bank.yourdomain.com/healthz || echo "Frontend not ready"
+curl -sI http://bank.yourdomain.com/ | grep -q "301" && echo "HTTP redirects to HTTPS"
 ```
 
 ### Step 6: Create Initial Admin Account (Optional)
@@ -278,12 +366,17 @@ docker exec -it meridian-postgres-1 psql -U meridian -d auth_db
 # In production, first user registers normally then elevated via database
 ```
 
-### Step 7: Configure Load Balancer
+### Step 7: Optional — Terminate TLS at a Load Balancer
+
+The bundled Nginx terminates TLS by default, so this step is only needed when
+your platform requires an external load balancer (AWS ALB, HAProxy, etc.). In
+that case set `TLS_ENABLED=false`, publish only `FRONTEND_HTTP_PORT`, and
+terminate TLS at the load balancer.
 
 **Example: Nginx upstream**
 
 ```nginx
-upstream meridian_backend {
+upstream meridian_frontend {
     server app-server-1:8080;
     server app-server-2:8080;  # If using multiple hosts
 }
@@ -291,19 +384,18 @@ upstream meridian_backend {
 server {
     listen 443 ssl http2;
     server_name bank.yourdomain.com;
-    
+
     ssl_certificate /etc/nginx/certs/fullchain.pem;
     ssl_certificate_key /etc/nginx/certs/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
-    
-    # Security headers
+
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
-    
+
     location / {
-        proxy_pass http://meridian_backend;
+        proxy_pass http://meridian_frontend;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -320,6 +412,10 @@ server {
     return 301 https://$server_name$request_uri;
 }
 ```
+
+The frontend container emits HSTS based on the forwarded scheme, and the Node
+services trust one proxy hop (`TRUST_PROXY=1`). The load balancer must forward
+`X-Forwarded-Proto: https`.
 
 ---
 
@@ -373,8 +469,9 @@ docker compose -f docker-compose.green.yml run --rm kyc-migrate
 #### 3. Start Green Environment
 
 ```bash
-# Start new services on different ports
-FRONTEND_PORT=8081 docker compose -f docker-compose.green.yml up -d
+# Start new services on different ports. TLS can terminate at the shared
+# load balancer for this temporary stack.
+TLS_ENABLED=false FRONTEND_HTTP_PORT=8081 docker compose -f docker-compose.green.yml up -d
 
 # Wait for health checks
 sleep 60
@@ -434,7 +531,7 @@ docker compose down
 
 ```bash
 # 1. Switch load balancer back to blue
-# Update Nginx upstream to point to port 8080
+# Update Nginx upstream to point to the blue frontend port (FRONTEND_HTTP_PORT)
 
 # 2. Verify blue is serving traffic
 curl -f https://bank.yourdomain.com/api/auth/health
@@ -456,7 +553,7 @@ sleep 60
 
 # 3. Verify services
 for path in /api/auth/health /api/user/health /api/kyc/health; do
-    curl -fsS "http://localhost:8080${path}" >/dev/null || { echo "FAILED ${path}"; exit 1; }
+    curl -fsS "https://bank.yourdomain.com${path}" >/dev/null || { echo "FAILED ${path}"; exit 1; }
 done
 
 # 4. Switch load balancer back to blue
@@ -473,9 +570,14 @@ done
 # 1. Stop all services
 docker compose down
 
-# 2. Restore database from backup (manual procedure: see backup-and-recovery.md)
-#    This is destructive and requires explicit approval.
-#    Example: pg_restore into the target database with services stopped.
+# 2. Restore from the last verified backup set (destructive).
+#    The script stops services, writes a safety backup, restores databases
+#    and document volumes, restarts the stack, and verifies the ledger.
+#    See docs/backup-and-recovery.md for the approval checklist.
+./scripts/restore.sh --backup backups/sets/<timestamp> --in-place
+
+# Or rehearse first against throw-away databases:
+./scripts/restore.sh --backup backups/sets/<timestamp> --suffix _drill
 
 # 3. Checkout previous version
 git checkout v1.0.0
@@ -606,8 +708,8 @@ npx prisma migrate status
 ### Deployment Day (T-0)
 
 #### Pre-Deployment (T-2 hours)
-- [ ] Backup all databases
-- [ ] Verify backup integrity
+- [ ] Run `./scripts/backup.sh` and confirm the set was written
+- [ ] Run `./scripts/restore.sh --backup <set> --suffix _drill` and confirm it passes
 - [ ] Monitoring dashboards open
 - [ ] Team on standby
 - [ ] Deploy keys ready
@@ -687,6 +789,22 @@ done
 
 echo "All health checks passed!"
 ```
+
+### Monitoring Stack
+
+The monitoring profile is opt-in and doesn't publish host ports:
+
+```bash
+docker compose --profile monitoring up -d
+docker compose exec prometheus wget -qO- http://localhost:9090/-/healthy
+```
+
+Check that all three service targets report `UP` in the Prometheus targets page
+(reachable through an SSH tunnel). Alertmanager delivers every notification to
+the `alert-relay` container, which logs it under
+`docker compose logs alert-relay`; set `ALERT_SLACK_WEBHOOK_URL` or
+`ALERT_WEBHOOK_URL` to forward alerts to Slack or a generic webhook. See
+[docs/security-and-operations.md §10](./security-and-operations.md#10-monitoring-and-alerting).
 
 ### Smoke Tests
 

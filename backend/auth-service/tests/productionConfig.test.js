@@ -70,6 +70,16 @@ test("production rejects a missing or weak internal service key", () => {
   );
 });
 
+test("the absolute refresh lifetime must cover the sliding lifetime", () => {
+  assertStartupFails(
+    {
+      REFRESH_TOKEN_TTL_MS: "604800000",
+      REFRESH_TOKEN_ABSOLUTE_TTL_MS: "86400000",
+    },
+    /REFRESH_TOKEN_ABSOLUTE_TTL_MS/
+  );
+});
+
 test("production rejects wildcard and plaintext CORS origins", () => {
   assertStartupFails({ CORS_ORIGIN: "*" }, /wildcard/i);
   assertStartupFails(

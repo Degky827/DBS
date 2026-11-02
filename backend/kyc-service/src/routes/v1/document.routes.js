@@ -1,6 +1,7 @@
 const router = require("express").Router();
 
 const authenticate = require("../../middlewares/authenticate");
+const requireActiveAccount = require("../../middlewares/requireActiveAccount");
 const documentUpload = require("../../middlewares/documentUpload");
 const { uploadLimiter } = require("../../middlewares/rateLimiter");
 const validate = require("../../middlewares/validate");
@@ -10,6 +11,7 @@ const { uploadDocumentSchema, correctionSchema } = require("../../validators/doc
 router.post(
   "/submissions/:submissionId/documents",
   authenticate,
+  requireActiveAccount,
   uploadLimiter,
   documentUpload.single("document"),
   validate(uploadDocumentSchema),
@@ -20,9 +22,15 @@ router.get("/documents/:documentId/content", authenticate, documentController.co
 router.patch(
   "/documents/:documentId/corrections",
   authenticate,
+  requireActiveAccount,
   validate(correctionSchema),
   documentController.correct
 );
-router.delete("/documents/:documentId", authenticate, documentController.remove);
+router.delete(
+  "/documents/:documentId",
+  authenticate,
+  requireActiveAccount,
+  documentController.remove
+);
 
 module.exports = router;

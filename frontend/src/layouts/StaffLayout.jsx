@@ -233,6 +233,9 @@ export default function StaffLayout() {
 
   return (
     <div className="min-h-screen bg-canvas">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-[264px] flex-col border-r border-white/5 bg-midnight px-4 py-6 lg:flex print:hidden">
         {sidebarContent()}
       </aside>
@@ -375,7 +378,8 @@ export default function StaffLayout() {
 
         <main
           id="main-content"
-          className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8"
+          tabIndex={-1}
+          className="mx-auto w-full max-w-[1440px] px-4 py-6 outline-none sm:px-6 lg:px-8 lg:py-8"
         >
           <Outlet />
         </main>

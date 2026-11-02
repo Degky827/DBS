@@ -4,6 +4,9 @@ const ApiError = require("../../utils/ApiError");
 const logger = require("../../config/logger");
 const audit = require("../../utils/audit");
 const { sendSecurityAlertEmail } = require("../../services/email.service");
+const { introspectAccessToken } = require("../auth/auth.service");
+const accountService = require("../accounts/account.service");
+const mfaService = require("../mfa/mfa.service");
 const {
   comparePassword,
   hashPassword,
@@ -37,6 +40,8 @@ const changePasswordForUser = async ({ email, currentPassword, newPassword }) =>
   await userRepository.updatePassword(user.id, passwordHash);
 
   // Invalidate every active session so the change takes effect everywhere.
+  // tokenValidAfter also invalidates access tokens that have not yet expired.
+  await userRepository.invalidateSessions(user.id);
   await refreshTokenRepository.revokeAllForUser(user.id);
 
   audit("PASSWORD_CHANGED", { userId: user.id, via: "internal" });
@@ -60,4 +65,21 @@ const changePasswordForUser = async ({ email, currentPassword, newPassword }) =>
   return { message: "Password has been changed. Other sessions were revoked." };
 };
 
-module.exports = { changePasswordForUser };
+const resetMfaForUser = async ({ email, actorId }) => {
+  const user = await userRepository.findByEmail(
+    String(email || "").trim().toLowerCase()
+  );
+  if (!user) {
+    throw ApiError.notFound("Account not found", "USER_NOT_FOUND");
+  }
+  return mfaService.resetForUser({ userId: user.id, actorId });
+};
+
+module.exports = {
+  changePasswordForUser,
+  introspectAccessToken,
+  setAccountStatus: accountService.setStatus,
+  getAccountStatuses: accountService.bulkStatuses,
+  closeAccountForUser: accountService.closeOwnAccount,
+  resetMfaForUser,
+};

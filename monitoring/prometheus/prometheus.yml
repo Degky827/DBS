@@ -1,0 +1,53 @@
+# Prometheus configuration for the monitoring Compose profile.
+#
+# Start with:
+#   docker compose --profile monitoring up -d
+#
+# Scrapes the three backend services over the private Compose network. The
+# metrics endpoint is never published through Nginx.
+#
+# When METRICS_TOKEN is set for the services, create the token file first:
+#   printf '%s' "$METRICS_TOKEN" > monitoring/secrets/metrics_token
+# and uncomment the bearer_token_file line in every service job below.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: production
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: auth-service
+    metrics_path: /metrics
+    # bearer_token_file: /etc/prometheus-secrets/metrics_token
+    static_configs:
+      - targets:
+          - auth-service:5001
+
+  - job_name: user-service
+    metrics_path: /metrics
+    # bearer_token_file: /etc/prometheus-secrets/metrics_token
+    static_configs:
+      - targets:
+          - user-service:5002
+
+  - job_name: kyc-service
+    metrics_path: /metrics
+    # bearer_token_file: /etc/prometheus-secrets/metrics_token
+    static_configs:
+      - targets:
+          - kyc-service:5003
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090

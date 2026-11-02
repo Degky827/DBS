@@ -155,6 +155,21 @@ const spec = {
         },
       },
     },
+    "/officer/submissions/{submissionId}/revoke": {
+      post: {
+        summary: "Revoke an approved submission and block KYC-gated operations",
+        description:
+          "Records `revokedAt` and `revokedReason` on an approved submission. The account is treated as unapproved immediately, so wallet, transfer, and deposit operations fail until a new submission is approved.",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Approval revoked" },
+          400: { description: "Missing or invalid revocation reason" },
+          403: { description: "Officer role required" },
+          404: { description: "Submission not found" },
+          409: { description: "Submission is not currently approved" },
+        },
+      },
+    },
     "/webhooks/didit": {
       post: {
         summary: "Receive signed Didit session, entity, activity, and transaction events",
@@ -164,6 +179,7 @@ const spec = {
           202: { description: "Webhook durably accepted or duplicate ignored" },
           400: { description: "Invalid webhook JSON or event" },
           401: { description: "Invalid signature or stale signed body timestamp" },
+          429: { description: "Per-IP webhook request budget exhausted; Retry-After is set" },
           503: { description: "Webhook signature verification is not configured" },
         },
       },

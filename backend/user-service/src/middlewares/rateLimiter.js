@@ -27,8 +27,20 @@ const globalLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.RATE_LIMIT_MAX,
-  skip: (req) => req.path === "/api/v1/health" || req.path === "/api/v1/ready",
+  skip: (req) =>
+    req.path === "/api/v1/health" ||
+    req.path === "/api/v1/ready" ||
+    req.path.startsWith("/api/v1/payments/webhook"),
   handler: buildHandler("Too many requests, please try again later"),
+});
+
+// The provider webhook is unauthenticated and is rate limited on its own so
+// signature-verification traffic cannot exhaust the general API budget.
+const webhookLimiter = rateLimit({
+  ...commonOptions,
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  limit: env.WEBHOOK_RATE_LIMIT_MAX,
+  handler: buildHandler("Too many webhook requests, please try again later"),
 });
 
 const authLimiter = rateLimit({
@@ -40,4 +52,4 @@ const authLimiter = rateLimit({
   ),
 });
 
-module.exports = { globalLimiter, authLimiter };
+module.exports = { globalLimiter, authLimiter, webhookLimiter };

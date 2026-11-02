@@ -17,6 +17,8 @@ process.env.REFRESH_RATE_LIMIT_MAX = "100";
 process.env.LOGIN_RATE_LIMIT_MAX = "3";
 process.env.SENSITIVE_AUTH_RATE_LIMIT_MAX = "100";
 process.env.RATE_LIMIT_MAX = "1000";
+process.env.INTERNAL_SERVICE_KEY =
+  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -26,6 +28,7 @@ const PASSWORD = "Password123";
 
 const users = new Map();
 const refreshTokens = [];
+const revokedAccessTokens = new Map();
 let idCounter = 0;
 let readinessQueries = 0;
 
@@ -84,6 +87,18 @@ const fakePrisma = {
       if (!record) return null;
       return { ...record, user: users.get(record.userId) || null };
     },
+    findFirst: async ({ where }) => {
+      const now = new Date();
+      return (
+        refreshTokens.find(
+          (record) =>
+            record.familyId === where.familyId &&
+            record.revokedAt === null &&
+            record.expiresAt > now &&
+            (!record.familyExpiresAt || record.familyExpiresAt > now)
+        ) || null
+      );
+    },
     update: async ({ where, data }) => {
       const record = refreshTokens.find((item) => item.id === where.id);
       Object.assign(record, data);
@@ -94,6 +109,19 @@ const fakePrisma = {
       for (const record of matches) Object.assign(record, data);
       return { count: matches.length };
     },
+  },
+  accessTokenRevocation: {
+    findUnique: async ({ where }) => revokedAccessTokens.get(where.jti) || null,
+    upsert: async ({ where, create }) => {
+      if (!revokedAccessTokens.has(where.jti)) {
+        revokedAccessTokens.set(where.jti, {
+          id: `revoked-${++idCounter}`,
+          ...create,
+        });
+      }
+      return revokedAccessTokens.get(where.jti);
+    },
+    deleteMany: async () => ({ count: 0 }),
   },
 };
 
@@ -480,6 +508,107 @@ test("access tokens are validated for expiry, type, signature, and subject", asy
   const missing = await request("/api/v1/auth/me");
   assert.equal(missing.status, 401);
   assert.equal((await missing.json()).code, "TOKEN_MISSING");
+});
+
+test("logout immediately revokes the presented access token", async () => {
+  const session = await login("revoke-logout@example.test");
+  const accessToken = session.body.data.accessToken;
+
+  const before = await request("/api/v1/auth/me", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  assert.equal(before.status, 200);
+
+  const logout = await request("/api/v1/auth/logout", {
+    method: "POST",
+    headers: {
+      Origin: TRUSTED_ORIGIN,
+      Authorization: `Bearer ${accessToken}`,
+    },
+    cookie: session.cookie.value,
+  });
+  assert.equal(logout.status, 200);
+
+  const after = await request("/api/v1/auth/me", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const afterBody = await after.json();
+  assert.equal(after.status, 401);
+  assert.equal(afterBody.code, "TOKEN_REVOKED");
+});
+
+test("refresh sessions cannot outlive the absolute family lifetime", async () => {
+  const session = await login("absolute-expiry@example.test");
+  const user = [...users.values()].find(
+    (candidate) => candidate.email === "absolute-expiry@example.test"
+  );
+  const record = refreshTokens.find((item) => item.userId === user.id);
+  record.familyExpiresAt = new Date(Date.now() - 1000);
+
+  const response = await refresh(session.cookie.value);
+  const body = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(body.code, "REFRESH_SESSION_EXPIRED");
+  assert.ok(record.revokedAt, "an expired family is revoked");
+});
+
+test("password changes invalidate outstanding access tokens", async () => {
+  const session = await login("token-valid-after@example.test");
+  const user = [...users.values()].find(
+    (candidate) => candidate.email === "token-valid-after@example.test"
+  );
+
+  user.tokenValidAfter = new Date();
+
+  const response = await request("/api/v1/auth/me", {
+    headers: { Authorization: `Bearer ${session.body.data.accessToken}` },
+  });
+  const body = await response.json();
+  assert.equal(response.status, 401);
+  assert.equal(body.code, "TOKEN_REVOKED");
+});
+
+test("internal introspection reports whether a session is still active", async () => {
+  const session = await login("introspect@example.test");
+  const accessToken = session.body.data.accessToken;
+  const introspect = (token) =>
+    request("/api/v1/internal/tokens/introspect", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Service-Key": process.env.INTERNAL_SERVICE_KEY,
+      },
+      body: { token },
+    });
+
+  const active = await introspect(accessToken);
+  const activeBody = await active.json();
+  assert.equal(active.status, 200);
+  assert.equal(activeBody.data.active, true);
+  assert.equal(activeBody.data.email, "introspect@example.test");
+
+  const logout = await request("/api/v1/auth/logout", {
+    method: "POST",
+    headers: { Origin: TRUSTED_ORIGIN },
+    cookie: session.cookie.value,
+  });
+  assert.equal(logout.status, 200);
+
+  const revoked = await introspect(accessToken);
+  const revokedBody = await revoked.json();
+  assert.equal(revoked.status, 200);
+  assert.equal(revokedBody.data.active, false);
+
+  const unauthorized = await request("/api/v1/internal/tokens/introspect", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Service-Key": "wrong-key",
+    },
+    body: { token: accessToken },
+  });
+  assert.equal(unauthorized.status, 401);
 });
 
 test("failed logins are throttled per IP and email without locking the account", async () => {

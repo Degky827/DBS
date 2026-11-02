@@ -6,6 +6,15 @@
 *.pem
 *.key
 
+# TLS certificates and ACME challenge webroot
+certs/
+certbot/
+backups/
+
+# Metrics bearer token, if the optional Prometheus authentication is enabled
+monitoring/secrets/*
+!monitoring/secrets/.gitkeep
+
 # Runtime data and generated artifacts
 node_modules/
 dist/

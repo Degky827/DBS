@@ -2,6 +2,7 @@ const env = require("../../config/env");
 const prisma = require("../../config/database");
 const logger = require("../../config/logger");
 const audit = require("../../utils/audit");
+const metrics = require("../../utils/metrics");
 const { getPaymentsService } = require("./payments.factory");
 
 const SAFE_DETAIL_LIMIT = 300;
@@ -21,7 +22,11 @@ const classify = (result, error) => {
 
   const code = error.code || "";
   if (code.includes("MISMATCH")) return "MISMATCH";
-  if (code === "PAYMENT_NOT_FOUND" || code === "LEDGER_WALLET_MISMATCH") {
+  if (
+    code === "PAYMENT_NOT_FOUND" ||
+    code === "LEDGER_WALLET_MISMATCH" ||
+    code === "PAYMENT_STATUS_UNKNOWN"
+  ) {
     return "MANUAL_REVIEW";
   }
   return "ERROR";
@@ -41,7 +46,7 @@ const reconcilePayment = async (payment, { trigger, actorUserId }) => {
     error = caught;
   }
 
-  const verification = result?.verification || null;
+  const verification = result?.verification || error?.verification || null;
   const outcome = classify(result, error);
 
   await prisma.paymentReconciliationRecord.create({
@@ -65,6 +70,7 @@ const reconcilePayment = async (payment, { trigger, actorUserId }) => {
     trigger,
     actorUserId,
   });
+  metrics.recordReconciliationOutcome(outcome);
 
   return {
     paymentReference: payment.reference,

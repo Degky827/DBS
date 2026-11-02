@@ -2,6 +2,7 @@ const { Prisma } = require("@prisma/client");
 
 const prisma = require("../../config/database");
 const ApiError = require("../../utils/ApiError");
+const accountLifecycle = require("../../services/accountLifecycle.service");
 
 const startOfUtcDay = (date) => {
   const value = new Date(date);
@@ -371,6 +372,7 @@ const userListSelect = {
   username: true,
   email: true,
   role: true,
+  accountStatus: true,
   createdAt: true,
   wallet: {
     select: { id: true, currency: true, isActive: true, createdAt: true },
@@ -388,6 +390,7 @@ const formatUserListItem = (user) => ({
   username: user.username,
   email: user.email,
   role: user.role,
+  accountStatus: user.accountStatus || "ACTIVE",
   createdAt: user.createdAt,
   wallet: user.wallet,
   counts: user._count,
@@ -422,8 +425,11 @@ const listUsers = async (options) => {
 
   const hasMore = rows.length > options.limit;
   const users = rows.slice(0, options.limit);
+  const enriched = await accountLifecycle.overlayAuthoritativeStatus(
+    users.map(formatUserListItem)
+  );
   return {
-    users: users.map(formatUserListItem),
+    users: enriched,
     page: {
       limit: options.limit,
       hasMore,
@@ -455,6 +461,7 @@ const getUserById = async (userId) => {
       bio: true,
       avatarUrl: true,
       role: true,
+      accountStatus: true,
       createdAt: true,
       updatedAt: true,
       wallet: {
@@ -489,14 +496,18 @@ const getUserById = async (userId) => {
     select: transactionSelect,
   });
 
-  return {
-    user: {
+  const [enriched] = await accountLifecycle.overlayAuthoritativeStatus([
+    {
       ...user,
       wallet: user.wallet
         ? { ...user.wallet, balance: user.wallet.balance.toFixed(2) }
         : null,
       counts: user._count,
     },
+  ]);
+
+  return {
+    user: enriched,
     recentTransactions: recentTransactions.map(formatTransaction),
   };
 };
@@ -825,12 +836,20 @@ const listAuditLogs = async (options) => {
   };
 };
 
+const updateUserStatus = async ({ userId, status, reason, actorId }) =>
+  accountLifecycle.changeStatus({ userId, status, reason, actorId });
+
+const resetUserMfa = async ({ userId, actorId }) =>
+  accountLifecycle.resetMfa({ userId, actorId });
+
 module.exports = {
   getOverview,
   getFinancialAnalytics,
   getAdminAnalytics,
   listUsers,
   getUserById,
+  updateUserStatus,
+  resetUserMfa,
   listPlatformTransactions,
   getPlatformTransaction,
   listPlatformPayments,

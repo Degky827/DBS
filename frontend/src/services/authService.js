@@ -1,13 +1,59 @@
 import { authApi } from "./api";
 import store from "../store";
-import { setSession, clearSession } from "../store/authSlice";
+import { setSession, setAccessToken, clearSession } from "../store/authSlice";
 
 export const loginUser = async (email, password) => {
   const { data } = await authApi.post("/auth/login", { email, password });
   // auth-service sets the refresh token as an HttpOnly cookie and returns
-  // only the short-lived access token to JavaScript.
+  // only the short-lived access token to JavaScript. Accounts with MFA
+  // enrolled receive a challenge token instead of a session.
+  const payload = data.data;
+  if (payload?.accessToken) {
+    store.dispatch(
+      setSession({ user: payload.user, accessToken: payload.accessToken })
+    );
+  }
+  return payload;
+};
+
+export const verifyMfaLogin = async ({ mfaToken, code, recoveryCode }) => {
+  const { data } = await authApi.post("/auth/mfa/verify", {
+    mfaToken,
+    ...(recoveryCode ? { recoveryCode } : { code }),
+  });
   const { user, accessToken } = data.data;
   store.dispatch(setSession({ user, accessToken }));
+  return data.data;
+};
+
+export const getMfaStatus = async () => {
+  const { data } = await authApi.get("/auth/mfa");
+  return data.data;
+};
+
+export const beginMfaSetup = async () => {
+  const { data } = await authApi.post("/auth/mfa/setup");
+  return data.data;
+};
+
+export const confirmMfaSetup = async (code) => {
+  const { data } = await authApi.post("/auth/mfa/setup/confirm", { code });
+  return data.data;
+};
+
+export const disableMfa = async ({ password, code, recoveryCode }) => {
+  const { data } = await authApi.post("/auth/mfa/disable", {
+    password,
+    ...(recoveryCode ? { recoveryCode } : { code }),
+  });
+  return data.data;
+};
+
+export const stepUpMfa = async ({ code, recoveryCode }) => {
+  const { data } = await authApi.post("/auth/mfa/step-up", {
+    ...(recoveryCode ? { recoveryCode } : { code }),
+  });
+  store.dispatch(setAccessToken(data.data.accessToken));
   return data.data;
 };
 

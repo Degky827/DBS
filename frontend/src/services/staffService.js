@@ -17,6 +17,16 @@ export const listAdminUsers = (params) =>
 export const getAdminUser = (userId) =>
   unwrap(userApi.get(`/admin/users/${encodeURIComponent(userId)}`));
 
+export const updateAdminUserStatus = (userId, payload) =>
+  unwrap(
+    userApi.patch(`/admin/users/${encodeURIComponent(userId)}/status`, payload)
+  );
+
+export const resetAdminUserMfa = (userId) =>
+  unwrap(
+    userApi.post(`/admin/users/${encodeURIComponent(userId)}/mfa/reset`)
+  );
+
 export const listPlatformTransactions = (params) =>
   unwrap(userApi.get("/operations/transactions", { params }));
 

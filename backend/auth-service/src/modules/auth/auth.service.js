@@ -12,13 +12,23 @@ const {
   comparePassword,
   DUMMY_HASH,
 } = require("../../utils/password.util");
-const { signAccessToken } = require("../../utils/jwt.util");
+const {
+  signAccessToken,
+  signMfaChallengeToken,
+} = require("../../utils/jwt.util");
+const {
+  assertAuthenticatable,
+  assertTokenUsable,
+} = require("../../utils/accountStatus");
 const {
   generateRefreshToken,
   hashRefreshToken,
   refreshTokenExpiry,
+  absoluteRefreshTokenExpiry,
 } = require("../../utils/refreshToken.util");
 const refreshTokenRepository = require("../../repositories/refreshToken.repository");
+const accessTokenRevocationRepository = require("../../repositories/accessTokenRevocation.repository");
+const { validateAccessToken } = require("../../services/session.service");
 const {
   generateOtp,
   hashOtp,
@@ -32,24 +42,11 @@ const {
   sendSecurityAlertEmail,
 } = require("../../services/email.service");
 
+const { toPublicUser } = require("../../utils/publicUser");
+
 const EMAIL_DELIVERY_ERROR = "EMAIL_DELIVERY_FAILED";
 const RESEND_ACKNOWLEDGEMENT =
   "If the account exists, a new verification code has been sent";
-
-const toPublicUser = (user) => ({
-  id: user.id,
-  firstName: user.firstName,
-  middleName: user.middleName,
-  lastName: user.lastName,
-  username: user.username,
-  dateOfBirth: user.dateOfBirth,
-  gender: user.gender,
-  phoneNumber: user.phoneNumber,
-  email: user.email,
-  role: user.role,
-  isEmailVerified: user.isEmailVerified,
-  createdAt: user.createdAt,
-});
 
 const deliverOtp = async ({ userId, email, otp, purpose }) => {
   try {
@@ -283,14 +280,28 @@ const login = async (input) => {
     );
   }
 
-  const accessToken = signAccessToken(user);
+  assertAuthenticatable(user);
+
+  if (user.mfaEnabled) {
+    audit("MFA_CHALLENGE_ISSUED", { userId: user.id });
+    return {
+      mfaRequired: true,
+      mfaToken: signMfaChallengeToken(user),
+      expiresInMs: env.MFA_CHALLENGE_TTL_MS,
+    };
+  }
+
+  const familyId = crypto.randomUUID();
+  const familyExpiresAt = absoluteRefreshTokenExpiry();
   const refreshToken = generateRefreshToken();
   await refreshTokenRepository.create({
     userId: user.id,
     tokenHash: hashRefreshToken(refreshToken),
-    familyId: crypto.randomUUID(),
-    expiresAt: refreshTokenExpiry(),
+    familyId,
+    familyExpiresAt,
+    expiresAt: refreshTokenExpiry(familyExpiresAt),
   });
+  const accessToken = signAccessToken(user, { familyId });
   audit("LOGIN_SUCCESS", { userId: user.id });
 
   return { user: toPublicUser(user), accessToken, refreshToken };
@@ -363,6 +374,32 @@ const refresh = async (input) => {
     throw ApiError.unauthorized(INVALID_REFRESH_MESSAGE, "INVALID_REFRESH_TOKEN");
   }
 
+  try {
+    assertTokenUsable(record.user);
+  } catch (error) {
+    await refreshTokenRepository.revokeFamily(record.familyId);
+    audit("REFRESH_FAILED", {
+      userId: record.user.id,
+      reason: record.user.status,
+    });
+    throw error;
+  }
+
+  // Legacy rows predate the absolute lifetime and fall back to their own
+  // expiry, which preserves the lifetime they were issued with.
+  const familyExpiresAt = record.familyExpiresAt ?? record.expiresAt;
+  if (familyExpiresAt.getTime() <= Date.now()) {
+    await refreshTokenRepository.revokeFamily(record.familyId);
+    audit("REFRESH_FAILED", {
+      userId: record.user.id,
+      reason: "ABSOLUTE_EXPIRY",
+    });
+    throw ApiError.unauthorized(
+      "Refresh session has reached its maximum lifetime, sign in again",
+      "REFRESH_SESSION_EXPIRED"
+    );
+  }
+
   if (record.expiresAt.getTime() <= Date.now()) {
     await refreshTokenRepository.revokeFamily(record.familyId);
     audit("REFRESH_FAILED", { userId: record.user.id, reason: "EXPIRED" });
@@ -409,7 +446,8 @@ const refresh = async (input) => {
         userId: record.userId,
         tokenHash: nextTokenHash,
         familyId: record.familyId,
-        expiresAt: refreshTokenExpiry(),
+        familyExpiresAt,
+        expiresAt: refreshTokenExpiry(familyExpiresAt),
       },
     });
 
@@ -442,7 +480,10 @@ const refresh = async (input) => {
     );
   }
 
-  const accessToken = signAccessToken(record.user);
+  const accessToken = signAccessToken(record.user, {
+    familyId: record.familyId,
+    amr: record.user.mfaEnabled ? ["pwd", "mfa"] : ["pwd"],
+  });
   audit("TOKEN_REFRESHED", { userId: record.user.id });
 
   return {
@@ -452,19 +493,74 @@ const refresh = async (input) => {
   };
 };
 
-const logout = async (refreshToken) => {
-  if (!refreshToken) return { message: "Logged out" };
+const logout = async (refreshToken, accessClaims = null) => {
+  const families = new Set();
+  let userId = accessClaims?.sub || null;
 
-  const record = await refreshTokenRepository.findByHash(
-    hashRefreshToken(refreshToken)
-  );
+  if (refreshToken) {
+    const record = await refreshTokenRepository.findByHash(
+      hashRefreshToken(refreshToken)
+    );
+    if (record) {
+      families.add(record.familyId);
+      userId = record.userId;
+    }
+  }
+  if (accessClaims?.sid) families.add(accessClaims.sid);
 
-  if (record) {
-    await refreshTokenRepository.revokeFamily(record.familyId);
-    audit("LOGOUT", { userId: record.userId });
+  for (const familyId of families) {
+    await refreshTokenRepository.revokeFamily(familyId);
   }
 
+  // Revoking the family invalidates every access token carrying its sid, but
+  // a client that logs out without the refresh cookie still gets its presented
+  // access token denylisted for the remainder of its short lifetime.
+  if (accessClaims?.jti && accessClaims?.sub) {
+    const expiresAt =
+      typeof accessClaims.exp === "number"
+        ? new Date(accessClaims.exp * 1000)
+        : new Date(Date.now() + 15 * 60 * 1000);
+    await accessTokenRevocationRepository.revoke({
+      jti: accessClaims.jti,
+      userId: accessClaims.sub,
+      reason: "LOGOUT",
+      expiresAt,
+    });
+  }
+
+  if (userId) audit("LOGOUT", { userId, families: families.size });
   return { message: "Logged out" };
+};
+
+const introspectAccessToken = async (token) => {
+  try {
+    const payload = await validateAccessToken(token);
+    const user = await userRepository.findById(payload.sub);
+    return {
+      active: true,
+      userId: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      familyId: payload.sid || null,
+      accountStatus: user?.status || "ACTIVE",
+      mfaEnabled: user?.mfaEnabled === true,
+      amr: Array.isArray(payload.amr) ? payload.amr : ["pwd"],
+      stepUpAt: typeof payload.stepUpAt === "number" ? payload.stepUpAt : null,
+      expiresAt:
+        typeof payload.exp === "number"
+          ? new Date(payload.exp * 1000).toISOString()
+          : null,
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return {
+        active: false,
+        reason: error.code || "INVALID_TOKEN",
+        message: error.message,
+      };
+    }
+    throw error;
+  }
 };
 
 const PASSWORD_RESET_ACK =
@@ -505,6 +601,7 @@ const resetPassword = async (input) => {
 
   const passwordHash = await hashPassword(input.newPassword);
   await userRepository.updatePassword(user.id, passwordHash);
+  await userRepository.invalidateSessions(user.id);
   await refreshTokenRepository.revokeAllForUser(user.id);
   audit("PASSWORD_RESET_SUCCESS", { userId: user.id });
   await sendPasswordChangedAlert(user, "PASSWORD_RESET");
@@ -522,6 +619,7 @@ module.exports = {
   resendOtp,
   refresh,
   logout,
+  introspectAccessToken,
   forgotPassword,
   resetPassword,
 };

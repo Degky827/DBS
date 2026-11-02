@@ -26,4 +26,13 @@ async function decide(req, res) {
   return ApiResponse.success(res, result, "Review decision recorded");
 }
 
-module.exports = { queue, stats, get, decide };
+async function revoke(req, res) {
+  const result = await reviewService.revokeApproval({
+    submissionId: req.params.submissionId,
+    actorId: req.user.id,
+    reason: req.body.reason,
+  });
+  return ApiResponse.success(res, result, "KYC approval revoked");
+}
+
+module.exports = { queue, stats, get, decide, revoke };

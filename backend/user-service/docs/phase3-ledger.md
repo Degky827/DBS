@@ -236,7 +236,7 @@ are prototype defaults, not regulatory advice.
    conflict; no credit is posted.
 
 No live credentials are used or required; Test Mode keys are validated to start
-with `CHAPA_TEST_`.
+with `CHASECK_TEST-` (or `CHAPA_TEST_`).
 
 ## 8. Reconciliation
 
@@ -377,7 +377,7 @@ and restore from backup instead.
 | `RECONCILIATION_INTERVAL_MS` | `300000` | Interval between scheduled runs (1s–24h) |
 | `RECONCILIATION_STALE_MINUTES` | `15` | Minimum age of a pending payment (1 min–7 days) |
 | `RECONCILIATION_BATCH_SIZE` | `25` | Maximum payments per run (1–500) |
-| `CHAPA_SECRET_KEY` | empty | Chapa Test Mode private key (`CHAPA_TEST_...`); empty disables deposits |
+| `CHAPA_SECRET_KEY` | empty | Chapa Test Mode private key (`CHASECK_TEST-...` or `CHAPA_TEST_...`); empty disables deposits |
 | `CHAPA_WEBHOOK_SECRET` | empty | HMAC secret for webhook signatures (16+ chars when Chapa is configured) |
 | `CHAPA_BASE_URL` | `https://api.chapa.global` | Provider API base |
 | `CHAPA_CALLBACK_URL` | empty | Provider webhook URL (HTTPS outside development) |

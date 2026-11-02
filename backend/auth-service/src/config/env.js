@@ -1,5 +1,6 @@
 const path = require("path");
 const crypto = require("crypto");
+const fs = require("fs");
 
 require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
 
@@ -8,10 +9,23 @@ function fail(message) {
   process.exit(1);
 }
 
+// Docker/Kubernetes secrets are mounted as files. A `*_FILE` variable takes
+// precedence so the secret never has to appear in the process environment.
+function readFileValue(key) {
+  const filePath = process.env[`${key}_FILE`];
+  if (!filePath || !String(filePath).trim()) return null;
+  try {
+    return fs.readFileSync(String(filePath).trim(), "utf8").trim();
+  } catch (error) {
+    fail(`Unable to read ${key}_FILE (${filePath}): ${error.message}`);
+  }
+}
+
 function readRequired(key) {
-  const value = process.env[key];
+  const fileValue = readFileValue(key);
+  const value = fileValue === null ? process.env[key] : fileValue;
   if (!value || !String(value).trim()) {
-    fail(`Missing required environment variable: ${key}`);
+    fail(`Missing required environment variable: ${key} (or ${key}_FILE)`);
   }
   return String(value).trim();
 }
@@ -19,6 +33,11 @@ function readRequired(key) {
 function readOptional(key) {
   const value = process.env[key];
   return value === undefined ? "" : String(value).trim();
+}
+
+function readOptionalSecret(key) {
+  const fileValue = readFileValue(key);
+  return fileValue === null ? readOptional(key) : fileValue;
 }
 
 function readNumber(key, fallback) {
@@ -60,8 +79,8 @@ function isStrongSecret(value, minimumLength = 32) {
 }
 
 function decodeKey(name, base64Name) {
-  const base64Value = readOptional(base64Name);
-  const rawValue = readOptional(name);
+  const base64Value = readOptionalSecret(base64Name);
+  const rawValue = readOptionalSecret(name);
   const encoded = base64Value || rawValue;
   if (!encoded) return "";
   const pem = base64Value
@@ -133,7 +152,7 @@ if (!["HS256", "RS256"].includes(jwtAlgorithm)) {
   fail('JWT_ALGORITHM must be "HS256" or "RS256".');
 }
 
-const jwtSecret = readOptional("JWT_SECRET");
+const jwtSecret = readOptionalSecret("JWT_SECRET");
 const jwtPrivateKey = decodeKey("JWT_PRIVATE_KEY", "JWT_PRIVATE_KEY_BASE64");
 const jwtPublicKey = decodeKey("JWT_PUBLIC_KEY", "JWT_PUBLIC_KEY_BASE64");
 
@@ -153,7 +172,7 @@ if (isProduction && jwtAlgorithm === "HS256" && !isStrongSecret(jwtSecret)) {
   fail("JWT_SECRET must be at least 32 characters of high-entropy data in production.");
 }
 
-const internalServiceKey = readOptional("INTERNAL_SERVICE_KEY");
+const internalServiceKey = readOptionalSecret("INTERNAL_SERVICE_KEY");
 if (isProduction && !isStrongSecret(internalServiceKey)) {
   fail("INTERNAL_SERVICE_KEY must be at least 32 characters of high-entropy data in production.");
 }
@@ -180,7 +199,7 @@ if (!cookiePath.startsWith("/")) {
 
 const enableApiDocs = readBoolean("ENABLE_API_DOCS", !isProduction);
 const apiDocsUsername = readOptional("API_DOCS_USERNAME");
-const apiDocsPassword = readOptional("API_DOCS_PASSWORD");
+const apiDocsPassword = readOptionalSecret("API_DOCS_PASSWORD");
 if (isProduction && enableApiDocs) {
   if (!apiDocsUsername || !isStrongSecret(apiDocsPassword, 16)) {
     fail(
@@ -189,7 +208,7 @@ if (isProduction && enableApiDocs) {
   }
 }
 
-const brevoApiKey = readOptional("BREVO_API_KEY");
+const brevoApiKey = readOptionalSecret("BREVO_API_KEY");
 if (isProduction && !brevoApiKey) {
   fail(
     "BREVO_API_KEY is required in production: email verification and password reset cannot be delivered without it."
@@ -224,6 +243,31 @@ if (enableHsts && !isProduction) {
 
 const trustProxy = readInteger("TRUST_PROXY", isProduction ? 1 : 0, { min: 0, max: 10 });
 
+// Optional bearer token for the private /metrics endpoint. Prometheus runs on
+// the backend network, but the token still protects against a shared network.
+const metricsToken = readOptionalSecret("METRICS_TOKEN");
+
+const mfaEncryptionKey = readOptionalSecret("MFA_ENCRYPTION_KEY");
+if (mfaEncryptionKey && !/^[a-f0-9]{64}$/i.test(mfaEncryptionKey)) {
+  fail("MFA_ENCRYPTION_KEY must be 64 hexadecimal characters.");
+}
+if (isProduction && !mfaEncryptionKey) {
+  console.warn(
+    "[config] MFA_ENCRYPTION_KEY is not set; MFA secrets use a key derived from JWT material. Set a dedicated key for independent rotation."
+  );
+}
+
+const refreshTokenTtlMs = readNumber("REFRESH_TOKEN_TTL_MS", 7 * 24 * 60 * 60 * 1000);
+const refreshTokenAbsoluteTtlMs = readNumber(
+  "REFRESH_TOKEN_ABSOLUTE_TTL_MS",
+  30 * 24 * 60 * 60 * 1000
+);
+if (refreshTokenAbsoluteTtlMs < refreshTokenTtlMs) {
+  fail(
+    "REFRESH_TOKEN_ABSOLUTE_TTL_MS must be greater than or equal to REFRESH_TOKEN_TTL_MS."
+  );
+}
+
 const env = Object.freeze({
   NODE_ENV: nodeEnv,
   IS_PRODUCTION: isProduction,
@@ -245,7 +289,8 @@ const env = Object.freeze({
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "15m",
   JWT_ISSUER: process.env.JWT_ISSUER || "auth-service",
   JWT_AUDIENCE: process.env.JWT_AUDIENCE || "banking-system",
-  REFRESH_TOKEN_TTL_MS: readNumber("REFRESH_TOKEN_TTL_MS", 7 * 24 * 60 * 60 * 1000),
+  REFRESH_TOKEN_TTL_MS: refreshTokenTtlMs,
+  REFRESH_TOKEN_ABSOLUTE_TTL_MS: refreshTokenAbsoluteTtlMs,
   REFRESH_TOKEN_GRACE_MS: readNumber("REFRESH_TOKEN_GRACE_MS", 30 * 1000),
   REFRESH_COOKIE_NAME: process.env.REFRESH_COOKIE_NAME || "meridian_refresh",
   REFRESH_COOKIE_PATH: cookiePath,
@@ -254,8 +299,14 @@ const env = Object.freeze({
 
   INTERNAL_SERVICE_KEY: internalServiceKey,
 
+  MFA_ENCRYPTION_KEY: mfaEncryptionKey,
+  MFA_ISSUER: process.env.MFA_ISSUER || "Meridian Bank",
+  MFA_CHALLENGE_TTL_MS: readNumber("MFA_CHALLENGE_TTL_MS", 5 * 60 * 1000),
+  STEP_UP_TTL_MS: readNumber("STEP_UP_TTL_MS", 10 * 60 * 1000),
+
   CORS_ORIGINS: corsOrigins,
   TRUST_PROXY: trustProxy,
+  METRICS_TOKEN: metricsToken,
   ENABLE_HSTS: enableHsts,
 
   BREVO_API_KEY: brevoApiKey,

@@ -25,6 +25,9 @@ model UserProfile {
   bio               String?
   avatarUrl         String?
   role              String    @default("USER")
+  // Mirrors auth-service's account status for admin visibility and local
+  // financial guards. auth-service remains the source of truth.
+  accountStatus     String    @default("ACTIVE")
   passwordHash      String
   passwordChangedAt DateTime?
   createdAt         DateTime  @default(now())
@@ -32,6 +35,7 @@ model UserProfile {
 
   devSessions  DevSession[]
   wallet       Wallet?
+  @@index([accountStatus])
   transactions Transaction[]
   payments     Payment[]
   withdrawals  Withdrawal[]
@@ -117,6 +121,7 @@ model Payment {
   transaction           Transaction?
   webhookEvents         PaymentWebhookEvent[]
   reconciliationRecords PaymentReconciliationRecord[]
+  businessDate          DateTime                      @default(now()) @db.Date
   createdAt             DateTime                      @default(now())
   updatedAt             DateTime                      @updatedAt
 
@@ -124,6 +129,7 @@ model Payment {
   @@index([walletId, createdAt])
   @@index([userId])
   @@index([status, createdAt])
+  @@index([userId, type, businessDate, status])
 }
 
 model PaymentWebhookEvent {

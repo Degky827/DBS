@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 
 require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
 
@@ -7,10 +8,23 @@ function fail(message) {
   process.exit(1);
 }
 
+// Docker/Kubernetes secrets are mounted as files. A `*_FILE` variable takes
+// precedence so the secret never has to appear in the process environment.
+function readFileValue(key) {
+  const filePath = process.env[`${key}_FILE`];
+  if (!filePath || !String(filePath).trim()) return null;
+  try {
+    return fs.readFileSync(String(filePath).trim(), "utf8").trim();
+  } catch (error) {
+    fail(`Unable to read ${key}_FILE (${filePath}): ${error.message}`);
+  }
+}
+
 function readRequired(key) {
-  const value = process.env[key];
+  const fileValue = readFileValue(key);
+  const value = fileValue === null ? process.env[key] : fileValue;
   if (!value || !String(value).trim()) {
-    fail(`Missing required environment variable: ${key}`);
+    fail(`Missing required environment variable: ${key} (or ${key}_FILE)`);
   }
   return String(value).trim();
 }
@@ -18,6 +32,11 @@ function readRequired(key) {
 function readOptional(key) {
   const value = process.env[key];
   return value === undefined ? "" : String(value).trim();
+}
+
+function readOptionalSecret(key) {
+  const fileValue = readFileValue(key);
+  return fileValue === null ? readOptional(key) : fileValue;
 }
 
 function readNumber(key, fallback) {
@@ -59,8 +78,8 @@ function isStrongSecret(value, minimumLength = 32) {
 }
 
 function decodeKey(name, base64Name) {
-  const base64Value = readOptional(base64Name);
-  const rawValue = readOptional(name);
+  const base64Value = readOptionalSecret(base64Name);
+  const rawValue = readOptionalSecret(name);
   const encoded = base64Value || rawValue;
   if (!encoded) return "";
   const pem = base64Value
@@ -151,9 +170,8 @@ if (!["HS256", "RS256"].includes(jwtAlgorithm)) {
   fail('JWT_ALGORITHM must be "HS256" or "RS256".');
 }
 
-const jwtSecret = readOptional("JWT_SECRET");
-const jwtPublicKey = decodeKey("JWT_PUBLIC_KEY", "JWT_PUBLIC_KEY_BASE64");
-const jwtIssuer = readOptional("JWT_ISSUER") || "auth-service";
+const jwtSecret = readOptionalSecret("JWT_SECRET");
+const jwtPublicKey = decodeKey("JWT_PUBLIC_KEY", "JWT_PUBLIC_KEY_BASE64");const jwtIssuer = readOptional("JWT_ISSUER") || "auth-service";
 const jwtAudience = readOptional("JWT_AUDIENCE") || "banking-system";
 
 if (authMode === "jwt") {
@@ -176,11 +194,25 @@ if (authMode === "jwt") {
   }
 }
 
-const internalServiceKey = readOptional("INTERNAL_SERVICE_KEY");
+const internalServiceKey = readOptionalSecret("INTERNAL_SERVICE_KEY");
 const kycServiceUrl = readOptional("KYC_SERVICE_URL").replace(/\/+$/, "");
+const authServiceUrl = readOptional("AUTH_SERVICE_URL").replace(/\/+$/, "");
 if (isProduction && kycServiceUrl && !isStrongSecret(internalServiceKey)) {
   fail(
     "INTERNAL_SERVICE_KEY must be at least 32 characters of high-entropy data in production when KYC_SERVICE_URL is configured."
+  );
+}
+
+// Access-token revocation is enforced by asking auth-service whether a
+// token's session is still active, so jwt mode is not complete without it.
+if (isProduction && authMode === "jwt" && !authServiceUrl) {
+  fail(
+    "AUTH_SERVICE_URL is required in production when AUTH_MODE=jwt so revoked access tokens can be rejected."
+  );
+}
+if (isProduction && authMode === "jwt" && !isStrongSecret(internalServiceKey)) {
+  fail(
+    "INTERNAL_SERVICE_KEY must be at least 32 characters of high-entropy data in production when AUTH_MODE=jwt."
   );
 }
 
@@ -188,7 +220,7 @@ const corsOrigins = parseOrigins(process.env.CORS_ORIGIN, { production: isProduc
 
 const enableApiDocs = readBoolean("ENABLE_API_DOCS", !isProduction);
 const apiDocsUsername = readOptional("API_DOCS_USERNAME");
-const apiDocsPassword = readOptional("API_DOCS_PASSWORD");
+const apiDocsPassword = readOptionalSecret("API_DOCS_PASSWORD");
 if (isProduction && enableApiDocs) {
   if (!apiDocsUsername || !isStrongSecret(apiDocsPassword, 16)) {
     fail(
@@ -222,15 +254,24 @@ if (enableHsts && !isProduction) {
 
 const trustProxy = readInteger("TRUST_PROXY", isProduction ? 1 : 0, { min: 0, max: 10 });
 
+// Optional bearer token for the private /metrics endpoint. Prometheus runs on
+// the backend network, but the token still protects against a shared network.
+const metricsToken = readOptionalSecret("METRICS_TOKEN");
+
 const avatarUploadDir = readOptional("AVATAR_UPLOAD_DIR");
-const chapaSecretKey = readOptional("CHAPA_SECRET_KEY");
-const chapaWebhookSecret = readOptional("CHAPA_WEBHOOK_SECRET");
+const chapaSecretKey = readOptionalSecret("CHAPA_SECRET_KEY");
+const chapaWebhookSecret = readOptionalSecret("CHAPA_WEBHOOK_SECRET");
 const chapaBaseUrl = readOptional("CHAPA_BASE_URL") || "https://api.chapa.global";
 const chapaCallbackUrl = readOptional("CHAPA_CALLBACK_URL");
 const chapaReturnUrl = readOptional("CHAPA_RETURN_URL");
 
-if (chapaSecretKey && !/^CHAPA_TEST_[A-Za-z0-9_-]+$/.test(chapaSecretKey)) {
-  fail("CHAPA_SECRET_KEY must be a Chapa Test Mode private key (CHAPA_TEST_...).");
+// Chapa issues test keys as CHASECK_TEST-...; CHAPA_TEST_... remains accepted
+// for mocks and older fixtures. Live keys (CHASECK-) are rejected.
+const CHAPA_TEST_KEY_PATTERN = /^(?:CHASECK_TEST-|CHAPA_TEST_)[A-Za-z0-9_-]+$/;
+if (chapaSecretKey && !CHAPA_TEST_KEY_PATTERN.test(chapaSecretKey)) {
+  fail(
+    "CHAPA_SECRET_KEY must be a Chapa Test Mode private key (CHASECK_TEST-... or CHAPA_TEST_...)."
+  );
 }
 
 if (
@@ -288,9 +329,12 @@ const env = Object.freeze({
   JWT_PUBLIC_KEY: jwtPublicKey,
   JWT_ISSUER: jwtIssuer,
   JWT_AUDIENCE: jwtAudience,
-  AUTH_SERVICE_URL: readOptional("AUTH_SERVICE_URL").replace(/\/+$/, ""),
+  AUTH_SERVICE_URL: authServiceUrl,
   KYC_SERVICE_URL: kycServiceUrl,
   INTERNAL_SERVICE_KEY: internalServiceKey,
+  // Must not exceed auth-service's STEP_UP_TTL_MS, otherwise a step-up the
+  // issuer still considers fresh would be rejected here.
+  STEP_UP_TTL_MS: readNumber("STEP_UP_TTL_MS", 10 * 60 * 1000),
   AVATAR_UPLOAD_DIR: path.resolve(
     avatarUploadDir || path.resolve(__dirname, "../../uploads/avatars")
   ),
@@ -298,11 +342,13 @@ const env = Object.freeze({
   BCRYPT_ROUNDS: readNumber("BCRYPT_ROUNDS", 12),
   CORS_ORIGINS: corsOrigins,
   TRUST_PROXY: trustProxy,
+  METRICS_TOKEN: metricsToken,
   ENABLE_HSTS: enableHsts,
   LOG_LEVEL: process.env.LOG_LEVEL || "info",
   RATE_LIMIT_WINDOW_MS: readNumber("RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
   RATE_LIMIT_MAX: readNumber("RATE_LIMIT_MAX", 300),
   AUTH_RATE_LIMIT_MAX: readNumber("AUTH_RATE_LIMIT_MAX", 20),
+  WEBHOOK_RATE_LIMIT_MAX: readNumber("WEBHOOK_RATE_LIMIT_MAX", 120),
   ENABLE_API_DOCS: enableApiDocs,
   API_DOCS_USERNAME: apiDocsUsername,
   API_DOCS_PASSWORD: apiDocsPassword,

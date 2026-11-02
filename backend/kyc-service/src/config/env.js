@@ -1,5 +1,6 @@
 const path = require("path");
 const crypto = require("crypto");
+const fs = require("fs");
 
 require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
 
@@ -8,10 +9,23 @@ function fail(message) {
   process.exit(1);
 }
 
+// Docker/Kubernetes secrets are mounted as files. A `*_FILE` variable takes
+// precedence so the secret never has to appear in the process environment.
+function readFileValue(key) {
+  const filePath = process.env[`${key}_FILE`];
+  if (!filePath || !String(filePath).trim()) return null;
+  try {
+    return fs.readFileSync(String(filePath).trim(), "utf8").trim();
+  } catch (error) {
+    fail(`Unable to read ${key}_FILE (${filePath}): ${error.message}`);
+  }
+}
+
 function readRequired(key) {
-  const value = process.env[key];
+  const fileValue = readFileValue(key);
+  const value = fileValue === null ? process.env[key] : fileValue;
   if (!value || !String(value).trim()) {
-    fail(`Missing required environment variable: ${key}`);
+    fail(`Missing required environment variable: ${key} (or ${key}_FILE)`);
   }
   return String(value).trim();
 }
@@ -19,6 +33,11 @@ function readRequired(key) {
 function readOptional(key) {
   const value = process.env[key];
   return value === undefined ? "" : String(value).trim();
+}
+
+function readOptionalSecret(key) {
+  const fileValue = readFileValue(key);
+  return fileValue === null ? readOptional(key) : fileValue;
 }
 
 function readNumber(key, fallback) {
@@ -119,7 +138,7 @@ if (!["HS256", "RS256"].includes(jwtAlgorithm)) {
   fail('JWT_ALGORITHM must be "HS256" or "RS256".');
 }
 
-const jwtSecret = readOptional("JWT_SECRET");
+const jwtSecret = readOptionalSecret("JWT_SECRET");
 const jwtPublicKey = decodeKey("JWT_PUBLIC_KEY", "JWT_PUBLIC_KEY_BASE64");
 if (jwtAlgorithm === "RS256") {
   if (!jwtPublicKey) {
@@ -139,16 +158,23 @@ if (jwtAlgorithm === "RS256") {
   }
 }
 
-const internalServiceKey = readOptional("INTERNAL_SERVICE_KEY");
+const internalServiceKey = readOptionalSecret("INTERNAL_SERVICE_KEY");
 if (isProduction && !isStrongSecret(internalServiceKey)) {
   fail("INTERNAL_SERVICE_KEY must be at least 32 characters of high-entropy data in production.");
+}
+
+const authServiceUrl = readOptional("AUTH_SERVICE_URL").replace(/\/+$/, "");
+if (isProduction && !authServiceUrl) {
+  fail(
+    "AUTH_SERVICE_URL is required in production so revoked access tokens can be rejected."
+  );
 }
 
 const corsOrigins = parseOrigins(process.env.CORS_ORIGIN, { production: isProduction });
 
 const enableApiDocs = readBoolean("ENABLE_API_DOCS", !isProduction);
 const apiDocsUsername = readOptional("API_DOCS_USERNAME");
-const apiDocsPassword = readOptional("API_DOCS_PASSWORD");
+const apiDocsPassword = readOptionalSecret("API_DOCS_PASSWORD");
 if (isProduction && enableApiDocs) {
   if (!apiDocsUsername || !isStrongSecret(apiDocsPassword, 16)) {
     fail(
@@ -164,12 +190,47 @@ if (enableHsts && !isProduction) {
 
 const trustProxy = readInteger("TRUST_PROXY", isProduction ? 1 : 0, { min: 0, max: 10 });
 
-const storageEncryptionKey = readOptional("STORAGE_ENCRYPTION_KEY");
+// Optional bearer token for the private /metrics endpoint. Prometheus runs on
+// the backend network, but the token still protects against a shared network.
+const metricsToken = readOptionalSecret("METRICS_TOKEN");
+
+const kycApprovalTtlDays = readInteger("KYC_APPROVAL_TTL_DAYS", 365, {
+  min: 1,
+  max: 3650,
+});
+
+const storageEncryptionKey = readOptionalSecret("STORAGE_ENCRYPTION_KEY");
 if (storageEncryptionKey && !/^[a-f0-9]{64}$/i.test(storageEncryptionKey)) {
   fail("STORAGE_ENCRYPTION_KEY must be 64 hexadecimal characters.");
 }
 if (isProduction && !storageEncryptionKey) {
   fail("STORAGE_ENCRYPTION_KEY is required in production.");
+}
+
+// Retired keys stay readable during rotation so the re-encrypt job can run
+// without downtime. Decryption tries the current key first, then these.
+function parseEncryptionKeys(raw, name) {
+  const keys = String(raw || "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+  for (const key of keys) {
+    if (!/^[a-f0-9]{64}$/i.test(key)) {
+      fail(`${name} entries must be 64 hexadecimal characters.`);
+    }
+  }
+  return Object.freeze([...new Set(keys.map((key) => key.toLowerCase()))]);
+}
+
+const previousStorageEncryptionKeys = parseEncryptionKeys(
+  process.env.STORAGE_ENCRYPTION_KEYS_PREVIOUS,
+  "STORAGE_ENCRYPTION_KEYS_PREVIOUS"
+);
+if (
+  storageEncryptionKey &&
+  previousStorageEncryptionKeys.includes(storageEncryptionKey.toLowerCase())
+) {
+  fail("STORAGE_ENCRYPTION_KEYS_PREVIOUS must not contain the current STORAGE_ENCRYPTION_KEY.");
 }
 
 const diditApiBaseUrl = process.env.DIDIT_API_BASE_URL || "https://verification.didit.me";
@@ -203,26 +264,30 @@ const env = Object.freeze({
   JWT_AUDIENCE: process.env.JWT_AUDIENCE || "banking-system",
   INTERNAL_SERVICE_KEY: internalServiceKey,
   USER_SERVICE_URL: (process.env.USER_SERVICE_URL || "http://localhost:5002/api/v1").replace(/\/+$/, ""),
-  AUTH_SERVICE_URL: (process.env.AUTH_SERVICE_URL || "http://localhost:5001/api/v1").replace(/\/+$/, ""),
+  AUTH_SERVICE_URL: authServiceUrl || "http://localhost:5001/api/v1",
   CORS_ORIGINS: corsOrigins,
   TRUST_PROXY: trustProxy,
+  METRICS_TOKEN: metricsToken,
   ENABLE_HSTS: enableHsts,
   LOG_LEVEL: process.env.LOG_LEVEL || "info",
   RATE_LIMIT_WINDOW_MS: readNumber("RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
   RATE_LIMIT_MAX: readNumber("RATE_LIMIT_MAX", 300),
   UPLOAD_RATE_LIMIT_MAX: readNumber("UPLOAD_RATE_LIMIT_MAX", 10),
+  WEBHOOK_RATE_LIMIT_MAX: readNumber("WEBHOOK_RATE_LIMIT_MAX", 120),
   AUTH_RATE_LIMIT_MAX: readNumber("AUTH_RATE_LIMIT_MAX", 20),
   ENABLE_API_DOCS: enableApiDocs,
   API_DOCS_USERNAME: apiDocsUsername,
   API_DOCS_PASSWORD: apiDocsPassword,
+  KYC_APPROVAL_TTL_DAYS: kycApprovalTtlDays,
   STORAGE_DIR: process.env.STORAGE_DIR || path.resolve(__dirname, "../../storage"),
   MAX_FILE_SIZE_BYTES: readNumber("MAX_FILE_SIZE_BYTES", 10 * 1024 * 1024),
   STORAGE_ENCRYPTION_KEY: storageEncryptionKey,
+  STORAGE_ENCRYPTION_KEYS_PREVIOUS: previousStorageEncryptionKeys,
   DIDIT_API_BASE_URL: diditApiBaseUrl,
-  DIDIT_API_KEY: process.env.DIDIT_API_KEY || "",
-  DIDIT_WORKFLOW_ID: process.env.DIDIT_WORKFLOW_ID || "",
-  DIDIT_WEBHOOK_SECRET: process.env.DIDIT_WEBHOOK_SECRET || "",
-  DIDIT_WEBHOOK_SECRET_PREVIOUS: process.env.DIDIT_WEBHOOK_SECRET_PREVIOUS || "",
+  DIDIT_API_KEY: readOptionalSecret("DIDIT_API_KEY"),
+  DIDIT_WORKFLOW_ID: readOptional("DIDIT_WORKFLOW_ID"),
+  DIDIT_WEBHOOK_SECRET: readOptionalSecret("DIDIT_WEBHOOK_SECRET"),
+  DIDIT_WEBHOOK_SECRET_PREVIOUS: readOptionalSecret("DIDIT_WEBHOOK_SECRET_PREVIOUS"),
 });
 
 module.exports = env;

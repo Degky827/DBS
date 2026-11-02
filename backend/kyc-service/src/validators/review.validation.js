@@ -8,6 +8,12 @@ const reviewDecisionSchema = z
   })
   .strict();
 
+const approvalRevocationSchema = z
+  .object({
+    reason: z.string().trim().min(5).max(1000),
+  })
+  .strict();
+
 const reviewQueueSchema = z
   .object({
     status: z
@@ -26,4 +32,8 @@ const reviewQueueSchema = z
     { path: ["to"], message: "to must be later than or equal to from" }
   );
 
-module.exports = { reviewDecisionSchema, reviewQueueSchema };
+module.exports = {
+  reviewDecisionSchema,
+  reviewQueueSchema,
+  approvalRevocationSchema,
+};

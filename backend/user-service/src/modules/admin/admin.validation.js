@@ -19,6 +19,17 @@ const userListSchema = z
 
 const userIdParamsSchema = z.object({ userId: z.uuid() }).strict();
 
+const accountStatusSchema = z
+  .object({
+    status: z.enum(["ACTIVE", "FROZEN", "SUSPENDED", "CLOSED"]),
+    reason: z.string().trim().min(3).max(500).optional(),
+  })
+  .strict()
+  .refine((data) => data.status === "ACTIVE" || Boolean(data.reason), {
+    path: ["reason"],
+    message: "A reason is required when freezing, suspending, or closing an account",
+  });
+
 const referenceParamsSchema = z
   .object({ reference: z.string().trim().min(1).max(128) })
   .strict();
@@ -81,6 +92,7 @@ module.exports = {
   periodSchema,
   userListSchema,
   userIdParamsSchema,
+  accountStatusSchema,
   referenceParamsSchema,
   platformTransactionSchema,
   platformPaymentSchema,

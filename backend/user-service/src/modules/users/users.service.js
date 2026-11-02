@@ -7,7 +7,8 @@ const userRepository = require("../../repositories/user.repository");
 const devSessionRepository = require("../../repositories/devSession.repository");
 const ApiError = require("../../utils/ApiError");
 const audit = require("../../utils/audit");
-const { changeAuthPassword } = require("../../services/authClient");
+const { changeAuthPassword, closeAccount } = require("../../services/authClient");
+const accountLifecycle = require("../../services/accountLifecycle.service");
 const {
   hashPassword,
   comparePassword,
@@ -33,6 +34,7 @@ const toPublicProfile = (user) => ({
   bio: user.bio,
   avatarUrl: user.avatarUrl,
   role: user.role,
+  accountStatus: user.accountStatus || "ACTIVE",
   passwordChangedAt: user.passwordChangedAt,
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
@@ -328,9 +330,52 @@ const changeMyPassword = async (authCtx, input, session) => {
   };
 };
 
+const closeMyAccount = async (authCtx, input) => {
+  const profile = await resolveProfile(authCtx);
+
+  if (!profile) {
+    throw ApiError.notFound("Account not found", "USER_NOT_FOUND");
+  }
+
+  if ((profile.accountStatus || "ACTIVE") === "CLOSED") {
+    throw ApiError.conflict("Account is already closed", "ACCOUNT_CLOSED");
+  }
+
+  await accountLifecycle.assertSettled(profile.id);
+
+  if (authCtx.authMode === "jwt") {
+    await closeAccount({
+      email: profile.email || authCtx.email,
+      password: input.password,
+      reason: input.reason || "Closed by account holder",
+    });
+  } else {
+    const valid = await comparePassword(
+      input.password,
+      profile.passwordHash || DUMMY_HASH
+    );
+    if (!valid) {
+      audit("ACCOUNT_CLOSE_FAILED", { userId: profile.id, reason: "PASSWORD" });
+      throw ApiError.unauthorized(
+        "Password is incorrect",
+        "INVALID_CURRENT_PASSWORD"
+      );
+    }
+  }
+
+  await accountLifecycle.applyLocalStatus(profile.id, "CLOSED");
+  audit("ACCOUNT_CLOSED", { userId: profile.id, via: authCtx.authMode });
+
+  return {
+    message:
+      "Account closed. Remaining data is retained according to the bank's records policy.",
+  };
+};
+
 module.exports = {
   getResolvedUserId,
   getMyProfile,
   updateMyProfile,
   changeMyPassword,
+  closeMyAccount,
 };

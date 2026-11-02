@@ -17,6 +17,7 @@ const { submissionParamsSchema } = require("../../validators/params.validation")
 const {
   reviewDecisionSchema,
   reviewQueueSchema,
+  approvalRevocationSchema,
 } = require("../../validators/review.validation");
 
 router.use("/", healthRoutes);
@@ -55,6 +56,13 @@ router.post(
   requireOfficer,
   validate(reviewDecisionSchema),
   reviewController.decide
+);
+router.post(
+  "/officer/submissions/:submissionId/revoke",
+  authenticate,
+  requireOfficer,
+  validate(approvalRevocationSchema),
+  reviewController.revoke
 );
 
 module.exports = router;

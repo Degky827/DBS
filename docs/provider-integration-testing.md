@@ -91,7 +91,7 @@ Until steps 1–4 are done, treat email delivery as **unverified**.
 
 | Variable | Required | Format / notes |
 |---|---|---|
-| `CHAPA_SECRET_KEY` | To enable deposits | Must start with `CHAPA_TEST_`; live keys are rejected |
+| `CHAPA_SECRET_KEY` | To enable deposits | Must start with `CHASECK_TEST-` or `CHAPA_TEST_`; live keys are rejected |
 | `CHAPA_WEBHOOK_SECRET` | With the key | At least 16 characters |
 | `CHAPA_CALLBACK_URL` | With the key | HTTPS in production |
 | `CHAPA_RETURN_URL` | With the key | HTTPS in production |
@@ -99,7 +99,7 @@ Until steps 1–4 are done, treat email delivery as **unverified**.
 
 If `CHAPA_SECRET_KEY` is unset, deposits are disabled and payment endpoints
 return `PAYMENT_PROVIDER_NOT_CONFIGURED`; the rest of the wallet works.
-Partial configuration fails startup. A non-`CHAPA_TEST_` key fails startup.
+Partial configuration fails startup. A key that is not a test key fails startup.
 
 ### Behavior
 
@@ -133,7 +133,7 @@ Partial configuration fails startup. A non-`CHAPA_TEST_` key fails startup.
 ### Remaining steps to verify real sandbox behavior
 
 1. Obtain Chapa Test Mode credentials and a test webhook secret.
-2. Set `CHAPA_SECRET_KEY=CHAPA_TEST_...`, `CHAPA_WEBHOOK_SECRET`,
+2. Set `CHAPA_SECRET_KEY=CHASECK_TEST-...`, `CHAPA_WEBHOOK_SECRET`,
    `CHAPA_CALLBACK_URL`, `CHAPA_RETURN_URL`; leave `CHAPA_BASE_URL` at the
    pinned default.
 3. Start the user-service and create one deposit for the minimum amount with a
@@ -243,6 +243,6 @@ KYC_TEST_DATABASE_URL='postgresql://auth:auth@localhost:5432/kyc_test?schema=pub
 
 - Never print, log, commit, or paste provider keys into reports or tickets.
 - Never place real keys in `.env.example` or `.env.production.example`.
-- Use `CHAPA_TEST_` keys only; the application rejects anything else.
+- Use `CHASECK_TEST-` (or `CHAPA_TEST_`) keys only; the application rejects anything else.
 - Use synthetic identities for Didit sandbox runs.
 - If a key is exposed, rotate it at the provider before continuing.

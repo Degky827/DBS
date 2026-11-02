@@ -100,10 +100,18 @@ Demo accounts: `npm run db:seed` in auth-service and user-service refuses to run
 cp .env.production.example .env
 # Fill in POSTGRES_PASSWORD, APP_ORIGIN, JWT_SECRET (or RS256 keys),
 # INTERNAL_SERVICE_KEY, and STORAGE_ENCRYPTION_KEY.
+# Place the TLS certificate and key at certs/tls.crt and certs/tls.key.
 docker compose up --build -d
 ```
 
-Only `FRONTEND_PORT` (default 8080) is published. PostgreSQL, pgAdmin, and the three Node services have no host port mappings. Nginx serves the SPA and proxies:
+The frontend container terminates TLS on port 443 and redirects HTTP on port 80.
+`TLS_ENABLED=true` (the default in Compose) fails startup if the certificate
+files are missing. Set `TLS_ENABLED=false` only when a trusted load balancer
+terminates TLS. For a test certificate, run
+`./scripts/generate-self-signed-cert.sh`.
+
+Only `FRONTEND_HTTP_PORT` (default 80) and `FRONTEND_HTTPS_PORT` (default 443)
+are published. PostgreSQL, pgAdmin, and the three Node services have no host port mappings. Nginx serves the SPA and proxies:
 
 | Browser path | Backend |
 |---|---|
@@ -113,7 +121,7 @@ Only `FRONTEND_PORT` (default 8080) is published. PostgreSQL, pgAdmin, and the t
 
 Because the browser sees a single origin, no CORS is involved and the refresh cookie is first-party. The production image builds the frontend with relative API bases. One-shot `*-migrate` services run `prisma migrate deploy` before each service starts.
 
-`APP_ORIGIN` must be the public HTTPS origin. It drives CORS, the trusted-origin check on cookie endpoints, and (via Nginx) HSTS. Terminate TLS at the Nginx container or at an upstream load balancer that forwards `X-Forwarded-Proto: https`; `TRUST_PROXY=1` is set for the services.
+`APP_ORIGIN` must be the public HTTPS origin. It drives CORS, the trusted-origin check on cookie endpoints, and (via Nginx) HSTS. By default the Nginx container terminates TLS with `certs/tls.crt` and `certs/tls.key`; alternatively set `TLS_ENABLED=false` and terminate TLS at an upstream load balancer that forwards `X-Forwarded-Proto: https`. `TRUST_PROXY=1` is set for the services.
 
 ### Secret generation
 
@@ -208,11 +216,10 @@ See `docs/deployment-guide.md` for:
 ### Backup & Recovery
 
 See `docs/backup-and-recovery.md` for:
-- Automated backup scripts
-- GPG encryption procedures
-- Recovery procedures
-- Disaster recovery plan
-- Monthly testing protocol
+- `scripts/backup.sh` (database dumps, document volumes, SHA-256 manifest)
+- GPG encryption and off-host retention
+- `scripts/restore.sh` drills against throw-away databases
+- In-place recovery procedure and post-restore checklist
 
 ### Monitoring
 
@@ -221,6 +228,18 @@ Health check endpoints:
 - `/api/v1/ready` - Readiness (includes database check)
 
 Each service exposes both endpoints for load balancer health checks.
+
+Each service also exposes Prometheus metrics at `GET /metrics` on its private
+port (never published through Nginx). The opt-in monitoring profile runs
+Prometheus, Alertmanager, and an alert relay with availability, error-rate,
+latency, security, KYC, and reconciliation alert rules:
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+See `docs/security-and-operations.md` §10 for the exported series, alert list,
+optional `METRICS_TOKEN` hardening, and alert forwarding configuration.
 
 ## Limitations
 

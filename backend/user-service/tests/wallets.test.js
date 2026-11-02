@@ -793,6 +793,57 @@ test("OpenAPI includes wallet and transaction endpoints", async () => {
   assert.ok(response.body.paths["/api/v1/payments/withdrawals/{reference}/cancel"]);
 });
 
+test("wallet history nets partial reversals and exposes reversal details", async () => {
+  await fundWallet(wallets.owner.id, "25.00");
+  const created = await transfer(
+    "owner",
+    wallets.recipient.id,
+    "11.00",
+    `reversal_history_${randomUUID()}`
+  );
+  assert.equal(created.status, 201);
+  const reference = created.body.data.transaction.reference;
+
+  const reversal = await request(app)
+    .post(`/api/v1/transactions/${reference}/reversals`)
+    .set("Authorization", auth("admin"))
+    .set("Idempotency-Key", `reversal_history_key_${randomUUID()}`)
+    .send({ amount: "4.00", reason: "History netting check" });
+  assert.equal(reversal.status, 201);
+
+  const query = `/api/v1/transactions?q=${encodeURIComponent(reference)}`;
+  const senderHistory = await request(app)
+    .get(query)
+    .set("Authorization", auth("owner"));
+  assert.equal(senderHistory.status, 200);
+  assert.equal(senderHistory.body.data.summary.total, 1);
+  assert.equal(senderHistory.body.data.summary.outgoingAmount, "7.00");
+  assert.equal(senderHistory.body.data.summary.incomingAmount, "0.00");
+
+  const recipientHistory = await request(app)
+    .get(query)
+    .set("Authorization", auth("recipient"));
+  assert.equal(recipientHistory.status, 200);
+  assert.equal(recipientHistory.body.data.summary.incomingAmount, "7.00");
+  assert.equal(recipientHistory.body.data.summary.outgoingAmount, "0.00");
+
+  const detail = await request(app)
+    .get(`/api/v1/transactions/${reference}`)
+    .set("Authorization", auth("owner"));
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.data.transaction.reversedAmount, "4.00");
+  assert.equal(detail.body.data.transaction.reversals.length, 1);
+  assert.equal(detail.body.data.transaction.reversals[0].amount, "4.00");
+  assert.equal(
+    detail.body.data.transaction.reversals[0].reason,
+    "History netting check"
+  );
+  assert.match(
+    detail.body.data.transaction.reversals[0].ledgerEntryReference,
+    /^JRN-/
+  );
+});
+
 test("deposit initiation is disabled without a configured provider", async () => {
   const before = await walletBalance("owner");
 

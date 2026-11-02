@@ -15,6 +15,22 @@ const refreshTokenRepository = {
     );
   },
 
+  // A family is live while at least one token in it is neither revoked nor
+  // past either expiry. Used to validate the access token's sid claim.
+  findActiveInFamily(familyId, now = new Date()) {
+    return withRetry(() =>
+      prisma.refreshToken.findFirst({
+        where: {
+          familyId,
+          revokedAt: null,
+          expiresAt: { gt: now },
+          OR: [{ familyExpiresAt: null }, { familyExpiresAt: { gt: now } }],
+        },
+        select: { id: true, userId: true, familyExpiresAt: true },
+      })
+    );
+  },
+
   revokeFamily(familyId) {
     return withRetry(() =>
       prisma.refreshToken.updateMany({

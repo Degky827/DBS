@@ -3,6 +3,7 @@ const ApiError = require("../utils/ApiError");
 const { verifyAccessToken } = require("../utils/jwt.util");
 const { hashDevSessionToken } = require("../utils/token.util");
 const devSessionRepository = require("../repositories/devSession.repository");
+const { assertTokenActive } = require("../services/authIntrospection");
 
 const DEV_ONLY_MESSAGE =
   "Development session authentication is enabled. This is not production-ready; integrate auth-service JWTs before deployment.";
@@ -51,27 +52,46 @@ async function authenticateDev(req) {
     role: session.user.role,
     sessionId: session.id,
     authMode: "dev",
+    accountStatus: session.user.accountStatus || "ACTIVE",
+    mfaEnabled: false,
+    amr: ["pwd"],
+    stepUpAt: null,
   };
   req.session = session;
 }
 
-function authenticateJwt(req) {
+async function authenticateJwt(req) {
   const token = readBearer(req);
   const payload = verifyAccessToken(token);
+  const introspection = await assertTokenActive(token, payload);
 
   // Only the verified JWT is trusted for identity — never client input.
   req.user = {
     id: payload.sub,
     email: payload.email,
     role: payload.role,
+    sessionId: payload.sid || null,
     authMode: "jwt",
+    accountStatus: introspection?.accountStatus || "ACTIVE",
+    mfaEnabled: introspection?.mfaEnabled === true,
+    amr: Array.isArray(introspection?.amr)
+      ? introspection.amr
+      : Array.isArray(payload.amr)
+        ? payload.amr
+        : ["pwd"],
+    stepUpAt:
+      typeof introspection?.stepUpAt === "number"
+        ? introspection.stepUpAt
+        : typeof payload.stepUpAt === "number"
+          ? payload.stepUpAt
+          : null,
   };
 }
 
 module.exports = async function authenticate(req, res, next) {
   try {
     if (env.AUTH_MODE === "jwt") {
-      authenticateJwt(req);
+      await authenticateJwt(req);
       return next();
     }
 

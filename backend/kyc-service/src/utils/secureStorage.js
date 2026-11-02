@@ -8,14 +8,65 @@ const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 
-function readKey() {
+// The keyring keeps the current key first and retired keys after it. New data
+// is always written with the current key; reads try every key so a rotation can
+// re-encrypt stored data without downtime.
+function readKeys() {
   if (!env.STORAGE_ENCRYPTION_KEY) {
     throw ApiError.serviceUnavailable(
       "Document storage encryption is not configured",
       "STORAGE_ENCRYPTION_UNAVAILABLE"
     );
   }
-  return Buffer.from(env.STORAGE_ENCRYPTION_KEY, "hex");
+
+  return [
+    Buffer.from(env.STORAGE_ENCRYPTION_KEY, "hex"),
+    ...env.STORAGE_ENCRYPTION_KEYS_PREVIOUS.map((key) =>
+      Buffer.from(key, "hex")
+    ),
+  ];
+}
+
+function encryptBuffer(buffer, key = readKeys()[0]) {
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+  const ciphertext = Buffer.concat([cipher.update(buffer), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+}
+
+function decryptBufferWithKey(encrypted, key) {
+  if (encrypted.length < IV_LENGTH + TAG_LENGTH) {
+    throw new Error("Ciphertext is too short");
+  }
+  const decipher = crypto.createDecipheriv(
+    ALGORITHM,
+    key,
+    encrypted.subarray(0, IV_LENGTH)
+  );
+  decipher.setAuthTag(encrypted.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH));
+  return Buffer.concat([
+    decipher.update(encrypted.subarray(IV_LENGTH + TAG_LENGTH)),
+    decipher.final(),
+  ]);
+}
+
+// Returns the plaintext plus whether the current key already decrypts it,
+// which lets the rotation job skip data that is already up to date.
+function decryptBuffer(encrypted, invalidMessage) {
+  const keys = readKeys();
+
+  for (let index = 0; index < keys.length; index += 1) {
+    try {
+      return {
+        plaintext: decryptBufferWithKey(encrypted, keys[index]),
+        currentKey: index === 0,
+      };
+    } catch {
+      // Wrong key or corrupted payload; try the next retired key.
+    }
+  }
+
+  throw ApiError.internal(invalidMessage);
 }
 
 function resolveStoragePath(storageKey) {
@@ -31,10 +82,7 @@ function resolveStoragePath(storageKey) {
 }
 
 async function encryptAndStore(buffer, storageKey) {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, readKey(), iv);
-  const ciphertext = Buffer.concat([cipher.update(buffer), cipher.final()]);
-  const encrypted = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+  const encrypted = encryptBuffer(buffer);
   const filePath = resolveStoragePath(storageKey);
 
   await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
@@ -42,52 +90,38 @@ async function encryptAndStore(buffer, storageKey) {
 }
 
 function encryptSensitiveValue(value) {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, readKey(), iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(Buffer.from(value, "utf8")),
-    cipher.final(),
-  ]);
-  return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString("base64");
+  return encryptBuffer(Buffer.from(value, "utf8")).toString("base64");
 }
 
 function decryptSensitiveValue(value) {
-  const encrypted = Buffer.from(value, "base64");
-  if (encrypted.length < IV_LENGTH + TAG_LENGTH) {
-    throw ApiError.internal("Stored document data is invalid");
-  }
-  const decipher = crypto.createDecipheriv(
-    ALGORITHM,
-    readKey(),
-    encrypted.subarray(0, IV_LENGTH)
+  const { plaintext } = decryptBuffer(
+    Buffer.from(value, "base64"),
+    "Stored document data could not be decrypted"
   );
-  decipher.setAuthTag(encrypted.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH));
-  try {
-    return Buffer.concat([
-      decipher.update(encrypted.subarray(IV_LENGTH + TAG_LENGTH)),
-      decipher.final(),
-    ]).toString("utf8");
-  } catch {
-    throw ApiError.internal("Stored document data could not be decrypted");
-  }
+  return plaintext.toString("utf8");
 }
 
 async function decryptFromStorage(storageKey) {
   const encrypted = await fs.readFile(resolveStoragePath(storageKey));
-  if (encrypted.length < IV_LENGTH + TAG_LENGTH) {
-    throw ApiError.internal("Stored document is invalid");
-  }
+  const { plaintext } = decryptBuffer(
+    encrypted,
+    "Stored document could not be decrypted"
+  );
+  return plaintext;
+}
 
-  const iv = encrypted.subarray(0, IV_LENGTH);
-  const tag = encrypted.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
-  const ciphertext = encrypted.subarray(IV_LENGTH + TAG_LENGTH);
-  const decipher = crypto.createDecipheriv(ALGORITHM, readKey(), iv);
-  decipher.setAuthTag(tag);
-  try {
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  } catch {
-    throw ApiError.internal("Stored document could not be decrypted");
-  }
+// Rotation helpers: the caller (script/rotateEncryptionKey.js) re-encrypts with
+// the current key and writes the result atomically next to the original.
+async function decryptStoredWithKeyStatus(storageKey) {
+  const encrypted = await fs.readFile(resolveStoragePath(storageKey));
+  return decryptBuffer(encrypted, "Stored document could not be decrypted");
+}
+
+async function replaceStoredFile(storageKey, plaintext) {
+  const filePath = resolveStoragePath(storageKey);
+  const temporaryPath = `${filePath}.rotate-${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(temporaryPath, encryptBuffer(plaintext), { mode: 0o600 });
+  await fs.rename(temporaryPath, filePath);
 }
 
 async function removeStoredFile(storageKey) {
@@ -104,4 +138,8 @@ module.exports = {
   encryptSensitiveValue,
   decryptSensitiveValue,
   removeStoredFile,
+  decryptStoredWithKeyStatus,
+  replaceStoredFile,
+  decryptBuffer,
+  encryptBuffer,
 };

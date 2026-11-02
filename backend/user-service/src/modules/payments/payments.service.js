@@ -95,20 +95,35 @@ class PaymentsService {
       });
     }
 
+    // Replays must resolve before the daily limit is evaluated, otherwise an
+    // already-accepted deposit would start failing once the limit is reached.
+    const businessDate = policies.businessDateFor(policy.timezone);
+
     let payment;
     try {
-      payment = await this.prisma.payment.create({
-        data: {
-          reference: newMerchantReference(),
-          provider: "CHAPA",
-          type: "DEPOSIT",
-          status: "PENDING",
-          amount: decimalAmount,
-          currency: wallet.currency,
-          idempotencyKey,
+      payment = await this.prisma.$transaction(async (tx) => {
+        await policies.assertWithinDailyLimits({
+          tx,
           userId,
-          walletId: wallet.id,
-        },
+          type: "DEPOSIT",
+          policy,
+          principalCents,
+          businessDate,
+        });
+        return tx.payment.create({
+          data: {
+            reference: newMerchantReference(),
+            provider: "CHAPA",
+            type: "DEPOSIT",
+            status: "PENDING",
+            amount: decimalAmount,
+            currency: wallet.currency,
+            idempotencyKey,
+            userId,
+            walletId: wallet.id,
+            businessDate: new Date(`${businessDate}T00:00:00.000Z`),
+          },
+        });
       });
     } catch (error) {
       if (error.code !== "P2002") throw error;
@@ -364,6 +379,16 @@ class PaymentsService {
         });
       }
 
+      if (verification.status === "UNKNOWN") {
+        return finish(
+          { payment: formatPayment(current), alreadyProcessed: false },
+          {
+            code: "PAYMENT_STATUS_UNKNOWN",
+            message: "Chapa returned an unrecognized payment status",
+          }
+        );
+      }
+
       if (verification.status !== "SUCCESS") {
         return finish(
           { payment: formatPayment(current), alreadyProcessed: false },
@@ -434,7 +459,20 @@ class PaymentsService {
         );
       }
       const netCents = grossCents - feeCents;
-      const businessDate = policies.businessDateFor(depositPolicy.timezone);
+      const businessDate = current.businessDate
+        ? current.businessDate.toISOString().slice(0, 10)
+        : policies.businessDateFor(depositPolicy.timezone);
+      // Re-check at credit time so deposits collected from several pending
+      // checkouts cannot exceed the limit once they all complete.
+      await policies.assertWithinDailyLimits({
+        tx,
+        userId: current.userId,
+        type: "DEPOSIT",
+        policy: depositPolicy,
+        principalCents: grossCents,
+        businessDate,
+        excludePaymentId: current.id,
+      });
       const feeString = fromMinorUnits(feeCents);
 
       const transaction = await tx.transaction.create({
@@ -526,7 +564,14 @@ class PaymentsService {
           reason: outcome.error.code,
         });
       }
-      throw ApiError.conflict(outcome.error.message, outcome.error.code);
+      const verificationError = ApiError.conflict(
+        outcome.error.message,
+        outcome.error.code
+      );
+      // Reconciliation records the provider status even when verification
+      // rejects the payment, so keep the snapshot on the error.
+      verificationError.verification = outcome.verification;
+      throw verificationError;
     }
 
     if (!outcome.alreadyProcessed) {

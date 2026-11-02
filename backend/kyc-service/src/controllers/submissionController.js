@@ -6,7 +6,12 @@ async function create(req, res) {
     req.user.id,
     req.headers.authorization
   );
-  return ApiResponse.success(res, submission, "KYC submission created", 201);
+  return ApiResponse.success(
+    res,
+    submission,
+    submission.reused ? "Existing KYC submission returned" : "KYC submission created",
+    submission.reused ? 200 : 201
+  );
 }
 
 async function getStatus(req, res) {

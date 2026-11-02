@@ -22,11 +22,15 @@ RUN npm run build
 FROM nginx:alpine AS runtime
 
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/banking/tls.conf
+COPY nginx.http.conf /etc/nginx/banking/http.conf
+COPY nginx/ /etc/nginx/banking/
+COPY docker-entrypoint.d/ /docker-entrypoint.d/
+RUN chmod +x /docker-entrypoint.d/*.sh
 
-EXPOSE 80
+EXPOSE 80 443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1/ > /dev/null 2>&1 || exit 1
+  CMD wget -qO- http://127.0.0.1/healthz > /dev/null 2>&1 || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

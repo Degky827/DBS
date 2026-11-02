@@ -219,6 +219,130 @@ test("deposit initialization is ETB idempotent and uses one persistent merchant 
   assert.equal(conflict.body.code, "IDEMPOTENCY_KEY_REUSED");
 });
 
+test("deposit initiation enforces daily amount and count limits while replaying existing keys", async () => {
+  const policy = await prisma.financialPolicy.findUnique({
+    where: { type_currency: { type: "DEPOSIT", currency: "ETB" } },
+  });
+  assert.ok(policy);
+  const original = {
+    dailyOutgoingAmount: policy.dailyOutgoingAmount,
+    dailyOutgoingCount: policy.dailyOutgoingCount,
+  };
+  const initiate = (key, amount) =>
+    request(app)
+      .post("/api/v1/payments/deposits")
+      .set("Authorization", `Bearer ${tokens.outsider}`)
+      .set("Idempotency-Key", key)
+      .send({ amount });
+
+  try {
+    await prisma.financialPolicy.update({
+      where: { id: policy.id },
+      data: { dailyOutgoingAmount: "30.00", dailyOutgoingCount: 2 },
+    });
+
+    const firstKey = `daily_first_${crypto.randomUUID()}`;
+    const first = await initiate(firstKey, "20.00");
+    assert.equal(first.status, 201);
+    const overAmount = await initiate(
+      `daily_over_amount_${crypto.randomUUID()}`,
+      "11.00"
+    );
+    assert.equal(overAmount.status, 409);
+    assert.equal(overAmount.body.code, "DAILY_LIMIT_EXCEEDED");
+
+    const second = await initiate(
+      `daily_second_${crypto.randomUUID()}`,
+      "5.00"
+    );
+    assert.equal(second.status, 201);
+    const overCount = await initiate(
+      `daily_over_count_${crypto.randomUUID()}`,
+      "1.00"
+    );
+    assert.equal(overCount.status, 409);
+    assert.equal(overCount.body.code, "DAILY_COUNT_EXCEEDED");
+
+    // A replay is resolved before the limit check and must still succeed.
+    const replay = await initiate(firstKey, "20.00");
+    assert.equal(replay.status, 200);
+    assert.equal(
+      replay.body.data.payment.reference,
+      first.body.data.payment.reference
+    );
+  } finally {
+    await prisma.financialPolicy.update({
+      where: { id: policy.id },
+      data: original,
+    });
+  }
+});
+
+test("credit-time recheck rejects a deposit that would exceed the daily limit", async () => {
+  const policy = await prisma.financialPolicy.findUnique({
+    where: { type_currency: { type: "DEPOSIT", currency: "ETB" } },
+  });
+  assert.ok(policy);
+  const original = {
+    dailyOutgoingAmount: policy.dailyOutgoingAmount,
+    dailyOutgoingCount: policy.dailyOutgoingCount,
+  };
+
+  const initiate = (key, amount) =>
+    request(app)
+      .post("/api/v1/payments/deposits")
+      .set("Authorization", `Bearer ${tokens.outsider}`)
+      .set("Idempotency-Key", key)
+      .send({ amount });
+
+  try {
+    // The outsider account already has 25.00 of pending deposits from the
+    // previous limit test.
+    await prisma.financialPolicy.update({
+      where: { id: policy.id },
+      data: { dailyOutgoingAmount: "200.00", dailyOutgoingCount: 10 },
+    });
+    const first = await initiate(`recheck_first_${crypto.randomUUID()}`, "40.00");
+    assert.equal(first.status, 201);
+    const second = await initiate(`recheck_second_${crypto.randomUUID()}`, "40.00");
+    assert.equal(second.status, 201);
+
+    // Tighten the limit after both checkouts were created but before credit.
+    await prisma.financialPolicy.update({
+      where: { id: policy.id },
+      data: { dailyOutgoingAmount: "100.00" },
+    });
+    const reference = first.body.data.payment.reference;
+    providerStatus(reference, "SUCCESS", "40.00");
+    const rawBody = JSON.stringify({
+      webhook_type: "payment",
+      event: "payment.success",
+      status: "success",
+      mode: "test",
+      merchant_reference: reference,
+    });
+    const response = await postWebhook(JSON.parse(rawBody), rawBody);
+
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, "DAILY_LIMIT_EXCEEDED");
+    const stored = await prisma.payment.findUnique({
+      where: { id: first.body.data.payment.id },
+    });
+    assert.equal(stored.status, "PENDING");
+    assert.equal(
+      await prisma.transaction.findUnique({
+        where: { paymentId: stored.id },
+      }),
+      null
+    );
+  } finally {
+    await prisma.financialPolicy.update({
+      where: { id: policy.id },
+      data: original,
+    });
+  }
+});
+
 test("deposit initiation and return verification require KYC approval", async () => {
   const balanceBefore = (
     await prisma.wallet.findUnique({ where: { id: wallets.owner.id } })
@@ -582,6 +706,43 @@ test("reconciliation records an amount mismatch without crediting the wallet", a
   assert.match(record.details, /amount mismatch/i);
 });
 
+test("reconciliation flags an unrecognized provider status for manual review", async () => {
+  const { payment } = await deposit("recon_unknown", "15.00");
+  providerStatus(payment.reference, "UNKNOWN", "15.00");
+  await prisma.payment.update({
+    where: { id: payment.id },
+    data: { createdAt: new Date(Date.now() - 60 * 60 * 1000) },
+  });
+
+  const summary = await reconcilePendingPayments({
+    olderThanMinutes: 15,
+    limit: 50,
+    trigger: "TEST",
+  });
+  const result = summary.results.find(
+    (entry) => entry.paymentReference === payment.reference
+  );
+  assert.ok(result);
+  assert.equal(result.outcome, "MANUAL_REVIEW");
+  assert.equal(result.errorCode, "PAYMENT_STATUS_UNKNOWN");
+
+  const stored = await prisma.payment.findUnique({
+    where: { id: payment.id },
+  });
+  assert.equal(stored.status, "PENDING");
+  assert.equal(
+    await prisma.transaction.count({ where: { paymentId: payment.id } }),
+    0
+  );
+
+  const record = await prisma.paymentReconciliationRecord.findFirst({
+    where: { paymentId: payment.id },
+    orderBy: { createdAt: "desc" },
+  });
+  assert.equal(record.outcome, "MANUAL_REVIEW");
+  assert.equal(record.providerStatus, "UNKNOWN");
+});
+
 test("a local ledger failure leaves the payment pending for a later verification", async () => {
   const { payment } = await deposit("db_failure", "33.00");
   providerStatus(payment.reference, "SUCCESS", "33.00");
@@ -818,12 +979,21 @@ test("payment history is authenticated, paginated, and scoped to the owner", asy
     .set("Authorization", `Bearer ${tokens.outsider}`);
   assert.equal(foreignCursor.status, 400);
 
+  const outsiderOwnPayments = await prisma.payment.count({
+    where: { userId: users.outsider.id },
+  });
   const outsiderList = await request(app)
     .get("/api/v1/payments")
     .set("Authorization", `Bearer ${tokens.outsider}`);
   assert.equal(outsiderList.status, 200);
-  assert.equal(outsiderList.body.data.payments.length, 0);
-  assert.equal(outsiderList.body.data.page.total, 0);
+  assert.equal(outsiderList.body.data.payments.length, outsiderOwnPayments);
+  assert.equal(outsiderList.body.data.page.total, outsiderOwnPayments);
+  const ownerReferences = new Set(
+    all.body.data.payments.map((payment) => payment.reference)
+  );
+  for (const payment of outsiderList.body.data.payments) {
+    assert.equal(ownerReferences.has(payment.reference), false);
+  }
 
   const unauthenticated = await request(app).get("/api/v1/payments");
   assert.equal(unauthenticated.status, 401);

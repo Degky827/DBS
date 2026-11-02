@@ -83,7 +83,7 @@ Key variables (see `.env.example` for placeholders):
 | `DEV_API_KEY` | empty | If set, require header `X-Dev-Api-Key` |
 | `BCRYPT_ROUNDS` | `12` | |
 | `ENABLE_API_DOCS` | `true` | Swagger at `/api/v1/docs` |
-| `CHAPA_SECRET_KEY` | empty | Optional; must be a Chapa `CHAPA_TEST_...` private key |
+| `CHAPA_SECRET_KEY` | empty | Optional; must be a Chapa test key (`CHASECK_TEST-...` or `CHAPA_TEST_...`) |
 | `CHAPA_WEBHOOK_SECRET` | empty | Required with the test key; HMAC secret configured for Chapa webhooks |
 | `CHAPA_BASE_URL` | `https://api.chapa.global` | Chapa API v2 host; the service rejects other hosts |
 | `CHAPA_CALLBACK_URL` | empty | Required to enable test deposits; public HTTPS webhook URL |
@@ -152,7 +152,7 @@ Transaction history supports cursor pagination (`limit` 1–100, default 25), `d
 
 Internal transfers and transaction history continue to work independently from payments. ETB is the only supported wallet currency.
 
-Chapa Hosted Checkout is implemented in **Test Mode only**. Deposits are disabled unless all of `CHAPA_SECRET_KEY` (must begin `CHAPA_TEST_`), `CHAPA_WEBHOOK_SECRET`, `CHAPA_CALLBACK_URL`, and `CHAPA_RETURN_URL` are configured. The adapter uses the documented Chapa v2 hosted checkout and verification APIs, sends ETB amounts as integer cents, and uses the internal merchant reference as Chapa's idempotency key. A browser return only triggers authenticated server-side verification; it never confirms payment by itself. A signed webhook triggers the same verification, which must match the merchant reference, ETB currency, and exact amount before a single wallet credit and linked `DEPOSIT` ledger transaction are atomically committed. Raw webhook bytes are authenticated using Chapa's documented lowercase-hex HMAC-SHA256 `x-chapa-signature`.
+Chapa Hosted Checkout is implemented in **Test Mode only**. Deposits are disabled unless all of `CHAPA_SECRET_KEY` (must begin `CHASECK_TEST-` or `CHAPA_TEST_`), `CHAPA_WEBHOOK_SECRET`, `CHAPA_CALLBACK_URL`, and `CHAPA_RETURN_URL` are configured. The adapter uses the documented Chapa v2 hosted checkout and verification APIs, sends ETB amounts as integer cents, and uses the internal merchant reference as Chapa's idempotency key. A browser return only triggers authenticated server-side verification; it never confirms payment by itself. A signed webhook triggers the same verification, which must match the merchant reference, ETB currency, and exact amount before a single wallet credit and linked `DEPOSIT` ledger transaction are atomically committed. Raw webhook bytes are authenticated using Chapa's documented lowercase-hex HMAC-SHA256 `x-chapa-signature`.
 
 Use only a Chapa Test Mode private key. Live keys and arbitrary API hosts are rejected by configuration validation. Do not use real money in these flows. Chapa's current API host is `https://api.chapa.global`; test/live selection is determined by the key. Chapa must be able to reach the configured callback URL, which must be HTTPS outside local development. Do not enable deposits until webhook delivery and a complete signed test checkout are verified in the Chapa merchant dashboard.
 

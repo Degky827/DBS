@@ -1,6 +1,9 @@
 const prisma = require("../config/database");
+const env = require("../config/env");
 const ApiError = require("../utils/ApiError");
 const { SUBMISSION_STATUS, canTransition } = require("../constants/kycStatus");
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const APPROVAL_REQUIREMENTS = {
   providerStatus: "Approved",
@@ -249,13 +252,27 @@ async function decide({ submissionId, reviewerId, decision, reason }) {
       "INVALID_KYC_STATUS_TRANSITION"
     );
   }
+  const decidedAt = new Date();
+  const approvalExpiresAt =
+    finalStatus === SUBMISSION_STATUS.APPROVED
+      ? new Date(decidedAt.getTime() + env.KYC_APPROVAL_TTL_DAYS * DAY_MS)
+      : null;
+
   return prisma.$transaction(async (tx) => {
     const transition = await tx.kycSubmission.updateMany({
       where: { id: submissionId, status: SUBMISSION_STATUS.PENDING_REVIEW },
       data: {
         status: finalStatus,
-        reviewedAt: new Date(),
+        reviewedAt: decidedAt,
         decisionReason: reason,
+        ...(finalStatus === SUBMISSION_STATUS.APPROVED
+          ? {
+              approvedAt: decidedAt,
+              approvalExpiresAt,
+              revokedAt: null,
+              revokedReason: null,
+            }
+          : {}),
       },
     });
     if (transition.count !== 1) {
@@ -263,7 +280,14 @@ async function decide({ submissionId, reviewerId, decision, reason }) {
     }
     const updated = await tx.kycSubmission.findUnique({
       where: { id: submissionId },
-      select: { id: true, status: true, reviewedAt: true, decisionReason: true },
+      select: {
+        id: true,
+        status: true,
+        reviewedAt: true,
+        approvedAt: true,
+        approvalExpiresAt: true,
+        decisionReason: true,
+      },
     });
     await tx.kycReview.create({
       data: {
@@ -285,4 +309,88 @@ async function decide({ submissionId, reviewerId, decision, reason }) {
   });
 }
 
-module.exports = { getQueue, getStats, getSubmission, decide };
+async function revokeApproval({ submissionId, actorId, reason }) {
+  const submission = await prisma.kycSubmission.findUnique({
+    where: { id: submissionId },
+    select: { id: true, userId: true, status: true, revokedAt: true },
+  });
+  if (!submission) {
+    throw ApiError.notFound("KYC submission not found", "KYC_SUBMISSION_NOT_FOUND");
+  }
+  if (submission.userId === actorId) {
+    throw ApiError.forbidden(
+      "You cannot revoke your own KYC approval",
+      "SELF_REVIEW_FORBIDDEN"
+    );
+  }
+  if (submission.status !== SUBMISSION_STATUS.APPROVED) {
+    throw ApiError.conflict(
+      "Only an approved submission can be revoked",
+      "SUBMISSION_NOT_APPROVED"
+    );
+  }
+  if (submission.revokedAt) {
+    throw ApiError.conflict(
+      "Approval has already been revoked",
+      "APPROVAL_ALREADY_REVOKED"
+    );
+  }
+
+  const revokedAt = new Date();
+  return prisma.$transaction(async (tx) => {
+    const transition = await tx.kycSubmission.updateMany({
+      where: {
+        id: submissionId,
+        status: SUBMISSION_STATUS.APPROVED,
+        revokedAt: null,
+      },
+      data: {
+        status: SUBMISSION_STATUS.NEEDS_RESUBMISSION,
+        revokedAt,
+        revokedReason: reason,
+        // Keep the latest officer action visible in the decision history.
+        reviewedAt: revokedAt,
+        decisionReason: reason,
+      },
+    });
+    if (transition.count !== 1) {
+      throw ApiError.conflict(
+        "Approval could not be revoked from its current state",
+        "APPROVAL_ALREADY_REVOKED"
+      );
+    }
+
+    const updated = await tx.kycSubmission.findUnique({
+      where: { id: submissionId },
+      select: {
+        id: true,
+        status: true,
+        approvedAt: true,
+        approvalExpiresAt: true,
+        revokedAt: true,
+        revokedReason: true,
+      },
+    });
+
+    await tx.kycReview.create({
+      data: {
+        submissionId,
+        reviewerId: actorId,
+        decision: "REVOKE",
+        reason,
+      },
+    });
+    await tx.kycAuditEvent.create({
+      data: {
+        submissionId,
+        eventType: "OFFICER_APPROVAL_REVOKED",
+        actorId,
+        payload: { reason, previousStatus: submission.status },
+      },
+    });
+
+    return updated;
+  });
+}
+
+module.exports = { getQueue, getStats, getSubmission, decide, revokeApproval };

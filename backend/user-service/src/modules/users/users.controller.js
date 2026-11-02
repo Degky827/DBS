@@ -24,8 +24,14 @@ const changeMyPassword = async (req, res) => {
   return ApiResponse.success(res, null, result.message);
 };
 
+const closeMyAccount = async (req, res) => {
+  const result = await usersService.closeMyAccount(req.user, req.body);
+  return ApiResponse.success(res, null, result.message);
+};
+
 module.exports = {
   getMyProfile,
   updateMyProfile,
   changeMyPassword,
+  closeMyAccount,
 };
