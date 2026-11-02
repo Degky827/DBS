@@ -2,6 +2,7 @@ import axios from "axios";
 import store from "../store";
 import { clearSession } from "../store/authSlice";
 import { refreshSession } from "./session";
+import { requestStepUp } from "./stepUp";
 
 const createApi = (baseURL, { withCredentials = false } = {}) =>
   axios.create({ baseURL, withCredentials, timeout: 20000 });
@@ -23,7 +24,10 @@ const SESSION_ENDPOINTS = [
   "/auth/resend-otp",
   "/auth/forgot-password",
   "/auth/reset-password",
+  "/auth/mfa/verify",
 ];
+
+const STEP_UP_CODES = new Set(["STEP_UP_REQUIRED", "MFA_REQUIRED"]);
 
 const isSessionEndpoint = (url = "") =>
   SESSION_ENDPOINTS.some((endpoint) => url.includes(endpoint));
@@ -42,6 +46,43 @@ const attachAuthInterceptors = (instance) => {
     async (error) => {
       const originalRequest = error.config;
       const status = error.response?.status;
+      const code = error.response?.data?.code;
+
+      if (
+        status === 403 &&
+        STEP_UP_CODES.has(code) &&
+        originalRequest &&
+        !originalRequest._stepUpRetry &&
+        !originalRequest.url?.includes("/auth/mfa/")
+      ) {
+        originalRequest._stepUpRetry = true;
+        try {
+          const accessToken = await requestStepUp();
+          originalRequest.headers = {
+            ...originalRequest.headers,
+            Authorization: `Bearer ${accessToken}`,
+          };
+          return instance(originalRequest);
+        } catch (stepUpError) {
+          // Cancelling the prompt is a deliberate choice, not a network
+          // failure; report it as such instead of the generic connectivity
+          // message produced for errors without a response.
+          if (stepUpError?.message === "Step-up verification cancelled") {
+            return Promise.reject({
+              ...error,
+              response: {
+                status: 403,
+                data: {
+                  success: false,
+                  message: "Verification was cancelled. Your request was not completed.",
+                  code: "STEP_UP_CANCELLED",
+                },
+              },
+            });
+          }
+          return Promise.reject(error);
+        }
+      }
 
       if (
         status !== 401 ||

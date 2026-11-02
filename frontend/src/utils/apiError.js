@@ -1,18 +1,19 @@
 // Normalizes errors from the auth, user and KYC services into a single shape.
-// Backend envelope: { success, message, errors? } — `errors` is a map of
-// field -> string (auth/user) or field -> string[] (kyc). Error `code` values
-// are never returned in the body, so we branch on HTTP status + message.
+// Backend envelope: { success, message, code, errors? } — `errors` is a map of
+// field -> string (auth/user) or field -> string[] (kyc). `code` is a stable
+// machine-readable value such as ACCOUNT_FROZEN or STEP_UP_REQUIRED.
 export const normalizeApiError = (error) => {
   const fallback = "Something went wrong. Please try again.";
 
   if (!error?.response) {
     if (error?.code === "ECONNABORTED") {
-      return { status: 0, message: "The request timed out. Check your connection and try again.", fields: {} };
+      return { status: 0, code: null, message: "The request timed out. Check your connection and try again.", fields: {} };
     }
-    return { status: 0, message: "Unable to reach the server. Check your connection and try again.", fields: {} };
+    return { status: 0, code: null, message: "Unable to reach the server. Check your connection and try again.", fields: {} };
   }
 
   const { status, data } = error.response;
+  const code = typeof data?.code === "string" ? data.code : null;
   const message =
     (typeof data?.message === "string" && data.message) ||
     (status === 401
@@ -33,7 +34,7 @@ export const normalizeApiError = (error) => {
     }
   }
 
-  return { status, message, fields };
+  return { status, code, message, fields };
 };
 
 export const apiErrorMessage = (error, fallback) => {
