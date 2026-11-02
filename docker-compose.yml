@@ -11,6 +11,10 @@
 # APP_ORIGIN must be the HTTPS origin users load in the browser, for example
 # https://bank.example.com. The Nginx container proxies /api/auth, /api/user,
 # and /api/kyc to the backend services on the private network.
+#
+# TLS is terminated by the frontend container by default. Provide
+# certs/tls.crt and certs/tls.key, or set TLS_ENABLED=false and terminate TLS at
+# an upstream load balancer. See docs/deployment-guide.md.
 
 name: meridian
 
@@ -72,6 +76,7 @@ services:
       JWT_ISSUER: ${JWT_ISSUER:-auth-service}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-banking-system}
       REFRESH_TOKEN_TTL_MS: ${REFRESH_TOKEN_TTL_MS:-604800000}
+      REFRESH_TOKEN_ABSOLUTE_TTL_MS: ${REFRESH_TOKEN_ABSOLUTE_TTL_MS:-2592000000}
       REFRESH_TOKEN_GRACE_MS: ${REFRESH_TOKEN_GRACE_MS:-30000}
       REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME:-meridian_refresh}
       # Nginx strips /api/auth before forwarding, so the browser-visible path
@@ -79,6 +84,10 @@ services:
       REFRESH_COOKIE_PATH: /api/auth
       REFRESH_COOKIE_SAME_SITE: ${REFRESH_COOKIE_SAME_SITE:-lax}
       COOKIE_SECURE: "true"
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:-}
+      MFA_ISSUER: ${MFA_ISSUER:-Meridian Bank}
+      MFA_CHALLENGE_TTL_MS: ${MFA_CHALLENGE_TTL_MS:-300000}
+      STEP_UP_TTL_MS: ${STEP_UP_TTL_MS:-600000}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
       CORS_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
       TRUST_PROXY: 1
@@ -96,6 +105,12 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-Meridian Bank}
       EMAIL_FROM_EMAIL: ${EMAIL_FROM_EMAIL:-no-reply@meridianbank.example}
       EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
+      EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-}
+      EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-587}
+      # Optional bearer token required by /metrics. Monitoring profile scrapes
+      # without it by default; set it only together with the Prometheus
+      # bearer_token_file change documented in docs/security-and-operations.md.
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       auth-migrate:
         condition: service_completed_successfully
@@ -150,6 +165,7 @@ services:
       JWT_AUDIENCE: ${JWT_AUDIENCE:-banking-system}
       AUTH_SERVICE_URL: http://auth-service:5001/api/v1
       KYC_SERVICE_URL: http://kyc-service:5003/api/v1/kyc
+      STEP_UP_TTL_MS: ${STEP_UP_TTL_MS:-600000}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
       CORS_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
       TRUST_PROXY: 1
@@ -161,6 +177,7 @@ services:
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
       AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-20}
+      WEBHOOK_RATE_LIMIT_MAX: ${WEBHOOK_RATE_LIMIT_MAX:-120}
       # Chapa remains disabled unless all four values are supplied.
       CHAPA_SECRET_KEY: ${CHAPA_SECRET_KEY:-}
       CHAPA_WEBHOOK_SECRET: ${CHAPA_WEBHOOK_SECRET:-}
@@ -172,6 +189,7 @@ services:
       RECONCILIATION_INTERVAL_MS: ${RECONCILIATION_INTERVAL_MS:-300000}
       RECONCILIATION_STALE_MINUTES: ${RECONCILIATION_STALE_MINUTES:-15}
       RECONCILIATION_BATCH_SIZE: ${RECONCILIATION_BATCH_SIZE:-25}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       user-migrate:
         condition: service_completed_successfully
@@ -238,14 +256,18 @@ services:
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
       UPLOAD_RATE_LIMIT_MAX: ${UPLOAD_RATE_LIMIT_MAX:-10}
+      WEBHOOK_RATE_LIMIT_MAX: ${WEBHOOK_RATE_LIMIT_MAX:-120}
+      KYC_APPROVAL_TTL_DAYS: ${KYC_APPROVAL_TTL_DAYS:-365}
       STORAGE_DIR: /app/storage
       MAX_FILE_SIZE_BYTES: ${MAX_FILE_SIZE_BYTES:-10485760}
       STORAGE_ENCRYPTION_KEY: ${STORAGE_ENCRYPTION_KEY:?STORAGE_ENCRYPTION_KEY is required}
+      STORAGE_ENCRYPTION_KEYS_PREVIOUS: ${STORAGE_ENCRYPTION_KEYS_PREVIOUS:-}
       DIDIT_API_BASE_URL: https://verification.didit.me
       DIDIT_API_KEY: ${DIDIT_API_KEY:-}
       DIDIT_WORKFLOW_ID: ${DIDIT_WORKFLOW_ID:-}
       DIDIT_WEBHOOK_SECRET: ${DIDIT_WEBHOOK_SECRET:-}
       DIDIT_WEBHOOK_SECRET_PREVIOUS: ${DIDIT_WEBHOOK_SECRET_PREVIOUS:-}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       kyc-migrate:
         condition: service_completed_successfully
@@ -278,6 +300,10 @@ services:
         VITE_USER_API: ${VITE_USER_API:-/api/user}
         VITE_KYC_API: ${VITE_KYC_API:-/api/kyc}
     restart: unless-stopped
+    environment:
+      # TLS_ENABLED=true fails startup when certs/tls.crt or certs/tls.key is
+      # missing. Set false only when a trusted proxy terminates TLS.
+      TLS_ENABLED: "${TLS_ENABLED:-true}"
     depends_on:
       auth-service:
         condition: service_healthy
@@ -286,7 +312,82 @@ services:
       kyc-service:
         condition: service_healthy
     ports:
-      - "${FRONTEND_PORT:-8080}:80"
+      - "${FRONTEND_HTTP_PORT:-80}:80"
+      - "${FRONTEND_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
+      - ./certbot/www:/var/www/certbot:ro
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  # Monitoring is opt-in: docker compose --profile monitoring up -d
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      # Kept outside /etc/prometheus: that mount is read-only, so Docker cannot
+      # create the secrets mountpoint inside it.
+      - ./monitoring/secrets:/etc/prometheus-secrets:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - auth-service
+      - user-service
+      - kyc-service
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  alert-relay:
+    build:
+      context: ./monitoring/alert-relay
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    environment:
+      ALERT_RELAY_PORT: 8080
+      # Optional forwarding destinations. Without either, notifications are
+      # still recorded in the container log.
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_SLACK_WEBHOOK_URL: ${ALERT_SLACK_WEBHOOK_URL:-}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.2
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - alertmanager_data:/alertmanager
+    depends_on:
+      alert-relay:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
     networks:
@@ -296,6 +397,8 @@ volumes:
   postgres_data:
   user_uploads:
   kyc_storage:
+  prometheus_data:
+  alertmanager_data:
 
 networks:
   backend:
