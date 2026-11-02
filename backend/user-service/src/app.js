@@ -6,9 +6,10 @@ const v1Routes = require("./routes/v1");
 const securityMiddlewares = require("./middlewares/security");
 const corsMiddleware = require("./middlewares/cors");
 const requestLogger = require("./middlewares/requestLogger");
-const { globalLimiter } = require("./middlewares/rateLimiter");
+const { globalLimiter, webhookLimiter } = require("./middlewares/rateLimiter");
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
+const metrics = require("./utils/metrics");
 
 const app = express();
 
@@ -23,9 +24,17 @@ app.disable("x-powered-by");
 app.use(...securityMiddlewares);
 app.use(requestLogger);
 
+// Scraped by Prometheus over the internal network; excluded from request logs
+// and rate limits so a scrape burst cannot throttle real traffic.
+app.use(metrics.httpMiddleware());
+app.get("/metrics", metrics.metricsHandler);
+
 app.use(corsMiddleware);
 
 const WEBHOOK_PATH = `${ROUTES.API_PREFIX}${ROUTES.PAYMENTS.WEBHOOK}`;
+
+// Applied before body parsing so floods are rejected without buffering payloads.
+app.use(WEBHOOK_PATH, webhookLimiter);
 
 app.use(
   express.json({
