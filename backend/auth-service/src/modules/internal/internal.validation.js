@@ -39,4 +39,62 @@ const changePasswordSchema = z
     path: ["newPassword"],
   });
 
-module.exports = { changePasswordSchema };
+const introspectTokenSchema = z
+  .object({
+    token: requiredString("token")
+      .min(16, "token must be at least 16 characters")
+      .max(4096, "token must not exceed 4096 characters"),
+  })
+  .strict();
+
+const accountStatusSchema = z
+  .object({
+    email: emailField,
+    status: z.enum(["ACTIVE", "FROZEN", "SUSPENDED", "CLOSED"]),
+    reason: z
+      .string()
+      .trim()
+      .max(500, "reason must not exceed 500 characters")
+      .optional(),
+    actorId: z.string().trim().max(64).optional(),
+  })
+  .strict();
+
+const accountStatusesSchema = z
+  .object({
+    emails: z
+      .array(emailField)
+      .min(1, "emails must contain at least one address")
+      .max(200, "emails must not exceed 200 entries"),
+  })
+  .strict();
+
+const resetMfaSchema = z
+  .object({
+    email: emailField,
+    actorId: z.string().trim().max(64).optional(),
+  })
+  .strict();
+
+const closeAccountSchema = z
+  .object({
+    email: emailField,
+    password: requiredString("password")
+      .min(1, "password is required")
+      .max(72, "password must not exceed 72 characters"),
+    reason: z
+      .string()
+      .trim()
+      .max(500, "reason must not exceed 500 characters")
+      .optional(),
+  })
+  .strict();
+
+module.exports = {
+  changePasswordSchema,
+  introspectTokenSchema,
+  accountStatusSchema,
+  accountStatusesSchema,
+  resetMfaSchema,
+  closeAccountSchema,
+};
