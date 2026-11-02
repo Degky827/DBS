@@ -1,6 +1,7 @@
 const env = require("../config/env");
 const ApiError = require("../utils/ApiError");
 const logger = require("../config/logger");
+const metrics = require("../utils/metrics");
 
 const TIMEOUT_MS = 15 * 1000;
 
@@ -13,7 +14,7 @@ function requireConfiguration() {
   }
 }
 
-async function requestDidit(path, options = {}) {
+async function requestDidit(path, operation, options = {}) {
   requireConfiguration();
   let response;
   try {
@@ -27,6 +28,7 @@ async function requestDidit(path, options = {}) {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
+    metrics.recordKycProviderFailure(operation);
     logger.warn(
       { error: error.name === "TimeoutError" ? "timeout" : "unreachable" },
       "Didit API unavailable"
@@ -38,6 +40,7 @@ async function requestDidit(path, options = {}) {
   }
 
   if (!response.ok) {
+    metrics.recordKycProviderFailure(operation);
     logger.warn(
       { statusCode: response.status },
       "Didit API rejected a KYC request"
@@ -54,12 +57,13 @@ async function requestDidit(path, options = {}) {
   try {
     return await response.json();
   } catch {
+    metrics.recordKycProviderFailure(operation);
     throw ApiError.badGateway("Identity verification provider returned invalid data");
   }
 }
 
 async function createSession({ submissionId }) {
-  const result = await requestDidit("/v3/session/", {
+  const result = await requestDidit("/v3/session/", "create_session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -87,6 +91,7 @@ async function createSession({ submissionId }) {
 async function getSessionDecision(sessionId) {
   return requestDidit(
     `/v3/session/${encodeURIComponent(sessionId)}/decision/`,
+    "get_decision",
     { method: "GET" }
   );
 }
