@@ -2,8 +2,10 @@ const router = require("express").Router();
 
 const ROUTES = require("../../constants/routes");
 const authenticate = require("../../middlewares/authenticate");
+const requireActiveAccount = require("../../middlewares/requireActiveAccount");
 const requireKycApproval = require("../../middlewares/requireKycApproval");
 const requireRole = require("../../middlewares/requireRole");
+const requireStepUp = require("../../middlewares/requireStepUp");
 const validate = require("../../middlewares/validate");
 const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
@@ -176,6 +178,8 @@ router.get(
 router.post(
   ROUTES.PAYMENTS.DEPOSITS,
   authenticate,
+  requireActiveAccount,
+  requireStepUp,
   requireKycApproval,
   requireConfiguredProvider,
   validate(depositSchema),
@@ -187,6 +191,8 @@ router.post(
 router.get(
   ROUTES.PAYMENTS.DEPOSITS_VERIFY,
   authenticate,
+  requireActiveAccount,
+  requireStepUp,
   requireKycApproval,
   verifyDeposit
 );
@@ -209,6 +215,8 @@ router.post(ROUTES.PAYMENTS.WEBHOOK, handleWebhook);
 router.post(
   ROUTES.PAYMENTS.WITHDRAWALS,
   authenticate,
+  requireActiveAccount,
+  requireStepUp,
   requireKycApproval,
   validate(withdrawalSchema),
   requireIdempotencyKey,
@@ -222,6 +230,7 @@ router.get(
 router.post(
   ROUTES.PAYMENTS.WITHDRAWAL_CANCEL,
   authenticate,
+  requireActiveAccount,
   cancelWithdrawal
 );
 

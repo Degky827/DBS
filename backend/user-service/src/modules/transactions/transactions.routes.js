@@ -4,8 +4,10 @@ const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const ROUTES = require("../../constants/routes");
 const authenticate = require("../../middlewares/authenticate");
+const requireActiveAccount = require("../../middlewares/requireActiveAccount");
 const requireKycApproval = require("../../middlewares/requireKycApproval");
 const requireRole = require("../../middlewares/requireRole");
+const requireStepUp = require("../../middlewares/requireStepUp");
 const validate = require("../../middlewares/validate");
 const usersService = require("../users/users.service");
 const walletsService = require("../wallets/wallets.service");
@@ -94,6 +96,8 @@ const reverseTransaction = async (req, res) => {
 router.post(
   ROUTES.TRANSACTIONS.TRANSFERS,
   authenticate,
+  requireActiveAccount,
+  requireStepUp,
   requireKycApproval,
   validate(transferSchema),
   requireIdempotencyKey,
@@ -112,7 +116,9 @@ router.get(ROUTES.TRANSACTIONS.BY_REFERENCE, authenticate, getTransaction);
 router.post(
   ROUTES.TRANSACTIONS.REVERSALS,
   authenticate,
+  requireActiveAccount,
   requireRole("ADMIN"),
+  requireStepUp,
   validate(reversalSchema),
   requireIdempotencyKey,
   reverseTransaction
