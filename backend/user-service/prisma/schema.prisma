@@ -33,12 +33,15 @@ model UserProfile {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  devSessions  DevSession[]
-  wallet       Wallet?
+  devSessions        DevSession[]
+  wallet             Wallet?
   @@index([accountStatus])
-  transactions Transaction[]
-  payments     Payment[]
-  withdrawals  Withdrawal[]
+  transactions       Transaction[]
+  payments           Payment[]
+  withdrawals        Withdrawal[]
+  beneficiaries      Beneficiary[]
+  scheduledTransfers ScheduledTransfer[]
+  disputes           Dispute[]
 }
 
 model DevSession {
@@ -68,6 +71,7 @@ model Wallet {
   payments             Payment[]
   ledgerAccount        LedgerAccount?
   withdrawals          Withdrawal[]
+  scheduledTransfers   ScheduledTransfer[]
 }
 
 model Transaction {
@@ -92,6 +96,7 @@ model Transaction {
   payment             Payment?              @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   journalEntry        JournalEntry?
   reversals           TransactionReversal[]
+  disputes            Dispute[]
   createdAt           DateTime              @default(now())
 
   @@unique([initiatedByUserId, idempotencyKey])
@@ -303,4 +308,108 @@ model PaymentReconciliationRecord {
 
   @@index([paymentId, createdAt])
   @@index([outcome])
+}
+
+// --- Transactional outbox ------------------------------------------------
+
+// Written in the same transaction as the business change, then relayed to
+// downstream consumers by the outbox dispatcher. The unique eventId makes
+// relay deliveries idempotent.
+model OutboxEvent {
+  id            String    @id @default(uuid())
+  eventId       String    @unique @default(uuid())
+  type          String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  occurredAt    DateTime  @default(now())
+  publishedAt   DateTime?
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([publishedAt, nextAttemptAt])
+  @@index([aggregateType, aggregateId])
+  @@index([type, occurredAt])
+}
+
+// --- Saved beneficiaries -------------------------------------------------
+
+model Beneficiary {
+  id                  String      @id @default(uuid())
+  userId              String
+  user                UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  nickname            String?
+  accountNumber       String
+  bankName            String      @default("Meridian Bank")
+  bankCode            String?
+  destinationWalletId String?
+  isFavorite          Boolean     @default(false)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  @@unique([userId, accountNumber])
+  @@index([userId, createdAt])
+}
+
+// --- Scheduled transfers -------------------------------------------------
+
+model ScheduledTransfer {
+  id                  String      @id @default(uuid())
+  userId              String
+  user                UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  destinationWalletId String
+  destinationWallet   Wallet      @relation(fields: [destinationWalletId], references: [id], onDelete: Restrict)
+  amount              Decimal     @db.Decimal(19, 2)
+  currency            String      @default("ETB") @db.VarChar(3)
+  frequency           String      @default("ONCE")
+  nextRunAt           DateTime
+  timezone            String      @default("Africa/Addis_Ababa")
+  status              String      @default("ACTIVE")
+  lastRunAt           DateTime?
+  lastTransactionId   String?
+  failureReason       String?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status, nextRunAt])
+}
+
+// --- Dispute management --------------------------------------------------
+
+model Dispute {
+  id             String         @id @default(uuid())
+  reference      String         @unique @default(uuid())
+  userId         String
+  user           UserProfile    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  transactionId  String
+  transaction    Transaction    @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  reason         String
+  description    String
+  status         String         @default("OPEN")
+  resolution     String?
+  resolvedAmount Decimal?       @db.Decimal(19, 2)
+  assignedTo     String?
+  openedAt       DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  events         DisputeEvent[]
+
+  @@index([userId, openedAt])
+  @@index([status, openedAt])
+  @@index([transactionId])
+}
+
+model DisputeEvent {
+  id          String   @id @default(uuid())
+  disputeId   String
+  dispute     Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  type        String
+  note        String?
+  actorUserId String?
+  createdAt   DateTime @default(now())
+
+  @@index([disputeId, createdAt])
 }
