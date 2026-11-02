@@ -1,0 +1,37 @@
+# Alertmanager routing for the monitoring Compose profile.
+#
+# Notifications are delivered to the alert-relay container, which records every
+# alert in `docker compose logs alert-relay` and forwards it to Slack
+# (ALERT_SLACK_WEBHOOK_URL) and/or a generic webhook (ALERT_WEBHOOK_URL) when
+# those variables are set. Point this route at a different receiver if your
+# on-call platform expects another format:
+#
+#   receivers:
+#     - name: oncall
+#       webhook_configs:
+#         - url: https://alerts.example.com/hooks/banking
+#           send_resolved: true
+#
+# Alertmanager does not expand environment variables, so receiver URLs are
+# fixed here; changing the relay port requires editing both files.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: relay
+  group_by: [alertname, service]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: relay
+      repeat_interval: 1h
+
+receivers:
+  - name: relay
+    webhook_configs:
+      - url: http://alert-relay:8080/alerts
+        send_resolved: true
