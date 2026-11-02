@@ -6,6 +6,20 @@ const generateRefreshToken = () => crypto.randomBytes(48).toString("hex");
 const hashRefreshToken = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
 
-const refreshTokenExpiry = () => new Date(Date.now() + env.REFRESH_TOKEN_TTL_MS);
+// A session may slide forward on rotation, but never past the absolute
+// family deadline established at login.
+const refreshTokenExpiry = (familyExpiresAt = null) => {
+  const slidingExpiry = Date.now() + env.REFRESH_TOKEN_TTL_MS;
+  if (!familyExpiresAt) return new Date(slidingExpiry);
+  return new Date(Math.min(slidingExpiry, familyExpiresAt.getTime()));
+};
 
-module.exports = { generateRefreshToken, hashRefreshToken, refreshTokenExpiry };
+const absoluteRefreshTokenExpiry = () =>
+  new Date(Date.now() + env.REFRESH_TOKEN_ABSOLUTE_TTL_MS);
+
+module.exports = {
+  generateRefreshToken,
+  hashRefreshToken,
+  refreshTokenExpiry,
+  absoluteRefreshTokenExpiry,
+};

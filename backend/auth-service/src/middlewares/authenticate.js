@@ -1,7 +1,7 @@
 const ApiError = require("../utils/ApiError");
-const { verifyAccessToken } = require("../utils/jwt.util");
+const { validateAccessToken } = require("../services/session.service");
 
-module.exports = function authenticate(req, res, next) {
+module.exports = async function authenticate(req, res, next) {
   try {
     const header = req.headers.authorization || "";
     const [scheme, token] = header.split(" ");
@@ -13,7 +13,7 @@ module.exports = function authenticate(req, res, next) {
       );
     }
 
-    req.user = verifyAccessToken(token.trim());
+    req.user = await validateAccessToken(token.trim());
     return next();
   } catch (error) {
     return next(error);
