@@ -63,7 +63,7 @@ class ChapaAdapter {
 
   get isConfigured() {
     return Boolean(
-      /^CHAPA_TEST_[A-Za-z0-9_-]+$/.test(this.secretKey || "") &&
+      /^(?:CHASECK_TEST-|CHAPA_TEST_)[A-Za-z0-9_-]+$/.test(this.secretKey || "") &&
         this.webhookSecret &&
         this.webhookSecret.length >= 16 &&
         this.isBaseUrlAllowed &&
@@ -221,6 +221,8 @@ class ChapaAdapter {
     }
 
     const rawStatus = String(payment.status || "").toUpperCase();
+    // Unrecognized statuses must not be treated as still-pending: doing so
+    // hides provider-side ambiguity from reconciliation and manual review.
     const status =
       rawStatus === "SUCCESS"
         ? "SUCCESS"
@@ -228,7 +230,7 @@ class ChapaAdapter {
           ? "PENDING"
           : ["FAILED", "CANCELLED", "INCOMPLETE", "BLOCKED"].includes(rawStatus)
             ? "FAILED"
-            : "PENDING";
+            : "UNKNOWN";
 
     return {
       status,
