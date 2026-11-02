@@ -107,7 +107,20 @@ const changePasswordSchema = z
     path: ["confirmNewPassword"],
   });
 
+const closeAccountSchema = z
+  .object({
+    password: requiredString("password")
+      .min(1, "password is required")
+      .max(72, "password must not exceed 72 characters"),
+    reason: z.string().trim().max(500).optional(),
+    confirm: z.literal("CLOSE", {
+      error: 'confirm must be the literal string "CLOSE"',
+    }),
+  })
+  .strict();
+
 module.exports = {
   updateProfileSchema,
   changePasswordSchema,
+  closeAccountSchema,
 };

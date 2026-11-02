@@ -4,12 +4,15 @@ const ApiError = require("../../utils/ApiError");
 const ApiResponse = require("../../utils/ApiResponse");
 const ROUTES = require("../../constants/routes");
 const authenticate = require("../../middlewares/authenticate");
+const requireActiveAccount = require("../../middlewares/requireActiveAccount");
 const requireRole = require("../../middlewares/requireRole");
+const requireStepUp = require("../../middlewares/requireStepUp");
 const adminService = require("./admin.service");
 const {
   periodSchema,
   userListSchema,
   userIdParamsSchema,
+  accountStatusSchema,
   referenceParamsSchema,
   platformTransactionSchema,
   platformPaymentSchema,
@@ -43,6 +46,15 @@ const validateParams = (schema) => (req, res, next) => {
   return next();
 };
 
+const validateBody = (schema) => (req, res, next) => {
+  const result = schema.safeParse(req.body || {});
+  if (!result.success) {
+    return next(ApiError.validation(toFieldErrors(result.error.issues)));
+  }
+  req.body = result.data;
+  return next();
+};
+
 const getOverview = async (req, res) => {
   const data = await adminService.getOverview(req.staffQuery);
   return ApiResponse.success(res, data, "Platform overview fetched");
@@ -66,6 +78,24 @@ const listUsers = async (req, res) => {
 const getUser = async (req, res) => {
   const data = await adminService.getUserById(req.params.userId);
   return ApiResponse.success(res, data, "User fetched");
+};
+
+const updateUserStatus = async (req, res) => {
+  const data = await adminService.updateUserStatus({
+    userId: req.params.userId,
+    status: req.body.status,
+    reason: req.body.reason,
+    actorId: req.user.id,
+  });
+  return ApiResponse.success(res, data, "Account status updated");
+};
+
+const resetUserMfa = async (req, res) => {
+  const data = await adminService.resetUserMfa({
+    userId: req.params.userId,
+    actorId: req.user.id,
+  });
+  return ApiResponse.success(res, data, "Multi-factor authentication reset");
 };
 
 const listTransactions = async (req, res) => {
@@ -117,6 +147,28 @@ router.get(
   requireRole("ADMIN"),
   validateParams(userIdParamsSchema),
   getUser
+);
+
+// Account lifecycle actions are ADMIN-only and, for staff with MFA enrolled,
+// require a fresh second-factor verification.
+router.patch(
+  ROUTES.ADMIN.USER_STATUS,
+  authenticate,
+  requireRole("ADMIN"),
+  requireActiveAccount,
+  requireStepUp,
+  validateParams(userIdParamsSchema),
+  validateBody(accountStatusSchema),
+  updateUserStatus
+);
+router.post(
+  ROUTES.ADMIN.USER_MFA_RESET,
+  authenticate,
+  requireRole("ADMIN"),
+  requireActiveAccount,
+  requireStepUp,
+  validateParams(userIdParamsSchema),
+  resetUserMfa
 );
 router.get(
   ROUTES.ADMIN.AUDIT_LOGS,
