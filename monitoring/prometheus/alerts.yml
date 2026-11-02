@@ -1,0 +1,160 @@
+# Alert rules for the banking stack. See docs/security-and-operations.md
+# section 10 for the response expectations behind each alert.
+
+groups:
+  - name: availability
+    rules:
+      - alert: ServiceDown
+        expr: up{job=~"auth-service|user-service|kyc-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} cannot be scraped"
+          description: >-
+            Prometheus has failed to scrape {{ $labels.instance }} for two
+            minutes. Check the container status and logs before restarting.
+
+      - alert: ServiceNotReady
+        expr: banking_readiness == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} readiness probe is failing"
+          description: >-
+            The readiness endpoint reports a dependency failure (usually
+            PostgreSQL). Requests will fail until it recovers.
+
+  - name: http
+    rules:
+      - alert: HighServerErrorRate
+        expr: >-
+          (
+            sum by (service) (rate(banking_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum by (service) (rate(banking_http_requests_total[5m]))
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} 5xx rate above 2%"
+          description: >-
+            More than 2% of requests have failed with a server error for five
+            minutes. Correlate with logs using X-Request-Id.
+
+      - alert: HighRequestLatency
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum by (le, service) (rate(banking_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} p95 latency above 1s"
+          description: >-
+            The 95th percentile request duration has exceeded one second for
+            ten minutes. Check database latency and provider timeouts.
+
+      - alert: RateLimitSpike
+        expr: >-
+          sum by (service) (
+            increase(banking_http_requests_total{status="429"}[10m])
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated 429 responses on {{ $labels.service }}"
+          description: >-
+            More than 30 rate-limited requests in ten minutes. This can be
+            credential stuffing or a misbehaving client.
+
+  - name: security
+    rules:
+      - alert: LoginFailureBurst
+        expr: >-
+          increase(
+            banking_security_events_total{event="LOGIN_FAILED"}[10m]
+          ) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High login failure volume on auth-service"
+          description: >-
+            More than 50 failed logins in ten minutes. Review source IPs and
+            consider tightening login rate limits.
+
+      - alert: MfaFailureBurst
+        expr: >-
+          increase(
+            banking_security_events_total{event="MFA_VERIFY_FAILED"}[10m]
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High MFA verification failure volume"
+          description: >-
+            Repeated MFA failures can indicate a compromised password being
+            used against enrolled accounts.
+
+      - alert: RefreshTokenReuseDetected
+        expr: >-
+          increase(
+            banking_security_events_total{event="REFRESH_TOKEN_REUSE_DETECTED"}[10m]
+          ) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Refresh token reuse detected"
+          description: >-
+            A revoked refresh token was presented. The family is revoked
+            automatically; investigate whether a token was stolen.
+
+  - name: kyc
+    rules:
+      - alert: KycProviderFailures
+        expr: >-
+          increase(banking_kyc_provider_failures_total[10m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KYC provider calls are failing ({{ $labels.operation }})"
+          description: >-
+            More than three provider failures in ten minutes. Check Didit
+            status and the DIDIT_API_KEY configuration.
+
+      - alert: KycWebhookRejected
+        expr: >-
+          increase(banking_kyc_webhook_events_total{result=~"rejected|error"}[10m]) > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "KYC webhooks are being rejected ({{ $labels.result }})"
+          description: >-
+            Signature or processing failures. Verify DIDIT_WEBHOOK_SECRET and
+            whether requests originate from the provider.
+
+  - name: payments
+    rules:
+      - alert: ReconciliationNeedsReview
+        expr: >-
+          increase(
+            banking_payment_reconciliation_total{outcome=~"MISMATCH|MANUAL_REVIEW|ERROR"}[15m]
+          ) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Payment reconciliation requires manual review ({{ $labels.outcome }})"
+          description: >-
+            A Chapa payment could not be reconciled automatically. Follow the
+            reconciliation runbook before writing any ledger entry.
