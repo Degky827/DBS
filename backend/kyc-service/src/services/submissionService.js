@@ -2,11 +2,57 @@ const prisma = require("../config/database");
 const ApiError = require("../utils/ApiError");
 const userServiceClient = require("./userServiceClient");
 const { SUBMISSION_STATUS } = require("../constants/kycStatus");
+const { evaluateApproval } = require("../utils/approval");
 
 async function createSubmission(userId, authorization) {
   await userServiceClient.getMyProfile(authorization);
 
   return prisma.$transaction(async (tx) => {
+    const latest = await tx.kycSubmission.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+        approvedAt: true,
+        approvalExpiresAt: true,
+        revokedAt: true,
+      },
+    });
+
+    if (latest) {
+      // Retrying submission creation for an editable application returns the
+      // existing one instead of creating a parallel draft with its own
+      // provider session.
+      if (
+        latest.status === SUBMISSION_STATUS.DRAFT ||
+        latest.status === SUBMISSION_STATUS.NEEDS_RESUBMISSION
+      ) {
+        return { ...latest, reused: true };
+      }
+
+      if (latest.status === SUBMISSION_STATUS.APPROVED) {
+        const { isApproved } = evaluateApproval(latest);
+        if (isApproved) {
+          throw ApiError.conflict(
+            "KYC is already approved for this account",
+            "KYC_ALREADY_APPROVED"
+          );
+        }
+        // An expired or revoked approval may be replaced by a new application.
+      } else if (
+        latest.status === SUBMISSION_STATUS.IN_PROGRESS ||
+        latest.status === SUBMISSION_STATUS.PENDING_REVIEW
+      ) {
+        throw ApiError.conflict(
+          "A KYC application is already in progress",
+          "KYC_APPLICATION_IN_PROGRESS"
+        );
+      }
+    }
+
     const submission = await tx.kycSubmission.create({
       data: { userId },
       select: {
@@ -41,6 +87,10 @@ async function getCurrentStatus(userId) {
       updatedAt: true,
       submittedAt: true,
       reviewedAt: true,
+      approvedAt: true,
+      approvalExpiresAt: true,
+      revokedAt: true,
+      revokedReason: true,
       decisionReason: true,
       documentVerificationStatus: true,
       dataComparisonStatus: true,
@@ -68,31 +118,39 @@ async function getCurrentStatus(userId) {
     throw ApiError.notFound("No KYC submission found", "KYC_SUBMISSION_NOT_FOUND");
   }
 
-  return submission;
+  const approval = evaluateApproval(submission);
+  return { ...submission, ...approval };
 }
 
 async function getInternalStatus(userId) {
-  const [latestSubmission, latestDecision] = await Promise.all([
-    prisma.kycSubmission.findFirst({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, status: true, updatedAt: true },
-    }),
-    prisma.kycSubmission.findFirst({
-      where: { userId, reviewedAt: { not: null } },
-      orderBy: { reviewedAt: "desc" },
-      select: { id: true, status: true, reviewedAt: true },
-    }),
-  ]);
+  const latestSubmission = await prisma.kycSubmission.findFirst({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      status: true,
+      updatedAt: true,
+      reviewedAt: true,
+      approvedAt: true,
+      approvalExpiresAt: true,
+      revokedAt: true,
+    },
+  });
 
-  // The most recent completed officer decision is authoritative. A newer
-  // in-progress or draft submission does not revoke an existing approval.
+  // The newest application is authoritative: an approval stops counting once
+  // a later application exists, expires, or is revoked.
+  const approval = evaluateApproval(latestSubmission);
   return {
     userId,
-    isApproved: latestDecision?.status === SUBMISSION_STATUS.APPROVED,
+    isApproved: approval.isApproved,
     status: latestSubmission?.status || "NOT_SUBMITTED",
+    effectiveStatus: approval.effectiveStatus || "NOT_SUBMITTED",
+    approvalExpired: approval.approvalExpired,
     submissionId: latestSubmission?.id || null,
-    reviewedAt: latestDecision?.reviewedAt || null,
+    reviewedAt: latestSubmission?.reviewedAt || null,
+    approvedAt: latestSubmission?.approvedAt || null,
+    approvalExpiresAt: latestSubmission?.approvalExpiresAt || null,
+    revokedAt: latestSubmission?.revokedAt || null,
     updatedAt: latestSubmission?.updatedAt || null,
   };
 }
