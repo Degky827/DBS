@@ -17,6 +17,7 @@ import Alert from "../../components/ui/Alert";
 import StatusBadge from "../../components/ui/StatusBadge";
 import { Skeleton } from "../../components/ui/Spinner";
 import { useAccount } from "../../context/AccountContext";
+import MfaCard from "../../components/security/MfaCard";
 import {
   getNotificationPreferences,
   logoutUser,
@@ -242,6 +243,10 @@ export default function Settings() {
                 }
               />
             </div>
+          </StaggerItem>
+
+          <StaggerItem>
+            <MfaCard />
           </StaggerItem>
 
           <StaggerItem className="card">
