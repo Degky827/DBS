@@ -18,9 +18,20 @@ const ROUTES = Object.freeze({
     FORGOT_PASSWORD: "/forgot-password",
     RESET_PASSWORD: "/reset-password",
     NOTIFICATION_PREFERENCES: "/me/notification-preferences",
+    MFA: "/mfa",
+    MFA_SETUP: "/mfa/setup",
+    MFA_SETUP_CONFIRM: "/mfa/setup/confirm",
+    MFA_DISABLE: "/mfa/disable",
+    MFA_VERIFY: "/mfa/verify",
+    MFA_STEP_UP: "/mfa/step-up",
   }),
   INTERNAL: Object.freeze({
     CHANGE_PASSWORD: "/users/change-password",
+    INTROSPECT_TOKEN: "/tokens/introspect",
+    ACCOUNT_STATUS: "/users/status",
+    ACCOUNT_STATUSES: "/users/statuses",
+    CLOSE_ACCOUNT: "/users/close",
+    RESET_MFA: "/users/mfa/reset",
   }),
 });
 

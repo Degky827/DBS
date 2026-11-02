@@ -1,6 +1,7 @@
 const authService = require("./auth.service");
 const ApiResponse = require("../../utils/ApiResponse");
 const ApiError = require("../../utils/ApiError");
+const { verifyAccessToken } = require("../../utils/jwt.util");
 const {
   readRefreshToken,
   setRefreshCookie,
@@ -13,7 +14,21 @@ const register = async (req, res) => {
 };
 
 const login = async (req, res) => {
-  const { user, accessToken, refreshToken } = await authService.login(req.body);
+  const result = await authService.login(req.body);
+
+  if (result.mfaRequired) {
+    return ApiResponse.success(
+      res,
+      {
+        mfaRequired: true,
+        mfaToken: result.mfaToken,
+        expiresInMs: result.expiresInMs,
+      },
+      "Multi-factor authentication required"
+    );
+  }
+
+  const { user, accessToken, refreshToken } = result;
   setRefreshCookie(res, refreshToken);
   return ApiResponse.success(res, { user, accessToken }, "Login successful");
 };
@@ -69,9 +84,22 @@ const refresh = async (req, res) => {
   }
 };
 
+const readAccessClaims = (req) => {
+  const header = req.headers.authorization || "";
+  const [scheme, token] = header.split(" ");
+  if (scheme !== "Bearer" || !token) return null;
+  try {
+    return verifyAccessToken(token.trim());
+  } catch {
+    // Logout remains best effort: an invalid or expired access token simply
+    // contributes no revocation information.
+    return null;
+  }
+};
+
 const logout = async (req, res) => {
   const refreshToken = readRefreshToken(req);
-  const result = await authService.logout(refreshToken);
+  const result = await authService.logout(refreshToken, readAccessClaims(req));
   clearRefreshCookie(res);
   return ApiResponse.success(res, null, result.message);
 };
