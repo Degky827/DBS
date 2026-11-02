@@ -18,13 +18,15 @@ environment variable), [deployment-guide.md](./deployment-guide.md),
 |---|---|---|
 | Password storage | bcrypt via `backend/auth-service/src/utils/password.util.js`, cost from `BCRYPT_ROUNDS` | Passwords never logged or returned |
 | OTP storage | bcrypt hash (`otp.util.js`) | Plain OTP exists only in the email and the request |
-| Access token | JWT, 15-minute default (`ACCESS_TOKEN_TTL`), HS256 or RS256 | Held in Redux memory only; never `localStorage`/`sessionStorage` |
+| Access token | JWT, 15-minute default (`ACCESS_TOKEN_TTL`), HS256 or RS256, with `jti` and `sid` claims | Held in Redux memory only; never `localStorage`/`sessionStorage` |
+| Access-token revocation | `jti` denylist (`AccessTokenRevocation`), `User.tokenValidAfter`, and refresh-family liveness; downstream services introspect tokens that carry `sid` and fail closed when auth-service is unreachable | Logout and password resets invalidate outstanding access tokens immediately |
 | Refresh token | 48 random bytes; only SHA-256 hash stored (`refreshToken.util.js`) | `HttpOnly`, `SameSite=Lax`, path-scoped cookie |
-| Refresh rotation | Every refresh issues a new token and revokes the old one | Token families tracked in `RefreshSession` |
+| Refresh rotation | Every refresh issues a new token and revokes the old one | Token families tracked in `RefreshSession`; each family carries `familyExpiresAt` |
+| Absolute session lifetime | `REFRESH_TOKEN_ABSOLUTE_TTL_MS` (default 30 days) caps the whole family | Sliding expiry (`REFRESH_TOKEN_TTL_MS`) cannot extend past the absolute deadline |
 | Reuse detection | Reuse outside `REFRESH_TOKEN_GRACE_MS` (30 s) revokes the whole family | Concurrent refresh inside the grace window returns `409 REFRESH_RACE` |
-| Logout | Revokes the family and clears the cookie | Idempotent |
+| Logout | Revokes the family, denylists the presented access-token `jti`, and clears the cookie | Idempotent |
 | JWT verification | Algorithm pinned per key type; `alg: none` rejected | Verifiers refuse HS256 when configured for RS256 |
-| Internal service auth | Shared `INTERNAL_SERVICE_KEY` compared with `crypto.timingSafeEqual` | Used for KYC status lookups |
+| Internal service auth | Shared `INTERNAL_SERVICE_KEY` compared with `crypto.timingSafeEqual` | Used for KYC status lookups and `POST /internal/tokens/introspect` |
 
 The frontend stores the access token only in Redux state. A page reload performs
 one silent refresh; the cookie is the only durable credential.
@@ -53,6 +55,13 @@ Additional headers: `X-Content-Type-Options: nosniff`,
 [frontend/nginx.conf](../frontend/nginx.conf) with its own CSP
 (`script-src 'self'`), HSTS, COOP/CORP, and `Permissions-Policy`.
 
+The production image terminates TLS itself when `certs/tls.crt` and
+`certs/tls.key` are mounted; the entrypoint selects
+[frontend/nginx.http.conf](../frontend/nginx.http.conf) otherwise. TLS 1.2 and
+1.3 are enabled, session tickets are disabled, and HTTP redirects to HTTPS
+except for `/healthz` and ACME challenges. See
+[deployment-guide.md](deployment-guide.md#6-tls-certificates).
+
 HSTS is emitted by Nginx when either the direct connection or
 `X-Forwarded-Proto` is HTTPS. Behind a TLS-terminating load balancer, set
 `TRUST_PROXY=1` on the Node services and forward `X-Forwarded-Proto: https`.
@@ -68,6 +77,7 @@ response header. Health and readiness probes are exempt.
 | Login | 10 / 15 min | Per IP **and** email; successful logins not counted | `LOGIN_RATE_LIMIT_MAX` |
 | Sensitive auth | 20 / 15 min | Per IP (register, verify, resend, forgot/reset) | `SENSITIVE_AUTH_RATE_LIMIT_MAX` |
 | Refresh | 60 / 15 min | Per IP | `REFRESH_RATE_LIMIT_MAX` |
+| Provider webhooks | 120 / 15 min | Per IP, dedicated budget for unauthenticated callbacks | `WEBHOOK_RATE_LIMIT_MAX` (user and KYC services) |
 
 `AUTH_RATE_LIMIT_MAX` can raise the sensitive-auth budget where the deployment
 sits behind a trusted shared NAT. Do not raise login limits as a workaround for
@@ -94,23 +104,33 @@ Production startup **fails** rather than degrading when:
   `https://api.chapa.global`;
 - Didit variables are partially configured or the origin is not pinned.
 
-Secrets are read from the environment only. `docs/environment-setup.md` lists
-each variable, its format, whether it is secret, and which services must share
-the same value (`INTERNAL_SERVICE_KEY`, `JWT_PUBLIC_KEY_BASE64`).
+Secrets are read from the process environment or, when `<NAME>_FILE` is set,
+from the file it points to. The file value takes precedence over the plain
+variable, so Compose secrets and Kubernetes secret volumes work without
+exposing values in `docker inspect`. A missing or unreadable file aborts
+startup. `docs/environment-setup.md` lists each variable, its format, whether
+it is secret, and which services must share the same value
+(`INTERNAL_SERVICE_KEY`, `JWT_PUBLIC_KEY_BASE64`).
 
 ### Secret rotation
 
-These are documented procedures; no automation exists.
+These are documented procedures; the KYC re-encryption job is the only
+automated rotation step.
 
 **JWT signing key (HS256)**
 
-1. Generate a new secret (`openssl rand -hex 64`).
-2. Deploy it to auth-service only. Access tokens signed with the old secret
+1. Set `MFA_ENCRYPTION_KEY` **before** rotating JWT material. When it is unset,
+   enrolled MFA secrets and recovery codes are derived from `JWT_SECRET` /
+   `JWT_PRIVATE_KEY`; rotating those values makes existing enrolments
+   unreadable.
+2. Generate a new secret (`openssl rand -hex 64`).
+3. Deploy it to auth-service only. Access tokens signed with the old secret
    expire within `ACCESS_TOKEN_TTL` (default 15 min).
-3. Refresh tokens are opaque and unaffected; users stay signed in.
-4. Zero-downtime alternative: issue tokens signed with a new `kid`, run
+4. Refresh tokens are opaque and unaffected; users stay signed in.
+5. Zero-downtime alternative: issue tokens signed with a new `kid`, run
    auth-service with both keys, then remove the old key after the access-token
-   TTL.
+   TTL. The current build accepts one signing key at a time, so this requires
+   running two auth-service instances during the overlap.
 
 **JWT key pair (RS256)**
 
@@ -126,19 +146,50 @@ it requires updating all services that share it in the same deployment window;
 there is no dual-key acceptance, so expect a brief window of failed internal
 calls if services roll at different times. Rotate during a maintenance window.
 
+**`MFA_ENCRYPTION_KEY`**
+
+A 64-hex-key used for AES-256-GCM encryption of TOTP secrets and HMAC hashing
+of recovery codes. Set it at first deployment and keep it stable. Changing or
+adding the key after users have enrolled makes their TOTP secret and recovery
+codes unreadable; those users must re-enroll, or an administrator can reset MFA
+(`POST /api/v1/admin/users/:userId/mfa/reset`). The key is independent of JWT
+material, so setting it decouples MFA from JWT secret rotation.
+
 **`STORAGE_ENCRYPTION_KEY`**
 
-Encrypts KYC documents with AES-256-GCM. **Rotating it makes existing
-documents unreadable** unless they are re-encrypted first. There is no re-key
-tool in the repository. Treat this key as long-lived; if it is compromised,
-plan an offline decrypt-with-old-key → encrypt-with-new-key migration before
-changing the environment variable.
+Encrypts KYC documents and extracted provider data with AES-256-GCM. The
+service supports a keyring: `STORAGE_ENCRYPTION_KEY` is used for all new
+writes, while `STORAGE_ENCRYPTION_KEYS_PREVIOUS` (comma-separated 64-hex keys)
+is tried for reads. This allows zero-downtime rotation:
+
+1. Generate a new key (`openssl rand -hex 32`).
+2. Set the old key in `STORAGE_ENCRYPTION_KEYS_PREVIOUS`, set the new key as
+   `STORAGE_ENCRYPTION_KEY`, and restart kyc-service. Reads keep working; new
+   writes use the new key.
+3. Dry-run the re-encryption job, then run it:
+   ```bash
+   docker compose exec kyc-service node scripts/rotateEncryptionKey.js --dry-run
+   docker compose exec kyc-service node scripts/rotateEncryptionKey.js
+   ```
+   The job rewrites encrypted document files atomically and re-encrypts
+   `ocrText`, `extractedData`, and provider session URLs. It is idempotent; a
+   non-zero exit or any failure in the summary must be investigated before
+   proceeding.
+4. After a clean run, remove the old key from
+   `STORAGE_ENCRYPTION_KEYS_PREVIOUS` and restart. Keep an offline backup of the
+   old key until the next backup restore drill passes.
+
+The startup check rejects a previous key that duplicates the current key or is
+not exactly 64 hex characters.
 
 **Brevo / Didit / Chapa credentials**
 
 Rotate at the provider, then update `.env` and restart the affected service.
 Chapa webhook secret rotation must match the provider dashboard value before
-the next webhook arrives. Didit webhook secrets are verified per request.
+the next webhook arrives. For Didit, publish the new signing secret as
+`DIDIT_WEBHOOK_SECRET` and keep the old value in
+`DIDIT_WEBHOOK_SECRET_PREVIOUS` until in-flight webhooks have drained, then
+remove the previous value.
 
 **Database password**
 
@@ -164,6 +215,21 @@ Wallet creation and money movement require an approved KYC decision:
 Officer review prevents self-review: an officer cannot approve their own
 submission.
 
+Approvals have an explicit lifecycle:
+
+- An approval records `approvedAt` and `approvalExpiresAt`
+  (`KYC_APPROVAL_TTL_DAYS`, default 365). Expired approvals report
+  `effectiveStatus: EXPIRED` and `isApproved: false`, so they no longer satisfy
+  the financial gate.
+- An officer can revoke an approval (`POST
+  /officer/submissions/{submissionId}/revoke`), which moves the submission to
+  `NEEDS_RESUBMISSION` and is written to the review and audit history.
+- A provider `Expired` webhook also revokes an `APPROVED` submission.
+- Resubmission starts a fresh Didit session instead of reusing stale provider
+  or comparison data. Duplicate submission creation is idempotent while a draft
+  exists, conflicts while an application is in progress or validly approved,
+  and starts a new application after expiry, revocation, or rejection.
+
 ## 7. Ledger integrity
 
 The financial ledger is protected at the database layer, not only in
@@ -179,6 +245,11 @@ application code:
 - A payment cannot move to `COMPLETED` without a ledger entry.
 - Wallet balance projection is checked against the ledger balance.
 - Transfers run in `SERIALIZABLE` transactions with idempotency keys.
+- Daily limits serialize concurrent requests per user and business day with
+  advisory locks. Deposits count `PENDING` and `COMPLETED` payments and are
+  re-checked at credit time; reversed transfers reduce their daily usage.
+- Wallet history nets partial and full reversals (including refunded fees) and
+  deposit fees; transaction detail lists the linked reversals.
 - `npm run ledger:verify` audits postings, balances, and reversals against the
   database.
 
@@ -188,9 +259,11 @@ migration, or restore.
 ## 8. Provider security
 
 - **Chapa**: base URL pinned to `https://api.chapa.global`; only
-  `CHAPA_TEST_*` credentials accepted; webhook HMAC-SHA256 verified with
+  `CHASECK_TEST-*`/`CHAPA_TEST_*` credentials accepted; webhook HMAC-SHA256 verified with
   `timingSafeEqual` over the raw body; deposits disabled when unconfigured;
-  reconciliation records persisted.
+  reconciliation records persisted. Unrecognized provider statuses are reported
+  as `PAYMENT_STATUS_UNKNOWN` and classified as `MANUAL_REVIEW` instead of being
+  silently treated as pending.
 - **Didit**: API origin pinned; webhook signature verified (HMAC-SHA256,
   timing-safe); status mapping is explicit and unknown statuses do not approve.
 - **Brevo**: REST or SMTP key format validated; transport must match key type.
@@ -206,7 +279,7 @@ migration, or restore.
 - Request logs contain method, URL, status, request ID, and IP only.
 - `X-Request-Id` is accepted only when it matches `[A-Za-z0-9._-]{1,64}`,
   otherwise a UUID is generated.
-- Health and readiness probes are excluded from access logs.
+- Health, readiness, and `/metrics` scrapes are excluded from access logs.
 
 Logs are written to stdout/stderr and collected by Docker. **There is no
 centralized log aggregation, retention policy, or alerting** in this
@@ -214,19 +287,80 @@ repository.
 
 ## 10. Monitoring and alerting
 
-What exists:
+Every service exposes Prometheus metrics at `GET /metrics` on its private port.
+The endpoint is registered before the global rate limiter and is excluded from
+access logs. It is not published through Nginx, so it is reachable only from the
+Compose backend network. Set `METRICS_TOKEN` on the services to additionally
+require `Authorization: Bearer <token>` (or `X-Metrics-Token`).
 
-- `/api/v1/health` — liveness, no database access.
-- `/api/v1/ready` — readiness, checks the database, returns `503` when down.
-- Docker Compose health checks for PostgreSQL and all three services.
-- `ledger:verify` for financial integrity.
-- Payment reconciliation for stale Chapa payments.
+Exported series:
 
-What does **not** exist: metrics endpoint, APM/tracing, dashboards,
-error-rate or latency alerts, uptime checks, log-based alarms, or on-call
-routing. A production deployment must add these at the platform layer. At
-minimum, alert on: readiness `503`, 5xx rate, login-limit `429` spikes, KYC
-provider failures, webhook signature failures, and reconciliation mismatches.
+- `banking_http_requests_total{service,method,route,status}` — request counter.
+  Unmatched routes are grouped under `route="unmatched"` to bound cardinality.
+- `banking_http_request_duration_seconds` — latency histogram.
+- `banking_readiness` — `1` while the readiness probe passes, `0` when a
+  dependency check fails.
+- `banking_security_events_total{service,event}` — one increment per audit
+  event (login failures, MFA failures, refresh-token reuse, account changes).
+- `banking_kyc_provider_failures_total{operation}` — Didit call failures.
+- `banking_kyc_webhook_events_total{result}` — `applied`, `ignored`,
+  `duplicate`, `accepted`, `rejected` (signature/timestamp), or `error`.
+- `banking_payment_reconciliation_total{outcome}` — `MATCHED`, `PENDING`,
+  `MISMATCH`, `MANUAL_REVIEW`, or `ERROR`.
+- Process metrics: CPU, RSS, heap, event-loop lag, and service info.
+
+The opt-in monitoring profile runs Prometheus, Alertmanager, and an alert relay:
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+- `monitoring/prometheus/prometheus.yml` scrapes auth-service:5001,
+  user-service:5002, and kyc-service:5003 every 15 seconds.
+- `monitoring/prometheus/alerts.yml` defines availability, HTTP, security, KYC,
+  and payment alerts: `ServiceDown`, `ServiceNotReady`,
+  `HighServerErrorRate`, `HighRequestLatency`, `RateLimitSpike`,
+  `LoginFailureBurst`, `MfaFailureBurst`, `RefreshTokenReuseDetected`,
+  `KycProviderFailures`, `KycWebhookRejected`, and
+  `ReconciliationNeedsReview`.
+- `monitoring/alertmanager/alertmanager.yml` groups by alert and service and
+  repeats critical alerts hourly. Every notification is delivered to
+  `alert-relay`, which records it in `docker compose logs alert-relay`.
+  Set `ALERT_SLACK_WEBHOOK_URL` and/or `ALERT_WEBHOOK_URL` to also forward
+  alerts to Slack or a generic webhook; a failed forward makes Alertmanager
+  retry. Keep the relay URL in sync if you change its port or service name.
+- `monitoring/alert-relay` is a zero-dependency Node service with no published
+  port; it is reachable only from the backend network.
+
+Neither container publishes a host port. Use `docker compose exec prometheus
+wget -qO- localhost:9090/-/healthy` or an SSH tunnel to reach the UI.
+
+### Requiring a metrics token
+
+If the metrics endpoint may be reachable by an untrusted container, create a
+token and enable it consistently:
+
+1. Add `METRICS_TOKEN=$(openssl rand -hex 32)` to `.env`.
+2. Write it for Prometheus:
+   `printf '%s' "$METRICS_TOKEN" > monitoring/secrets/metrics_token`
+   (the directory is gitignored).
+3. Uncomment `bearer_token_file: /etc/prometheus-secrets/metrics_token` in each
+   service job in `monitoring/prometheus/prometheus.yml`.
+4. Recreate the services and Prometheus:
+   `docker compose up -d --force-recreate auth-service user-service kyc-service`
+   then `docker compose --profile monitoring up -d`.
+
+A request without the token receives `401` and is not counted in HTTP metrics.
+
+### Still absent
+
+APM/tracing, pre-built Grafana dashboards, centralized log aggregation,
+external uptime checks, and an on-call rotation are not included. Long-term
+metrics storage is limited by `PROMETHEUS_RETENTION` (default `15d`); ship
+scrapes to a durable remote-write endpoint for longer retention. Alert
+notifications are recorded by `alert-relay` by default; forwarding to a paging
+provider requires `ALERT_WEBHOOK_URL` or a receiver change in
+`monitoring/alertmanager/alertmanager.yml`.
 
 ## 11. Incident response (documented runbook)
 
@@ -257,7 +391,7 @@ These are known and **not** resolved by this audit:
 | Risk | Impact | Mitigation status |
 |---|---|---|
 | No centralized/distributed rate limiting | Brute-force budget resets on restart and multiplies per replica | In-process only |
-| No monitoring/alerting/on-call | Outages and fraud may go unnoticed | Health endpoints only |
+| No monitoring/alerting/on-call | Outages and fraud may go unnoticed | Prometheus rules + Alertmanager + alert relay (log/Slack/webhook); on-call rotation is deployment-specific |
 | No penetration test or external security review | Unknown exploitable issues | Not performed |
 | `STORAGE_ENCRYPTION_KEY` rotation lacks re-key tooling | Key compromise requires manual migration | Documented only |
 | `INTERNAL_SERVICE_KEY` has no dual-key window | Rotation causes brief internal failures | Maintenance window |
@@ -269,9 +403,13 @@ These are known and **not** resolved by this audit:
 ## 13. Security test coverage
 
 Automated tests cover: JWT algorithm pinning and expiry, refresh rotation and
-reuse revocation, grace-window race handling, trusted-origin CSRF checks, CORS
-allowlisting, rate-limit behavior, production startup validation (including
-the Brevo requirement), KYC gating (live cross-service), officer self-review
-prevention, webhook signature verification (Chapa and Didit), document
-encryption, ledger concurrency/precision/atomicity, and reversal invariants.
+reuse revocation, access-token revocation and introspection, absolute
+refresh-family expiry, grace-window race handling, trusted-origin CSRF checks,
+CORS allowlisting, rate-limit behavior (including dedicated webhook budgets),
+production startup validation (including the Brevo requirement), KYC gating
+(live cross-service), KYC resubmission/approval expiry/revocation, officer
+self-review prevention, webhook signature verification (Chapa and Didit),
+document encryption, ledger concurrency/precision/atomicity, deposit daily
+limits, reversal-aware history, reconciliation ambiguity handling, and reversal
+invariants.
 See [testing-guide.md](./testing-guide.md) for commands and counts.

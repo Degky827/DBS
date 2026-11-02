@@ -1,6 +1,6 @@
 # Environment Setup and Variable Inventory
 
-**Last verified:** 2026-10-29  
+**Last verified:** 2026-11-02  
 **Scope:** auth-service, user-service, kyc-service, frontend, Docker Compose, CI.
 
 This document is the authoritative inventory of environment variables actually read by
@@ -28,6 +28,34 @@ Templates that are safe to commit:
 
 Real `.env` files are ignored by the root `.gitignore`. `frontend/.env` is no longer
 tracked; create it locally from `frontend/.env.example`.
+
+### File-based secrets
+
+Every secret-bearing variable also accepts a `<NAME>_FILE` companion containing
+the value. The file wins over the plain variable, and an unreadable file aborts
+startup. This supports Docker Compose secrets, Kubernetes secret volumes, and
+systemd credentials without values appearing in `docker inspect` or process
+arguments:
+
+```yaml
+services:
+  auth-service:
+    volumes:
+      - ./secrets/jwt-secret:/run/secrets/jwt-secret:ro
+    environment:
+      JWT_SECRET_FILE: /run/secrets/jwt-secret
+```
+
+Supported variables:
+
+| Service | Variables |
+|---|---|
+| auth-service | `DATABASE_URL`, `JWT_SECRET`, `JWT_PRIVATE_KEY`, `JWT_PRIVATE_KEY_BASE64`, `JWT_PUBLIC_KEY`, `JWT_PUBLIC_KEY_BASE64`, `INTERNAL_SERVICE_KEY`, `MFA_ENCRYPTION_KEY`, `BREVO_API_KEY`, `API_DOCS_PASSWORD` |
+| user-service | `DATABASE_URL`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, `JWT_PUBLIC_KEY_BASE64`, `INTERNAL_SERVICE_KEY`, `CHAPA_SECRET_KEY`, `CHAPA_WEBHOOK_SECRET`, `API_DOCS_PASSWORD` |
+| kyc-service | `DATABASE_URL`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, `JWT_PUBLIC_KEY_BASE64`, `INTERNAL_SERVICE_KEY`, `STORAGE_ENCRYPTION_KEY`, `DIDIT_API_KEY`, `DIDIT_WEBHOOK_SECRET`, `DIDIT_WEBHOOK_SECRET_PREVIOUS`, `API_DOCS_PASSWORD` |
+
+The TLS certificate and private key are files by nature; see
+[deployment-guide.md](./deployment-guide.md#6-tls-certificates).
 
 ## 2. Values that must match across services
 
@@ -61,7 +89,8 @@ browser actually calls.
 | `JWT_KEY_ID` | No | No | String | `kid` header for key rotation |
 | `JWT_EXPIRES_IN` | No | No | Default `15m` | Access-token lifetime |
 | `JWT_ISSUER` / `JWT_AUDIENCE` | No | No | Defaults `auth-service` / `banking-system` | Must match verifiers |
-| `REFRESH_TOKEN_TTL_MS` | No | No | Default 7 days | Refresh-session lifetime |
+| `REFRESH_TOKEN_TTL_MS` | No | No | Default 7 days | Sliding refresh-session lifetime |
+| `REFRESH_TOKEN_ABSOLUTE_TTL_MS` | No | No | Default 30 days; must be >= `REFRESH_TOKEN_TTL_MS` | Absolute lifetime of a refresh-token family; rotation cannot extend past it |
 | `REFRESH_TOKEN_GRACE_MS` | No | No | Default 30 s | Concurrent-refresh grace window |
 | `REFRESH_COOKIE_NAME` | No | No | Default `meridian_refresh` | Cookie name |
 | `REFRESH_COOKIE_PATH` | No | No | Default `/api/v1/auth` | Must match browser-visible path |
@@ -85,6 +114,11 @@ browser actually calls.
 | `REFRESH_RATE_LIMIT_MAX` | No | No | Default 60 | Refresh/logout limiter |
 | `ENABLE_API_DOCS` | No | No | Default true in development, false in production | Swagger UI |
 | `API_DOCS_USERNAME` / `API_DOCS_PASSWORD` | Only when docs are enabled in production | Password is secret | Username + 16+ char password | Basic auth for docs |
+| `MFA_ENCRYPTION_KEY` | Recommended | Yes | Exactly 64 hex characters | AES-256-GCM key for TOTP secrets and HMAC key for recovery codes; falls back to a key derived from JWT material when unset |
+| `MFA_ISSUER` | No | No | Default `Meridian Bank` | Label shown in authenticator apps |
+| `MFA_CHALLENGE_TTL_MS` | No | No | Default 5 minutes | Lifetime of the short-lived MFA login challenge token |
+| `STEP_UP_TTL_MS` | No | No | Default 10 minutes | Freshness window for step-up authentication |
+| `METRICS_TOKEN` | No | Yes | Bearer token, any string | Requires `Authorization: Bearer <token>` (or `X-Metrics-Token`) on `GET /metrics`; unset means the endpoint is open on the private network |
 
 ## 4. user-service
 
@@ -99,23 +133,26 @@ browser actually calls.
 | `JWT_ALGORITHM` | No | No | `HS256` (default) or `RS256` | Must match auth-service |
 | `JWT_SECRET` / `JWT_PUBLIC_KEY_BASE64` | When `AUTH_MODE=jwt` | Yes / public | Same material as auth-service | Startup fails when missing or invalid |
 | `JWT_ISSUER` / `JWT_AUDIENCE` | No | No | Defaults `auth-service` / `banking-system` | Token verification |
-| `AUTH_SERVICE_URL` | No | No | Base URL, default `http://localhost:5001/api/v1` | Password-change proxy |
+| `AUTH_SERVICE_URL` | Yes in production when `AUTH_MODE=jwt` | No | Base URL, default `http://localhost:5001/api/v1` | Password-change proxy and access-token introspection (revocation checks) |
 | `KYC_SERVICE_URL` | No | No | Base URL, default empty | Wallet, transfer, and deposit operations fail closed with `503 KYC_STATUS_UNAVAILABLE` when unset/unreachable |
 | `INTERNAL_SERVICE_KEY` | Yes in production when KYC is configured | Yes | 32+ high-entropy chars | Internal KYC-status calls |
+| `STEP_UP_TTL_MS` | No | No | Default 10 minutes | Maximum age of the MFA step-up verification before sensitive operations require re-authentication |
 | `AVATAR_UPLOAD_DIR` | No | No | Default `./uploads/avatars` | Avatar storage |
 | `BCRYPT_ROUNDS` | No | No | Default 12 | Password hash cost |
 | `CORS_ORIGIN` | No | No | Explicit origins | Wildcards rejected |
 | `TRUST_PROXY` / `ENABLE_HSTS` | No | No | As auth-service | Proxy/HSTS behavior |
 | `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX` | No | No | Default 15 min / 300 | Global limiter |
 | `AUTH_RATE_LIMIT_MAX` | No | No | Default 20 | Authenticated profile/password operations |
+| `WEBHOOK_RATE_LIMIT_MAX` | No | No | Default 120 / window | Dedicated limiter for the unauthenticated Chapa webhook |
 | `LOG_LEVEL` | No | No | Default `info` | Pino level |
 | `ENABLE_API_DOCS` / `API_DOCS_USERNAME` / `API_DOCS_PASSWORD` | Docs only | Password is secret | As auth-service | Swagger UI |
-| `CHAPA_SECRET_KEY` | No | Yes | Must match `CHAPA_TEST_...` | Deposits stay disabled when empty |
+| `CHAPA_SECRET_KEY` | No | Yes | Must be a test key (`CHASECK_TEST-...` or `CHAPA_TEST_...`) | Deposits stay disabled when empty |
 | `CHAPA_WEBHOOK_SECRET` | When Chapa is enabled | Yes | 16+ chars | Webhook HMAC |
 | `CHAPA_BASE_URL` | No | No | Must be `https://api.chapa.global` | Pinned test-mode host |
 | `CHAPA_CALLBACK_URL` / `CHAPA_RETURN_URL` | When Chapa is enabled | No | HTTPS URLs | Provider callback and browser return |
 | `RECONCILIATION_ENABLED` | No | No | Default false | Scheduled reconciliation |
 | `RECONCILIATION_INTERVAL_MS` / `RECONCILIATION_STALE_MINUTES` / `RECONCILIATION_BATCH_SIZE` | No | No | Defaults 5 min / 15 min / 25 | Reconciliation tuning |
+| `METRICS_TOKEN` | No | Yes | Bearer token, any string | Requires `Authorization: Bearer <token>` on `GET /metrics`; unset means the endpoint is open on the private network |
 
 ## 5. kyc-service
 
@@ -129,21 +166,25 @@ browser actually calls.
 | `JWT_ISSUER` / `JWT_AUDIENCE` | No | No | Defaults `auth-service` / `banking-system` | Token verification |
 | `INTERNAL_SERVICE_KEY` | Yes in production | Yes | 32+ high-entropy chars | Internal status and officer-document routes |
 | `USER_SERVICE_URL` | No | No | Default `http://localhost:5002/api/v1` | Profile lookup/comparison |
-| `AUTH_SERVICE_URL` | No | No | Default `http://localhost:5001/api/v1` | Officer/account lookup |
+| `AUTH_SERVICE_URL` | Yes in production | No | Default `http://localhost:5001/api/v1` | Officer/account lookup and access-token introspection (revocation checks) |
 | `CORS_ORIGIN` / `TRUST_PROXY` / `ENABLE_HSTS` | No | No | As auth-service | Browser/proxy behavior |
 | `LOG_LEVEL` | No | No | Default `info` | Pino level |
 | `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX` | No | No | Default 15 min / 300 | Global limiter |
 | `UPLOAD_RATE_LIMIT_MAX` | No | No | Default 10 | Document-upload limiter |
 | `AUTH_RATE_LIMIT_MAX` | No | No | Default 20 | Sensitive authenticated operations |
+| `WEBHOOK_RATE_LIMIT_MAX` | No | No | Default 120 / window | Dedicated limiter for the unauthenticated Didit webhook |
+| `KYC_APPROVAL_TTL_DAYS` | No | No | Default 365 (1–3650) | Approved KYC validity; expired approvals require a new application |
 | `ENABLE_API_DOCS` / `API_DOCS_USERNAME` / `API_DOCS_PASSWORD` | Docs only | Password is secret | As auth-service | Swagger UI |
 | `STORAGE_DIR` | No | No | Default `<service>/storage` | Encrypted document storage |
 | `MAX_FILE_SIZE_BYTES` | No | No | Default 10 MiB | Upload size limit |
-| `STORAGE_ENCRYPTION_KEY` | **Yes in production** | Yes | Exactly 64 hex characters | AES-256-GCM document encryption; startup fails if missing/malformed. Losing it makes stored documents unreadable |
+| `STORAGE_ENCRYPTION_KEY` | **Yes in production** | Yes | Exactly 64 hex characters | AES-256-GCM document encryption; startup fails if missing/malformed. Losing every key in the keyring makes stored documents unreadable |
+| `STORAGE_ENCRYPTION_KEYS_PREVIOUS` | No | Yes | Comma-separated 64-hex keys | Retired keys accepted for decryption during rotation; must not include the current key |
 | `DIDIT_API_BASE_URL` | No | No | Must be `https://verification.didit.me` | Pinned provider origin |
 | `DIDIT_API_KEY` | No | Yes | Provider API key | Didit session creation; returns 503 when unconfigured |
 | `DIDIT_WORKFLOW_ID` | No | No | Workflow UUID | Didit workflow |
 | `DIDIT_WEBHOOK_SECRET` | No | Yes | Provider signing secret | Webhook verification; returns 503 when unconfigured |
 | `DIDIT_WEBHOOK_SECRET_PREVIOUS` | No | Yes | Previous signing secret | Rotation overlap window |
+| `METRICS_TOKEN` | No | Yes | Bearer token, any string | Requires `Authorization: Bearer <token>` on `GET /metrics`; unset means the endpoint is open on the private network |
 
 ## 6. frontend
 
@@ -160,9 +201,12 @@ encryption keys in frontend variables.
 ## 7. Production Compose-only values
 
 These are consumed by `docker-compose.yml` interpolation rather than by Node code:
-`APP_ORIGIN`, `FRONTEND_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `VITE_AUTH_API`,
-`VITE_USER_API`, `VITE_KYC_API`. The services receive concrete `DATABASE_URL`,
-`CORS_ORIGIN`, and proxy settings from the Compose file.
+`APP_ORIGIN`, `TLS_ENABLED`, `FRONTEND_HTTP_PORT`, `FRONTEND_HTTPS_PORT`,
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, `VITE_AUTH_API`, `VITE_USER_API`,
+`VITE_KYC_API`, `METRICS_TOKEN`, `PROMETHEUS_RETENTION`. The frontend reads
+`certs/tls.crt` and `certs/tls.key`; the services receive concrete `DATABASE_URL`,
+`CORS_ORIGIN`, and proxy settings from the Compose file. The monitoring profile
+reads `PROMETHEUS_RETENTION` (default `15d`).
 
 ## 8. Local setup
 
@@ -218,7 +262,7 @@ to production templates.
 2. In production, auth-service now refuses to start without a Brevo key because login
    requires a verified email address.
 3. Chapa deposits remain disabled and return an explicit configuration error until a
-   `CHAPA_TEST_` key and the three companion values are supplied.
+   `CHASECK_TEST-` (or `CHAPA_TEST_`) key and the three companion values are supplied.
 4. Didit session creation returns 503 until the API key, workflow ID, and webhook secret
    are supplied.
 5. Record the missing credential in the release checklist and verify the integration in a
