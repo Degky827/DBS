@@ -64,11 +64,12 @@ const createHistogram = (name, help, labelNames, buckets = DEFAULT_BUCKETS) => {
   };
 };
 
-const httpRequests = createCounter(
-  "banking_http_requests_total",
-  "Completed HTTP requests",
-  ["service", "method", "route", "status"]
-);
+const httpRequests = createCounter("banking_http_requests_total", "Completed HTTP requests", [
+  "service",
+  "method",
+  "route",
+  "status",
+]);
 const httpDuration = createHistogram(
   "banking_http_request_duration_seconds",
   "HTTP request duration in seconds",
@@ -88,14 +89,26 @@ const reconciliationOutcomes = createCounter(
   "Payment reconciliation outcomes",
   ["service", "outcome"]
 );
+const outboxEvents = createCounter(
+  "banking_outbox_events_total",
+  "Transactional outbox delivery outcomes",
+  ["service", "outcome"]
+);
+const outboxPending = createGauge(
+  "banking_outbox_pending",
+  "Outbox events still awaiting delivery"
+);
 
 const markReady = (ready) => readiness.set(ready ? 1 : 0, { service: SERVICE_NAME });
 
-const recordSecurityEvent = (event) =>
-  securityEvents.inc({ service: SERVICE_NAME, event });
+const recordSecurityEvent = (event) => securityEvents.inc({ service: SERVICE_NAME, event });
 
 const recordReconciliationOutcome = (outcome) =>
   reconciliationOutcomes.inc({ service: SERVICE_NAME, outcome });
+
+const recordOutboxEvent = (outcome) => outboxEvents.inc({ service: SERVICE_NAME, outcome });
+
+const setOutboxPending = (count) => outboxPending.set(count, { service: SERVICE_NAME });
 
 const httpMiddleware = () => (req, res, next) => {
   if (req.path === "/metrics") return next();
@@ -123,9 +136,7 @@ const escaped = (value) =>
 
 const labelText = (labelNames, labels = {}) => {
   if (!labelNames.length) return "";
-  const parts = labelNames.map(
-    (name) => `${name}="${escaped(labels[name] ?? "")}"`
-  );
+  const parts = labelNames.map((name) => `${name}="${escaped(labels[name] ?? "")}"`);
   return `{${parts.join(",")}}`;
 };
 
@@ -157,18 +168,14 @@ const renderMetric = (metric, lines) => {
           le: "+Inf",
         })} ${entry.count}`
       );
-      lines.push(
-        `${metric.name}_sum${labelText(metric.labelNames, entry.labels)} ${entry.sum}`
-      );
+      lines.push(`${metric.name}_sum${labelText(metric.labelNames, entry.labels)} ${entry.sum}`);
       lines.push(
         `${metric.name}_count${labelText(metric.labelNames, entry.labels)} ${entry.count}`
       );
       continue;
     }
 
-    lines.push(
-      `${metric.name}${labelText(metric.labelNames, entry.labels)} ${entry.value}`
-    );
+    lines.push(`${metric.name}${labelText(metric.labelNames, entry.labels)} ${entry.value}`);
   }
 };
 
@@ -184,15 +191,63 @@ const renderProcessMetrics = (lines) => {
     1,
     { service: SERVICE_NAME }
   );
-  appendValueLines(lines, "process_cpu_user_seconds_total", "CPU time spent in user mode", "counter", cpu.user / 1e6);
-  appendValueLines(lines, "process_cpu_system_seconds_total", "CPU time spent in system mode", "counter", cpu.system / 1e6);
-  appendValueLines(lines, "process_resident_memory_bytes", "Resident memory size", "gauge", memory.rss);
-  appendValueLines(lines, "process_start_time_seconds", "Start time of the process since the Unix epoch", "gauge", Math.floor(Date.now() / 1000 - process.uptime()));
+  appendValueLines(
+    lines,
+    "process_cpu_user_seconds_total",
+    "CPU time spent in user mode",
+    "counter",
+    cpu.user / 1e6
+  );
+  appendValueLines(
+    lines,
+    "process_cpu_system_seconds_total",
+    "CPU time spent in system mode",
+    "counter",
+    cpu.system / 1e6
+  );
+  appendValueLines(
+    lines,
+    "process_resident_memory_bytes",
+    "Resident memory size",
+    "gauge",
+    memory.rss
+  );
+  appendValueLines(
+    lines,
+    "process_start_time_seconds",
+    "Start time of the process since the Unix epoch",
+    "gauge",
+    Math.floor(Date.now() / 1000 - process.uptime())
+  );
   appendValueLines(lines, "nodejs_heap_size_used_bytes", "V8 heap used", "gauge", memory.heapUsed);
-  appendValueLines(lines, "nodejs_heap_size_total_bytes", "V8 heap allocated", "gauge", memory.heapTotal);
-  appendValueLines(lines, "nodejs_external_memory_bytes", "Memory used by C++ objects bound to JavaScript objects", "gauge", memory.external);
-  appendValueLines(lines, "nodejs_eventloop_lag_seconds", "Mean event loop delay since start", "gauge", eventLoopDelay.mean / 1e9);
-  appendValueLines(lines, "nodejs_eventloop_lag_p99_seconds", "99th percentile event loop delay since start", "gauge", eventLoopDelay.percentile(99) / 1e9);
+  appendValueLines(
+    lines,
+    "nodejs_heap_size_total_bytes",
+    "V8 heap allocated",
+    "gauge",
+    memory.heapTotal
+  );
+  appendValueLines(
+    lines,
+    "nodejs_external_memory_bytes",
+    "Memory used by C++ objects bound to JavaScript objects",
+    "gauge",
+    memory.external
+  );
+  appendValueLines(
+    lines,
+    "nodejs_eventloop_lag_seconds",
+    "Mean event loop delay since start",
+    "gauge",
+    eventLoopDelay.mean / 1e9
+  );
+  appendValueLines(
+    lines,
+    "nodejs_eventloop_lag_p99_seconds",
+    "99th percentile event loop delay since start",
+    "gauge",
+    eventLoopDelay.percentile(99) / 1e9
+  );
 };
 
 const render = () => {
@@ -231,5 +286,7 @@ module.exports = {
   markReady,
   recordSecurityEvent,
   recordReconciliationOutcome,
+  recordOutboxEvent,
+  setOutboxPending,
   render,
 };
