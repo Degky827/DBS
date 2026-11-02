@@ -79,6 +79,20 @@ const submissions = new Map([
     faceMatchStatus: "Approved",
     livenessStatus: "Approved",
   }],
+  ["submission-resubmit", {
+    id: "submission-resubmit",
+    userId: "customer-1",
+    status: "NEEDS_RESUBMISSION",
+    providerSessionId: "didit-session-expired",
+    providerSessionUrlEncrypted: "encrypted",
+    providerStatus: "Expired",
+    documentVerificationStatus: "Declined",
+    dataComparisonStatus: "MISMATCH",
+    comparisonResults: [{ field: "firstName", status: "MISMATCH" }],
+    faceMatchStatus: "Declined",
+    livenessStatus: "Declined",
+    submittedAt: new Date(),
+  }],
 ]);
 const providerEvents = new Map();
 const auditEvents = [];
@@ -236,6 +250,41 @@ test("creates a documented Didit session with the configured workflow and no exp
     assert.equal(reused.status, 200);
     assert.equal(reused.body.data.reused, true);
     assert.equal(reused.body.data.sessionUrl, response.body.data.sessionUrl);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("a resubmission starts a fresh provider session instead of reusing the expired one", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    status: 201,
+    json: async () => ({
+      session_id: "didit-session-resubmit-new",
+      url: "https://verify.didit.me/session/resubmit-link",
+    }),
+  });
+
+  try {
+    const response = await request(app)
+      .post("/api/v1/kyc/submissions/submission-resubmit/verification-session")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.reused, false);
+    assert.equal(response.body.data.sessionId, "didit-session-resubmit-new");
+    const submission = submissions.get("submission-resubmit");
+    assert.equal(submission.status, "IN_PROGRESS");
+    assert.equal(submission.providerSessionId, "didit-session-resubmit-new");
+    assert.equal(submission.providerStatus, "Not Started");
+    assert.equal(submission.documentVerificationStatus, null);
+    assert.equal(submission.dataComparisonStatus, null);
+    assert.equal(submission.comparisonResults, null);
+    assert.equal(submission.faceMatchStatus, null);
+    assert.equal(submission.livenessStatus, null);
+    assert.equal(submission.submittedAt, null);
   } finally {
     global.fetch = originalFetch;
   }
@@ -529,6 +578,28 @@ test("never changes a submission that already reached a terminal decision", asyn
   assert.equal(submission.status, "APPROVED");
   assert.equal(submission.providerStatus, "Approved");
   assert.equal(submission.dataComparisonStatus, "MATCH");
+});
+
+test("a provider expiry revokes an existing approval", async () => {
+  const response = await postSignedV2({
+    event_id: "terminal-expire-1",
+    session_id: "didit-session-terminal",
+    status: "Expired",
+    webhook_type: "status.updated",
+    timestamp: Math.floor(Date.now() / 1000) + 5,
+    decision: {
+      id_verifications: [{ status: "Declined" }],
+      face_matches: [{ status: "Declined" }],
+      liveness_checks: [{ status: "Declined" }],
+    },
+  });
+
+  assert.equal(response.status, 202);
+  assert.equal(response.body.data.applied, true);
+  const submission = submissions.get("submission-terminal");
+  assert.equal(submission.status, "NEEDS_RESUBMISSION");
+  assert.equal(submission.revokedReason, "Provider status: Expired");
+  assert.ok(submission.revokedAt instanceof Date);
 });
 
 test("a provider result cannot overwrite an existing applicant-data comparison", async () => {
