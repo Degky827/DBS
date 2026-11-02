@@ -9,6 +9,8 @@ process.env.AUTH_MODE = "dev";
 process.env.CORS_ORIGIN = "http://localhost:5173";
 process.env.ENABLE_API_DOCS = "false";
 process.env.LOG_LEVEL = "silent";
+process.env.WEBHOOK_RATE_LIMIT_MAX = "2";
+process.env.RATE_LIMIT_MAX = "1000";
 
 const databasePath = require.resolve("../src/config/database");
 require.cache[databasePath] = {
@@ -74,4 +76,26 @@ test("wallet and profile routes reject unauthenticated requests", async () => {
 
   const profile = await request(app).get("/api/v1/users/me");
   assert.equal(profile.status, 401);
+});
+
+test("payment webhook has a dedicated per-IP rate limit", async () => {
+  const postWebhook = () =>
+    request(app)
+      .post("/api/v1/payments/webhook")
+      .set("Content-Type", "application/json")
+      .send("{}");
+
+  const first = await postWebhook();
+  const second = await postWebhook();
+  const third = await postWebhook();
+
+  assert.notEqual(first.status, 429);
+  assert.notEqual(second.status, 429);
+  assert.equal(third.status, 429);
+  assert.equal(third.body.success, false);
+  assert.ok(third.headers["retry-after"]);
+  assert.match(third.headers["ratelimit-policy"], /^2;/);
+
+  const health = await request(app).get("/api/v1/health");
+  assert.equal(health.status, 200);
 });
