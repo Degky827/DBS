@@ -17,7 +17,8 @@ module.exports = pinoHttp({
   logger,
   genReqId: resolveRequestId,
   autoLogging: {
-    ignore: (req) => req.url === "/api/v1/kyc/health",
+    ignore: (req) =>
+      req.url === "/api/v1/kyc/health" || req.url.startsWith("/metrics"),
   },
   customLogLevel: (req, res, err) => {
     if (err || res.statusCode >= 500) return "error";
