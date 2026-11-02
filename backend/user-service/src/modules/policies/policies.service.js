@@ -122,6 +122,7 @@ const assertWithinDailyLimits = async ({
   principalCents,
   feeCents = 0n,
   businessDate,
+  excludePaymentId = null,
 }) => {
   // Serializes concurrent transfers for the same customer and business day,
   // so two requests cannot both observe the same remaining limit. The function
@@ -142,25 +143,43 @@ const assertWithinDailyLimits = async ({
             AND "businessDate" = ${businessDate}::date
             AND "status" = 'PENDING'
         `)
-      : await tx.$queryRaw(Prisma.sql`
-          SELECT COALESCE(SUM("amount" + "feeAmount"), 0)::text AS total,
-                 COUNT(*)::int AS count
-          FROM "Transaction"
-          WHERE "initiatedByUserId" = ${userId}
-            AND "type" = ${type}
-            AND "businessDate" = ${businessDate}::date
-            AND "status" IN ('POSTED', 'PARTIALLY_REVERSED')
-        `);
+      : type === "DEPOSIT"
+        ? await tx.$queryRaw(Prisma.sql`
+            SELECT COALESCE(SUM("amount"), 0)::text AS total,
+                   COUNT(*)::int AS count
+            FROM "Payment"
+            WHERE "userId" = ${userId}
+              AND "type" = 'DEPOSIT'
+              AND "businessDate" = ${businessDate}::date
+              AND "status" IN ('PENDING', 'COMPLETED')
+              ${
+                excludePaymentId
+                  ? Prisma.sql`AND "id" <> ${excludePaymentId}`
+                  : Prisma.empty
+              }
+          `)
+        : await tx.$queryRaw(Prisma.sql`
+            SELECT COALESCE(SUM("amount" + "feeAmount" - "reversedAmount"), 0)::text AS total,
+                   COUNT(*)::int AS count
+            FROM "Transaction"
+            WHERE "initiatedByUserId" = ${userId}
+              AND "type" = ${type}
+              AND "businessDate" = ${businessDate}::date
+              AND "status" IN ('POSTED', 'PARTIALLY_REVERSED')
+          `);
   const currentTotal = decimalStringToMinorUnits(rows[0]?.total ?? "0");
   const currentCount = Number(rows[0]?.count ?? 0);
   const dailyAmount = decimalStringToMinorUnits(
     String(policy.dailyOutgoingAmount)
   );
   const nextTotal = currentTotal + principalCents + feeCents;
+  const isDeposit = type === "DEPOSIT";
 
   if (nextTotal > dailyAmount) {
     throw ApiError.conflict(
-      "Daily outgoing amount limit exceeded",
+      isDeposit
+        ? "Daily deposit amount limit exceeded"
+        : "Daily outgoing amount limit exceeded",
       "DAILY_LIMIT_EXCEEDED",
       {
         limit: fromMinorUnits(dailyAmount),
@@ -172,7 +191,9 @@ const assertWithinDailyLimits = async ({
   }
   if (currentCount + 1 > policy.dailyOutgoingCount) {
     throw ApiError.conflict(
-      "Daily outgoing transaction count limit exceeded",
+      isDeposit
+        ? "Daily deposit count limit exceeded"
+        : "Daily outgoing transaction count limit exceeded",
       "DAILY_COUNT_EXCEEDED",
       {
         limit: policy.dailyOutgoingCount,

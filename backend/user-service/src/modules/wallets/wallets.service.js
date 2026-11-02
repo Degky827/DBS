@@ -34,6 +34,23 @@ const transactionFields = {
   journalEntry: { select: { reference: true } },
 };
 
+const transactionDetailFields = {
+  ...transactionFields,
+  reversals: {
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      reference: true,
+      amount: true,
+      currency: true,
+      reason: true,
+      actorUserId: true,
+      createdAt: true,
+      journalEntry: { select: { reference: true } },
+    },
+  },
+};
+
 const formatTransaction = (transaction) => ({
   id: transaction.id,
   reference: transaction.reference,
@@ -47,7 +64,12 @@ const formatTransaction = (transaction) => ({
   reversedAmount: transaction.reversedAmount.toFixed(2),
   ledgerEntryReference: transaction.journalEntry?.reference ?? null,
   createdAt: transaction.createdAt,
+  ...(transaction.reversals
+    ? { reversals: transaction.reversals.map(formatReversal) }
+    : {}),
 });
+
+const toDecimal = (value) => new Prisma.Decimal(value ?? 0);
 
 const formatWallet = (wallet) => ({
   id: wallet.id,
@@ -540,40 +562,62 @@ const listTransactions = async (userId, options) => {
     }
   }
 
-  const [page, total, incomingSummary, outgoingSummary] = await Promise.all([
-    prisma.transaction.findMany({
-      where,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      ...(options.cursor
-        ? { cursor: { id: options.cursor }, skip: 1 }
-        : {}),
-      take: options.limit + 1,
-      select: transactionFields,
-    }),
-    prisma.transaction.count({ where }),
-    prisma.transaction.aggregate({
-      where: { destinationWalletId: wallet.id, ...summaryWhere },
-      _sum: { amount: true },
-      _count: { _all: true },
-    }),
-    prisma.transaction.aggregate({
-      where: { sourceWalletId: wallet.id, ...summaryWhere },
-      _sum: { amount: true, feeAmount: true },
-      _count: { _all: true },
-    }),
-  ]);
+  // Deposit fees are deducted before the wallet is credited, while transfer
+  // fees are paid by the sender, so only deposit fees reduce incoming totals.
+  const includeDepositFees = !options.type || options.type === "DEPOSIT";
+  // A fee is refunded only when a transfer is fully reversed.
+  const includeRefundedFees =
+    !options.status || options.status === "REVERSED";
+
+  const [page, total, incomingSummary, outgoingSummary, depositFees, refundedFees] =
+    await Promise.all([
+      prisma.transaction.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        ...(options.cursor
+          ? { cursor: { id: options.cursor }, skip: 1 }
+          : {}),
+        take: options.limit + 1,
+        select: transactionFields,
+      }),
+      prisma.transaction.count({ where }),
+      prisma.transaction.aggregate({
+        where: { destinationWalletId: wallet.id, ...summaryWhere },
+        _sum: { amount: true, reversedAmount: true },
+        _count: { _all: true },
+      }),
+      prisma.transaction.aggregate({
+        where: { sourceWalletId: wallet.id, ...summaryWhere },
+        _sum: { amount: true, feeAmount: true, reversedAmount: true },
+        _count: { _all: true },
+      }),
+      includeDepositFees
+        ? prisma.transaction.aggregate({
+            where: { destinationWalletId: wallet.id, ...summaryWhere, type: "DEPOSIT" },
+            _sum: { feeAmount: true },
+          })
+        : { _sum: { feeAmount: null } },
+      includeRefundedFees
+        ? prisma.transaction.aggregate({
+            where: { sourceWalletId: wallet.id, ...summaryWhere, status: "REVERSED" },
+            _sum: { feeAmount: true },
+          })
+        : { _sum: { feeAmount: null } },
+    ]);
   const hasMore = page.length > options.limit;
   const transactions = page.slice(0, options.limit);
-  const outgoingTotal = new Prisma.Decimal(
-    outgoingSummary._sum.amount ?? 0
-  ).plus(outgoingSummary._sum.feeAmount ?? 0);
+  const incomingTotal = toDecimal(incomingSummary._sum.amount)
+    .minus(toDecimal(incomingSummary._sum.reversedAmount))
+    .minus(toDecimal(depositFees._sum.feeAmount));
+  const outgoingTotal = toDecimal(outgoingSummary._sum.amount)
+    .plus(toDecimal(outgoingSummary._sum.feeAmount))
+    .minus(toDecimal(outgoingSummary._sum.reversedAmount))
+    .minus(toDecimal(refundedFees._sum.feeAmount));
   return {
     transactions: transactions.map(formatTransaction),
     summary: {
       total: incomingSummary._count._all + outgoingSummary._count._all,
-      incomingAmount: new Prisma.Decimal(
-        incomingSummary._sum.amount ?? 0
-      ).toFixed(2),
+      incomingAmount: incomingTotal.toFixed(2),
       outgoingAmount: outgoingTotal.toFixed(2),
     },
     page: {
@@ -599,7 +643,7 @@ const getTransaction = async (userId, reference) => {
       reference,
       OR: [{ sourceWalletId: wallet.id }, { destinationWalletId: wallet.id }],
     },
-    select: transactionFields,
+    select: transactionDetailFields,
   });
   if (!transaction) {
     throw ApiError.notFound("Transaction not found", "TRANSACTION_NOT_FOUND");
