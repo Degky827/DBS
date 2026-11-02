@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import Logo from "../components/Logo";
+import Alert from "../components/ui/Alert";
 import { AccountProvider, useAccount } from "../context/AccountContext";
 import { logoutUser } from "../services/authService";
 import { roleLabel } from "../utils/roles";
@@ -118,6 +119,24 @@ function SidebarNav({ onNavigate, id }) {
   );
 }
 
+const ACCOUNT_STATUS_NOTICES = {
+  FROZEN: {
+    tone: "warning",
+    message:
+      "Your account is frozen. Transfers, payments, and withdrawals are paused until support restores access.",
+  },
+  SUSPENDED: {
+    tone: "warning",
+    message:
+      "Your account is suspended while our compliance team reviews it. Some actions are unavailable.",
+  },
+  CLOSED: {
+    tone: "error",
+    message:
+      "Your account is closed. You can still review history, but new transactions are blocked.",
+  },
+};
+
 function NoticeIcon({ tone }) {
   if (tone === "warning") {
     return <ShieldAlert size={16} className="text-warning" />;
@@ -148,6 +167,7 @@ function AuthenticatedLayout() {
   const firstName = displayUser?.firstName || "there";
   const initials = initialsOf(displayUser?.firstName, displayUser?.lastName);
   const fullName = [displayUser?.firstName, displayUser?.lastName].filter(Boolean).join(" ");
+  const statusNotice = ACCOUNT_STATUS_NOTICES[user?.status];
 
   useEffect(() => {
     if (!drawerOpen) return undefined;
@@ -237,6 +257,9 @@ function AuthenticatedLayout() {
 
   return (
     <div className="min-h-screen bg-canvas">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-[260px] flex-col border-r border-white/5 bg-midnight px-4 py-6 lg:flex print:hidden">
         {sidebarContent()}
       </aside>
@@ -474,8 +497,14 @@ function AuthenticatedLayout() {
 
         <main
           id="main-content"
-          className="mx-auto w-full max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8 print:max-w-none print:p-0"
+          tabIndex={-1}
+          className="mx-auto w-full max-w-[1280px] px-4 py-6 outline-none sm:px-6 lg:px-8 lg:py-8 print:max-w-none print:p-0"
         >
+          {statusNotice ? (
+            <div className="mb-5">
+              <Alert tone={statusNotice.tone}>{statusNotice.message}</Alert>
+            </div>
+          ) : null}
           <Outlet />
         </main>
       </div>

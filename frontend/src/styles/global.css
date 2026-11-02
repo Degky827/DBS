@@ -200,6 +200,26 @@
   .data-table tbody tr {
     @apply transition hover:bg-ink-50;
   }
+
+  .skip-link {
+    position: fixed;
+    left: 1rem;
+    top: 1rem;
+    z-index: 100;
+    transform: translateY(-200%);
+    border-radius: var(--radius-lg);
+    background-color: var(--color-midnight);
+    padding: 0.5rem 1rem;
+    font-size: var(--text-sm);
+    font-weight: 700;
+    color: #fff;
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.2);
+    transition: transform 150ms ease;
+  }
+
+  .skip-link:focus {
+    transform: translateY(0);
+  }
 }
 
 @utility num {

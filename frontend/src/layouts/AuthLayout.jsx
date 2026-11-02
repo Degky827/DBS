@@ -26,6 +26,9 @@ export default function AuthLayout() {
 
   return (
     <div className="min-h-screen grid lg:grid-cols-[1.05fr_1fr]">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       <aside className="hidden flex-col justify-between bg-midnight px-12 py-10 text-white lg:flex">
         <Link to="/" aria-label="Meridian Bank home" className="w-fit">
           <Logo light />
@@ -71,7 +74,11 @@ export default function AuthLayout() {
         </p>
       </aside>
 
-      <main className="flex min-h-screen flex-col bg-white">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="flex min-h-screen flex-col bg-white outline-none"
+      >
         <div className="flex items-center justify-between gap-4 px-6 pt-6 lg:px-14">
           <Link to="/" aria-label="Meridian Bank home" className="lg:hidden">
             <Logo />
