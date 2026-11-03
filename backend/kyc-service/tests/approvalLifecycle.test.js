@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 const jwt = require("jsonwebtoken");
 const request = require("supertest");
 
+const { tierPrismaStub } = require("./helpers/tierPrismaStub");
+
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = "postgresql://auth:auth@localhost:5432/kyc_test?schema=public";
 process.env.JWT_SECRET = "kyc-approval-lifecycle-secret";
@@ -47,6 +49,8 @@ const addSubmission = (submission) => {
     approvalExpiresAt: null,
     revokedAt: null,
     revokedReason: null,
+    // The tier engine reads the captured documents off the submission.
+    documents: [],
     ...submission,
   });
 };
@@ -104,6 +108,7 @@ const matchesWhere = (submission, where) => {
 };
 
 const fakePrisma = {
+  ...tierPrismaStub(),
   $transaction: async (callback) => callback(fakePrisma),
   kycSubmission: {
     findUnique: async ({ where }) => {
@@ -198,10 +203,7 @@ test("approval is recorded with a bounded expiry", async () => {
   const approvalExpiresAt = new Date(response.body.data.approvalExpiresAt);
   assert.ok(!Number.isNaN(approvedAt.getTime()));
   assert.ok(!Number.isNaN(approvalExpiresAt.getTime()));
-  assert.equal(
-    approvalExpiresAt.getTime() - approvedAt.getTime(),
-    30 * 24 * 60 * 60 * 1000
-  );
+  assert.equal(approvalExpiresAt.getTime() - approvedAt.getTime(), 30 * 24 * 60 * 60 * 1000);
 
   const status = await internalStatus(users.approve);
   assert.equal(status.status, 200);
@@ -232,10 +234,7 @@ test("an officer can revoke an approval and the applicant must resubmit", async 
   assert.equal(response.status, 200);
   assert.equal(response.body.data.status, "NEEDS_RESUBMISSION");
   assert.ok(!Number.isNaN(new Date(response.body.data.revokedAt).getTime()));
-  assert.equal(
-    response.body.data.revokedReason,
-    "Document forgery suspected during audit."
-  );
+  assert.equal(response.body.data.revokedReason, "Document forgery suspected during audit.");
   assert.equal(reviews.at(-1).decision, "REVOKE");
   assert.equal(auditEvents.at(-1).eventType, "OFFICER_APPROVAL_REVOKED");
 

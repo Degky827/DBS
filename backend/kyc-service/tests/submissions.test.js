@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const jwt = require("jsonwebtoken");
 const request = require("supertest");
+const { tierPrismaStub } = require("./helpers/tierPrismaStub");
 
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = "postgresql://auth:auth@localhost:5432/kyc_test?schema=public";
@@ -14,6 +15,7 @@ process.env.DIDIT_API_BASE_URL = "https://verification.didit.me";
 const submissions = [];
 const auditEvents = [];
 const fakePrisma = {
+  ...tierPrismaStub(),
   $transaction: async (callback) => callback(fakePrisma),
   kycSubmission: {
     create: async ({ data }) => {
@@ -29,9 +31,7 @@ const fakePrisma = {
     },
     findFirst: async ({ where, select }) => {
       assert.ok(select);
-      return submissions
-        .filter((submission) => submission.userId === where.userId)
-        .at(-1) || null;
+      return submissions.filter((submission) => submission.userId === where.userId).at(-1) || null;
     },
   },
   kycAuditEvent: {
@@ -51,15 +51,11 @@ require.cache[databasePath] = {
 
 const app = require("../src/app");
 const TEST_USER_ID = "auth-user-123";
-const token = jwt.sign(
-  { sub: TEST_USER_ID, typ: "access", role: "USER" },
-  process.env.JWT_SECRET,
-  {
-    expiresIn: "5m",
-    issuer: process.env.JWT_ISSUER,
-    audience: process.env.JWT_AUDIENCE,
-  }
-);
+const token = jwt.sign({ sub: TEST_USER_ID, typ: "access", role: "USER" }, process.env.JWT_SECRET, {
+  expiresIn: "5m",
+  issuer: process.env.JWT_ISSUER,
+  audience: process.env.JWT_AUDIENCE,
+});
 
 test("customer creates an owned submission after profile lookup", async () => {
   const originalFetch = global.fetch;
@@ -140,15 +136,11 @@ test("submission request cannot choose a different customer id", async () => {
 });
 
 test("expired access tokens are rejected", async () => {
-  const expiredToken = jwt.sign(
-    { sub: TEST_USER_ID, typ: "access" },
-    process.env.JWT_SECRET,
-    {
-      expiresIn: -1,
-      issuer: process.env.JWT_ISSUER,
-      audience: process.env.JWT_AUDIENCE,
-    }
-  );
+  const expiredToken = jwt.sign({ sub: TEST_USER_ID, typ: "access" }, process.env.JWT_SECRET, {
+    expiresIn: -1,
+    issuer: process.env.JWT_ISSUER,
+    audience: process.env.JWT_AUDIENCE,
+  });
   const response = await request(app)
     .get("/api/v1/kyc/status")
     .set("Authorization", `Bearer ${expiredToken}`);
