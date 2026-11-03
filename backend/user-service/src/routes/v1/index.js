@@ -16,6 +16,7 @@ const beneficiariesRoutes = require("../../modules/beneficiaries/beneficiaries.r
 const scheduledTransfersRoutes = require("../../modules/scheduledTransfers/scheduledTransfers.routes");
 const disputesRoutes = require("../../modules/disputes/disputes.routes");
 const statementsRoutes = require("../../modules/statements/statements.routes");
+const ledgerRoutes = require("../../modules/ledger/ledger.routes");
 
 router.use("/", healthRoutes);
 
@@ -35,6 +36,7 @@ router.use("/", beneficiariesRoutes);
 router.use("/", scheduledTransfersRoutes);
 router.use("/", disputesRoutes);
 router.use("/", statementsRoutes);
+router.use("/", ledgerRoutes);
 router.use("/", adminRoutes);
 
 module.exports = router;

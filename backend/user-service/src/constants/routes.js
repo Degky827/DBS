@@ -60,6 +60,16 @@ const ROUTES = Object.freeze({
     OUTBOX: "/admin/outbox",
     OUTBOX_REPLAY: "/admin/outbox/:eventId/replay",
   }),
+  LEDGER: Object.freeze({
+    INTEGRITY: "/admin/ledger/integrity",
+    VERIFICATION_RUNS: "/admin/ledger/verification/runs",
+    VERIFICATION_RUN: "/admin/ledger/verification/runs/:reference",
+    VERIFICATION_ISSUES: "/admin/ledger/verification/issues",
+    ISSUE_ACKNOWLEDGE: "/admin/ledger/verification/issues/:issueId/acknowledge",
+    ISSUE_RESOLVE: "/admin/ledger/verification/issues/:issueId/resolve",
+    ISSUE_SUPPRESS: "/admin/ledger/verification/issues/:issueId/suppress",
+    ISSUE_REOPEN: "/admin/ledger/verification/issues/:issueId/reopen",
+  }),
   OPERATIONS: Object.freeze({
     ANALYTICS: "/operations/analytics",
     TRANSACTIONS: "/operations/transactions",
