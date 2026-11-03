@@ -5,7 +5,7 @@ groups:
   - name: availability
     rules:
       - alert: ServiceDown
-        expr: up{job=~"auth-service|user-service|kyc-service"} == 0
+        expr: up{job=~"auth-service|user-service|kyc-service|notification-service"} == 0
         for: 2m
         labels:
           severity: critical
@@ -158,3 +158,50 @@ groups:
           description: >-
             A Chapa payment could not be reconciled automatically. Follow the
             reconciliation runbook before writing any ledger entry.
+
+  - name: notifications
+    rules:
+      - alert: OutboxDeliveryStalled
+        expr: banking_outbox_pending > 50
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox backlog is growing ({{ $value }} events pending)"
+          description: >-
+            More than 50 events have waited fifteen minutes for delivery.
+            Check notification-service availability and OUTBOX_ENABLED.
+
+      - alert: OutboxDeadLetters
+        expr: increase(banking_outbox_events_total{outcome="dead_lettered"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox events reached the retry limit"
+          description: >-
+            At least one event exhausted OUTBOX_MAX_ATTEMPTS. Inspect the
+            stored lastError and replay the event after the consumer recovers.
+
+      - alert: NotificationEventDeliveryFailures
+        expr: increase(banking_notification_events_total{outcome="failed"}[10m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Notification event processing is failing ({{ $labels.event }})"
+          description: >-
+            More than three consumer failures in ten minutes. Check the
+            notification-service logs and database health.
+
+      - alert: NotificationEmailBacklog
+        expr: banking_notification_email_backlog > 25
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Notification email backlog is high ({{ $value }} pending)"
+          description: >-
+            Emails are not draining from the queue. Verify BREVO_API_KEY,
+            provider status, and EMAIL_RETRY_INTERVAL_MS.
+
