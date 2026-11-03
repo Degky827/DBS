@@ -5,11 +5,8 @@ const ApiError = require("../../utils/ApiError");
 const audit = require("../../utils/audit");
 const ledger = require("../ledger/ledger.service");
 const policies = require("../policies/policies.service");
-const {
-  toAmountString,
-  toMinorUnits,
-  fromMinorUnits,
-} = require("../wallets/money");
+const outbox = require("../outbox/outbox.service");
+const { toAmountString, toMinorUnits, fromMinorUnits } = require("../wallets/money");
 
 const formatPayment = (payment) => ({
   id: payment.id,
@@ -26,8 +23,7 @@ const formatPayment = (payment) => ({
   updatedAt: payment.updatedAt,
 });
 
-const newMerchantReference = () =>
-  `d_${crypto.randomBytes(12).toString("base64url")}`;
+const newMerchantReference = () => `d_${crypto.randomBytes(12).toString("base64url")}`;
 
 const safeProviderMessage = (verification) =>
   typeof verification.message === "string"
@@ -44,12 +40,7 @@ class PaymentsService {
     this.provider = providerBoundary;
   }
 
-  async initiateDeposit({
-    userId,
-    userProfile,
-    amount,
-    idempotencyKey,
-  }) {
+  async initiateDeposit({ userId, userProfile, amount, idempotencyKey }) {
     const amountString = toAmountString(amount);
     const decimalAmount = new Prisma.Decimal(amountString);
     const wallet = await this.prisma.wallet.findUnique({
@@ -65,11 +56,7 @@ class PaymentsService {
     }
 
     const principalCents = toMinorUnits(amountString);
-    const policy = await policies.getPolicy(
-      this.prisma,
-      "DEPOSIT",
-      wallet.currency
-    );
+    const policy = await policies.getPolicy(this.prisma, "DEPOSIT", wallet.currency);
     policies.assertAmountWithinPolicy(policy, principalCents);
     const feeCents = policies.calculateFeeCents(policy, principalCents);
     if (feeCents >= principalCents) {
@@ -149,10 +136,7 @@ class PaymentsService {
   }
 
   async resumeOrReplay(payment, { wallet, amountString, userProfile }) {
-    if (
-      payment.walletId !== wallet.id ||
-      payment.amount.toFixed(2) !== amountString
-    ) {
+    if (payment.walletId !== wallet.id || payment.amount.toFixed(2) !== amountString) {
       throw ApiError.conflict(
         "Idempotency key was already used with different parameters",
         "IDEMPOTENCY_KEY_REUSED"
@@ -177,10 +161,7 @@ class PaymentsService {
       txRef: payment.reference,
     });
 
-    if (
-      result.merchantReference &&
-      result.merchantReference !== payment.reference
-    ) {
+    if (result.merchantReference && result.merchantReference !== payment.reference) {
       throw new ApiError(
         502,
         "Payment provider returned a different merchant reference",
@@ -257,9 +238,7 @@ class PaymentsService {
 
   async processVerification(reference, { userId = null, webhookDelivery = null } = {}) {
     const payment = await this.prisma.payment.findFirst({
-      where: webhookDelivery
-        ? { OR: [{ reference }, { providerRef: reference }] }
-        : { reference },
+      where: webhookDelivery ? { OR: [{ reference }, { providerRef: reference }] } : { reference },
       select: { id: true, reference: true, userId: true, status: true },
     });
     if (!payment || (userId && payment.userId !== userId)) {
@@ -268,9 +247,7 @@ class PaymentsService {
 
     if (payment.status === "COMPLETED" && !webhookDelivery) {
       return {
-        payment: formatPayment(
-          await this.prisma.payment.findUnique({ where: { id: payment.id } })
-        ),
+        payment: formatPayment(await this.prisma.payment.findUnique({ where: { id: payment.id } })),
         alreadyProcessed: true,
       };
     }
@@ -434,9 +411,7 @@ class PaymentsService {
         return finish(
           { payment: formatPayment(updated), alreadyProcessed: false },
           {
-            code: amountMatches
-              ? "PAYMENT_CURRENCY_MISMATCH"
-              : "PAYMENT_AMOUNT_MISMATCH",
+            code: amountMatches ? "PAYMENT_CURRENCY_MISMATCH" : "PAYMENT_AMOUNT_MISMATCH",
             message: amountMatches
               ? "Payment verification failed due to currency mismatch"
               : "Payment verification failed due to amount mismatch",
@@ -445,11 +420,7 @@ class PaymentsService {
       }
 
       const grossCents = toMinorUnits(current.amount.toFixed(2));
-      const depositPolicy = await policies.getPolicy(
-        tx,
-        "DEPOSIT",
-        current.currency
-      );
+      const depositPolicy = await policies.getPolicy(tx, "DEPOSIT", current.currency);
       policies.assertAmountWithinPolicy(depositPolicy, grossCents);
       const feeCents = policies.calculateFeeCents(depositPolicy, grossCents);
       if (feeCents >= grossCents) {
@@ -541,6 +512,33 @@ class PaymentsService {
           failureReason: null,
         },
       });
+
+      const profile = await tx.userProfile.findUnique({
+        where: { id: current.userId },
+        select: { email: true, firstName: true, lastName: true },
+      });
+
+      await outbox.enqueue(tx, {
+        type: "deposit.completed",
+        aggregateType: "payment",
+        aggregateId: current.id,
+        payload: {
+          paymentReference: current.reference,
+          transactionReference: transaction.reference,
+          provider: current.provider,
+          amount: current.amount.toFixed(2),
+          feeAmount: feeString,
+          netAmount: fromMinorUnits(netCents),
+          currency: current.currency,
+          walletId: current.walletId,
+          user: {
+            userId: current.userId,
+            email: profile?.email ?? null,
+            name: [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || null,
+          },
+        },
+      });
+
       return finish({
         payment: formatPayment(completed),
         alreadyProcessed: false,
@@ -564,10 +562,7 @@ class PaymentsService {
           reason: outcome.error.code,
         });
       }
-      const verificationError = ApiError.conflict(
-        outcome.error.message,
-        outcome.error.code
-      );
+      const verificationError = ApiError.conflict(outcome.error.message, outcome.error.code);
       // Reconciliation records the provider status even when verification
       // rejects the payment, so keep the snapshot on the error.
       verificationError.verification = outcome.verification;

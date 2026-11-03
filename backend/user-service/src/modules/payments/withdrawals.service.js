@@ -6,10 +6,8 @@ const ApiError = require("../../utils/ApiError");
 const audit = require("../../utils/audit");
 const ledger = require("../ledger/ledger.service");
 const policies = require("../policies/policies.service");
-const {
-  toAmountString,
-  toMinorUnits,
-} = require("../wallets/money");
+const outbox = require("../outbox/outbox.service");
+const { toAmountString, toMinorUnits } = require("../wallets/money");
 
 const formatWithdrawal = (withdrawal) => ({
   id: withdrawal.id,
@@ -27,8 +25,7 @@ const formatWithdrawal = (withdrawal) => ({
 
 const isSerializationConflict = (error) =>
   error.code === "P2034" ||
-  (error.code === "P2010" &&
-    error.meta?.driverAdapterError?.cause?.originalCode === "40001");
+  (error.code === "P2010" && error.meta?.driverAdapterError?.cause?.originalCode === "40001");
 
 const findByIdempotencyKey = (userId, idempotencyKey) =>
   prisma.withdrawal.findUnique({
@@ -37,10 +34,7 @@ const findByIdempotencyKey = (userId, idempotencyKey) =>
   });
 
 const verifyReplay = (withdrawal, { walletId, amount }) => {
-  if (
-    withdrawal.walletId !== walletId ||
-    withdrawal.amount.toFixed(2) !== amount
-  ) {
+  if (withdrawal.walletId !== walletId || withdrawal.amount.toFixed(2) !== amount) {
     throw ApiError.conflict(
       "Idempotency key was already used for a different withdrawal",
       "IDEMPOTENCY_KEY_REUSED"
@@ -143,6 +137,29 @@ const initiateWithdrawal = async ({ userId, amount, idempotencyKey }) => {
             },
           ],
           walletGuards: [{ walletId: wallet.id, requireActive: true }],
+        });
+
+        const profile = await tx.userProfile.findUnique({
+          where: { id: userId },
+          select: { email: true, firstName: true, lastName: true },
+        });
+
+        await outbox.enqueue(tx, {
+          type: "withdrawal.reserved",
+          aggregateType: "withdrawal",
+          aggregateId: withdrawal.id,
+          payload: {
+            withdrawalReference: withdrawal.reference,
+            amount: amountString,
+            currency: wallet.currency,
+            walletId: wallet.id,
+            ledgerEntryReference: entry.reference,
+            user: {
+              userId,
+              email: profile?.email ?? null,
+              name: [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || null,
+            },
+          },
         });
 
         return {
@@ -267,6 +284,29 @@ const cancelWithdrawal = async ({ userId, reference, reason = null }) => {
       const updated = await tx.withdrawal.update({
         where: { id: withdrawal.id },
         data: { status: "CANCELLED" },
+      });
+
+      const profile = await tx.userProfile.findUnique({
+        where: { id: userId },
+        select: { email: true, firstName: true, lastName: true },
+      });
+
+      await outbox.enqueue(tx, {
+        type: "withdrawal.cancelled",
+        aggregateType: "withdrawal",
+        aggregateId: withdrawal.id,
+        payload: {
+          withdrawalReference: withdrawal.reference,
+          amount: withdrawal.amount.toFixed(2),
+          currency: withdrawal.currency,
+          walletId: withdrawal.walletId,
+          reason,
+          user: {
+            userId,
+            email: profile?.email ?? null,
+            name: [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || null,
+          },
+        },
       });
 
       audit("WITHDRAWAL_CANCELLED", {
