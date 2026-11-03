@@ -33,33 +33,50 @@ model KycSubmission {
   providerSessionId           String?   @unique
   providerSessionUrlEncrypted String?
 
-  documents      KycDocument[]
-  events         KycAuditEvent[]
-  reviews        KycReview[]
-  providerEvents KycProviderEvent[]
+  // Tier assignment lives on the submission that produced it, so the tier a
+  // customer holds is always traceable to the evidence that earned it.
+  tierId         String?
+  tier           KycTierDefinition? @relation(fields: [tierId], references: [id], onDelete: Restrict)
+  tierAssignedAt DateTime?
+  tierAssignedBy String?
+
+  documents              KycDocument[]
+  events                 KycAuditEvent[]
+  reviews                KycReview[]
+  providerEvents         KycProviderEvent[]
+  screeningCases         ScreeningCase[]
+  tierRequests           KycTierAssignment[]
+  kycReVerificationTasks KycReVerificationTask[]
 
   @@index([userId, createdAt])
+  @@index([tierId])
 }
 
 model KycDocument {
-  id             String        @id @default(uuid())
-  submissionId   String
-  submission     KycSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
-  documentType   String
-  storageKey     String
-  mimeType       String
-  fileName       String
-  fileSizeBytes  Int
-  checksumSha256 String?
-  side           String?
-  ocrText        String?
-  ocrConfidence  Float?
-  extractedData  String?
-  status         String        @default("UPLOADED")
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id               String        @id @default(uuid())
+  submissionId     String
+  submission       KycSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  documentType     String
+  storageKey       String
+  mimeType         String
+  fileName         String
+  fileSizeBytes    Int
+  checksumSha256   String?
+  side             String?
+  ocrText          String?
+  ocrConfidence    Float?
+  extractedData    String?
+  status           String        @default("UPLOADED")
+  // Expiry is per document — a passport and a national ID expire on different
+  // dates — so re-verification can be driven by the weakest document, not only
+  // by the approval TTL.
+  expiresAt        DateTime?
+  expiryNotifiedAt DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
   @@index([submissionId])
+  @@index([expiresAt])
 }
 
 model KycReview {
@@ -99,4 +116,242 @@ model KycProviderEvent {
 
   @@index([submissionId, createdAt])
   @@index([providerObjectId, eventTimestamp])
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — KYC tiers
+//
+// Tier requirements and limits are data, not code: nothing here should be read
+// as a regulatory template. Operators edit these rows (through the tier-admin
+// API) to match whatever licence the platform actually holds.
+// ---------------------------------------------------------------------------
+
+model KycTierDefinition {
+  id                     String   @id @default(uuid())
+  code                   String
+  name                   String
+  description            String?
+  minimumDocuments       Int      @default(1)
+  requiresLiveness       Boolean  @default(false)
+  requiredFields         Json     @default("[]")
+  requiredDocumentTypes  Json     @default("[]")
+  allowedOperations      Json     @default("[]")
+  reviewIntervalDays     Int?
+  approvalValidDays      Int?
+  reVerificationLeadDays Int      @default(30)
+  version                Int      @default(1)
+  isActive               Boolean  @default(true)
+  effectiveFrom          DateTime @default(now())
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  limits      KycTierLimit[]
+  submissions KycSubmission[]
+  assignments KycTierAssignment[]
+
+  @@unique([code, version])
+  @@index([isActive, code])
+}
+
+model KycTierLimit {
+  id            String            @id @default(uuid())
+  tierId        String
+  tier          KycTierDefinition @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  operation     String
+  currency      String            @default("ETB") @db.VarChar(3)
+  minAmount     Decimal           @default(0) @db.Decimal(19, 2)
+  maxAmount     Decimal?          @db.Decimal(19, 2)
+  dailyAmount   Decimal?          @db.Decimal(19, 2)
+  dailyCount    Int?
+  monthlyAmount Decimal?          @db.Decimal(19, 2)
+  maxBalance    Decimal?          @db.Decimal(19, 2)
+  isAllowed     Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([tierId, operation, currency])
+  @@index([operation, currency])
+}
+
+// The lifecycle of a tier per customer. The newest APPROVED row is the tier a
+// customer currently holds; KycSubmission.tierId is the separate, immutable
+// statement of what a given batch of evidence qualified for.
+model KycTierAssignment {
+  id             String            @id @default(uuid())
+  userId         String
+  tierId         String
+  tier           KycTierDefinition @relation(fields: [tierId], references: [id], onDelete: Restrict)
+  direction      String
+  status         String            @default("REQUESTED")
+  submissionId   String?
+  submission     KycSubmission?    @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  requestedBy    String
+  decidedBy      String?
+  reason         String?
+  decisionReason String?
+  requestedAt    DateTime          @default(now())
+  decidedAt      DateTime?
+  effectiveUntil DateTime?
+  expiresAt      DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([userId, status, requestedAt])
+  @@index([status, requestedAt])
+  @@index([tierId])
+}
+
+model KycReVerificationTask {
+  id           String         @id @default(uuid())
+  userId       String
+  tierId       String?
+  submissionId String?
+  submission   KycSubmission? @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  reason       String
+  status       String         @default("OPEN")
+  dueAt        DateTime
+  notifiedAt   DateTime?
+  completedAt  DateTime?
+  waivedBy     String?
+  waiverReason String?
+  details      Json?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([userId, reason, dueAt])
+  @@index([status, dueAt])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — AML / sanctions screening
+//
+// The list rows are whatever the configured provider supplies. In development
+// that is the bundled mock list, clearly flagged as such; no real sanctions
+// data is shipped and no compliance claim can be made from these tables.
+// ---------------------------------------------------------------------------
+
+model SanctionsListSource {
+  id                     String    @id @default(uuid())
+  code                   String    @unique
+  name                   String
+  provider               String    @default("MOCK")
+  uri                    String?
+  refreshIntervalMinutes Int       @default(1440)
+  lastRefreshedAt        DateTime?
+  lastError              String?
+  isActive               Boolean   @default(true)
+  isAuthoritative        Boolean   @default(false)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  entries SanctionsListEntry[]
+
+  @@index([isActive])
+}
+
+model SanctionsListEntry {
+  id             String              @id @default(uuid())
+  sourceId       String
+  source         SanctionsListSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  externalId     String
+  name           String
+  normalizedName String
+  aliases        Json                @default("[]")
+  country        String?
+  dateOfBirth    String?
+  idNumber       String?
+  listVersion    String
+  addedAt        DateTime            @default(now())
+  removedAt      DateTime?
+
+  @@unique([sourceId, externalId, listVersion])
+  @@index([normalizedName])
+  @@index([sourceId, removedAt])
+}
+
+model ScreeningCase {
+  id                String         @id @default(uuid())
+  reference         String         @unique
+  userId            String
+  submissionId      String?
+  submission        KycSubmission? @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  triggeredBy       String
+  status            String         @default("PENDING")
+  subjectName       String
+  subjectNormalized String
+  subjectSnapshot   Json?
+  matches           Json           @default("[]")
+  candidateCount    Int            @default(0)
+  topScore          Float?
+  engineVersion     String         @default("v1")
+  provider          String         @default("MOCK")
+  listVersions      Json?
+  assignedToUserId  String?
+  openedAt          DateTime       @default(now())
+  closedAt          DateTime?
+  nextReviewAt      DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  decisions ScreeningDecision[]
+  events    ScreeningEvent[]
+
+  @@index([status, openedAt])
+  @@index([userId, openedAt])
+  @@index([nextReviewAt])
+  @@index([submissionId])
+}
+
+// Append-only: a decision is never edited in place, only followed by another
+// row, so the reviewer trail reconstructs exactly what was seen and said.
+model ScreeningDecision {
+  id         String        @id @default(uuid())
+  caseId     String
+  case       ScreeningCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  actorId    String
+  action     String
+  fromStatus String
+  toStatus   String
+  note       String?
+  evidence   Json?
+  createdAt  DateTime      @default(now())
+
+  @@index([caseId, createdAt])
+}
+
+model ScreeningEvent {
+  id        String        @id @default(uuid())
+  caseId    String
+  case      ScreeningCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  type      String
+  note      String?
+  actorId   String?
+  payload   Json?
+  createdAt DateTime      @default(now())
+
+  @@index([caseId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — KYC service outbox (mirrors user_db "OutboxEvent")
+// ---------------------------------------------------------------------------
+
+model KycOutboxEvent {
+  id            String    @id @default(uuid())
+  eventId       String    @unique @default(uuid())
+  type          String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  occurredAt    DateTime  @default(now())
+  publishedAt   DateTime?
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([publishedAt, nextAttemptAt])
+  @@index([aggregateType, aggregateId])
+  @@index([type, occurredAt])
 }
