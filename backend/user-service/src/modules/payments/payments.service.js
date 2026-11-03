@@ -5,6 +5,7 @@ const ApiError = require("../../utils/ApiError");
 const audit = require("../../utils/audit");
 const ledger = require("../ledger/ledger.service");
 const policies = require("../policies/policies.service");
+const tierLimits = require("../policies/tierLimits.service");
 const outbox = require("../outbox/outbox.service");
 const { toAmountString, toMinorUnits, fromMinorUnits } = require("../wallets/money");
 
@@ -40,7 +41,7 @@ class PaymentsService {
     this.provider = providerBoundary;
   }
 
-  async initiateDeposit({ userId, userProfile, amount, idempotencyKey }) {
+  async initiateDeposit({ userId, userProfile, amount, idempotencyKey, kyc }) {
     const amountString = toAmountString(amount);
     const decimalAmount = new Prisma.Decimal(amountString);
     const wallet = await this.prisma.wallet.findUnique({
@@ -87,6 +88,7 @@ class PaymentsService {
     const businessDate = policies.businessDateFor(policy.timezone);
 
     let payment;
+    let depositTierSnapshot = null;
     try {
       payment = await this.prisma.$transaction(async (tx) => {
         await policies.assertWithinDailyLimits({
@@ -97,6 +99,21 @@ class PaymentsService {
           principalCents,
           businessDate,
         });
+        // The tier is clamped when the customer asks for the checkout: the
+        // deposit's daily and monthly usage already counts pending payments, and
+        // the balance projection adds the amount still to be credited.
+        const tierDecision = await tierLimits.assertWithinTierLimits({
+          tx,
+          userId,
+          kyc,
+          operation: "DEPOSIT",
+          currency: wallet.currency,
+          walletId: wallet.id,
+          amountCents: principalCents,
+          netCents: principalCents - feeCents,
+          businessDate,
+        });
+        depositTierSnapshot = tierLimits.tierSnapshot(tierDecision, kyc);
         return tx.payment.create({
           data: {
             reference: newMerchantReference(),
@@ -131,6 +148,7 @@ class PaymentsService {
       paymentReference: payment.reference,
       amount: amountString,
       currency: payment.currency,
+      kycTier: depositTierSnapshot,
     });
     return this.initializeProviderCheckout(payment, userProfile);
   }
@@ -457,9 +475,18 @@ class PaymentsService {
           amount: current.amount,
           feeAmount: new Prisma.Decimal(feeString),
           businessDate: new Date(`${businessDate}T00:00:00.000Z`),
-          policySnapshot: policies.policySnapshot(depositPolicy, feeCents, {
-            businessDate,
-          }),
+          policySnapshot: {
+            ...policies.policySnapshot(depositPolicy, feeCents, {
+              businessDate,
+            }),
+            // The tier ceiling was applied when the checkout was created; the
+            // credit re-checks platform policy only, because the webhook that
+            // confirms the payment carries no session to resolve a tier against.
+            kycTier: {
+              enforced: false,
+              reason: "DEPOSIT_AUTHORIZED_AT_INITIATION",
+            },
+          },
           idempotencyKey: `payment:${current.id}`,
           paymentId: current.id,
         },

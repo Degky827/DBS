@@ -20,7 +20,11 @@ const listSchedules = async (req, res) => {
 
 const createSchedule = async (req, res) => {
   const userId = await usersService.getResolvedUserId(req.user);
-  const result = await scheduled.createSchedule({ userId, ...req.body });
+  const result = await scheduled.createSchedule({
+    userId,
+    ...req.body,
+    kyc: req.kyc,
+  });
   return ApiResponse.success(res, result, "Scheduled transfer created", 201);
 };
 
@@ -36,6 +40,7 @@ const actionHandler = (action) => async (req, res) => {
     userId,
     scheduleId: req.params.scheduleId,
     actorId: userId,
+    kyc: req.kyc,
   });
   const pastTense = { pause: "paused", resume: "resumed", cancel: "cancelled" }[action];
   return ApiResponse.success(res, result, `Scheduled transfer ${pastTense}`);
@@ -57,10 +62,14 @@ router.post(
   requireActiveAccount,
   actionHandler("pause")
 );
+// Only resuming is gated. Pausing or cancelling a schedule is always allowed,
+// including for a customer whose verification has lapsed: stopping money from
+// moving must never require an approval.
 router.post(
   ROUTES.SCHEDULED_TRANSFERS.RESUME,
   authenticate,
   requireActiveAccount,
+  requireKycApproval,
   actionHandler("resume")
 );
 router.post(

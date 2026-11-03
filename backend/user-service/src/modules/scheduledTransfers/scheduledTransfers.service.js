@@ -4,8 +4,9 @@ const env = require("../../config/env");
 const ApiError = require("../../utils/ApiError");
 const audit = require("../../utils/audit");
 const walletsService = require("../wallets/wallets.service");
+const tierLimits = require("../policies/tierLimits.service");
 const outbox = require("../outbox/outbox.service");
-const { toAmountString } = require("../wallets/money");
+const { toAmountString, toMinorUnits } = require("../wallets/money");
 
 const FREQUENCIES = new Set(["ONCE", "DAILY", "WEEKLY", "MONTHLY"]);
 const STATUSES = new Set(["ACTIVE", "PAUSED", "COMPLETED", "CANCELLED", "FAILED"]);
@@ -52,6 +53,7 @@ const createSchedule = async ({
   frequency,
   firstRunAt,
   timezone,
+  kyc,
 }) => {
   if (!FREQUENCIES.has(frequency)) {
     throw ApiError.validation({ frequency: "Unsupported schedule frequency" });
@@ -95,6 +97,17 @@ const createSchedule = async ({
     );
   }
 
+  // Every run is a transfer, so both operations have to be authorized, and the
+  // whole recurrence has to fit the tier's ceilings: the worker that executes
+  // due schedules has no KYC session to re-check them against.
+  tierLimits.limitFor(kyc, "TRANSFER", sourceWallet.currency);
+  const tierDecision = tierLimits.assertScheduleWithinTierLimits({
+    kyc,
+    currency: sourceWallet.currency,
+    frequency,
+    amountCents: toMinorUnits(amountString),
+  });
+
   const schedule = await prisma.scheduledTransfer.create({
     data: {
       userId,
@@ -113,6 +126,7 @@ const createSchedule = async ({
     frequency,
     nextRunAt: runAt.toISOString(),
     amount: amountString,
+    kycTier: tierLimits.tierSnapshot(tierDecision, kyc),
   });
   return { schedule: formatSchedule(schedule) };
 };
@@ -160,7 +174,7 @@ const getSchedule = async (userId, scheduleId) => {
   return { schedule: formatSchedule(schedule) };
 };
 
-const transition = async ({ userId, scheduleId, action, actorId }) => {
+const transition = async ({ userId, scheduleId, action, actorId, kyc }) => {
   const schedule = await prisma.scheduledTransfer.findFirst({
     where: { id: scheduleId, userId },
   });
@@ -179,6 +193,19 @@ const transition = async ({ userId, scheduleId, action, actorId }) => {
       `Cannot ${action} a ${schedule.status.toLowerCase()} schedule`,
       "INVALID_SCHEDULE_TRANSITION"
     );
+  }
+
+  if (action === "resume") {
+    // Resuming puts the money in motion again, so the tier that is in force now
+    // has to authorize the remaining recurrence. Pausing and cancelling are
+    // never gated: a restricted customer must always be able to stop a schedule.
+    tierLimits.limitFor(kyc, "TRANSFER", schedule.currency);
+    tierLimits.assertScheduleWithinTierLimits({
+      kyc,
+      currency: schedule.currency,
+      frequency: schedule.frequency,
+      amountCents: toMinorUnits(schedule.amount.toFixed(2)),
+    });
   }
 
   const updated = await prisma.scheduledTransfer.update({
@@ -203,6 +230,10 @@ const transition = async ({ userId, scheduleId, action, actorId }) => {
 const runSchedule = async (schedule) => {
   const runAt = schedule.nextRunAt;
   const idempotencyKey = `sched:${schedule.id}:${runAt.toISOString()}`;
+  // No KYC tier context travels here: the worker has no session, and the
+  // profile id it holds is not the identifier kyc-service keys approvals by.
+  // The run records the clamp as skipped; the ceilings were applied to the
+  // whole recurrence when the schedule was created or resumed.
   return walletsService.transfer({
     userId: schedule.userId,
     destinationWalletId: schedule.destinationWalletId,

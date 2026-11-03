@@ -6,6 +6,7 @@ const ApiError = require("../../utils/ApiError");
 const audit = require("../../utils/audit");
 const ledger = require("../ledger/ledger.service");
 const policies = require("../policies/policies.service");
+const tierLimits = require("../policies/tierLimits.service");
 const outbox = require("../outbox/outbox.service");
 const { toAmountString, toMinorUnits } = require("../wallets/money");
 
@@ -43,7 +44,7 @@ const verifyReplay = (withdrawal, { walletId, amount }) => {
   return { withdrawal: formatWithdrawal(withdrawal), replayed: true };
 };
 
-const initiateWithdrawal = async ({ userId, amount, idempotencyKey }) => {
+const initiateWithdrawal = async ({ userId, amount, idempotencyKey, kyc }) => {
   const amountString = toAmountString(amount);
   const wallet = await prisma.wallet.findUnique({
     where: { userId },
@@ -95,6 +96,16 @@ const initiateWithdrawal = async ({ userId, amount, idempotencyKey }) => {
           type: "WITHDRAWAL",
           policy,
           principalCents,
+          businessDate,
+        });
+        const tierDecision = await tierLimits.assertWithinTierLimits({
+          tx,
+          userId,
+          kyc,
+          operation: "WITHDRAWAL",
+          currency: wallet.currency,
+          walletId: wallet.id,
+          amountCents: principalCents,
           businessDate,
         });
 
@@ -168,6 +179,7 @@ const initiateWithdrawal = async ({ userId, amount, idempotencyKey }) => {
             journalEntry: { reference: entry.reference },
           }),
           replayed: false,
+          kycTier: tierLimits.tierSnapshot(tierDecision, kyc),
         };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
@@ -182,6 +194,7 @@ const initiateWithdrawal = async ({ userId, amount, idempotencyKey }) => {
           withdrawalReference: result.withdrawal.reference,
           amount: result.withdrawal.amount,
           currency: result.withdrawal.currency,
+          kycTier: result.kycTier,
           payoutProviderIntegrated: false,
         });
       }

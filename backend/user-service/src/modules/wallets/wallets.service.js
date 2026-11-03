@@ -4,6 +4,7 @@ const ApiError = require("../../utils/ApiError");
 const audit = require("../../utils/audit");
 const ledger = require("../ledger/ledger.service");
 const policies = require("../policies/policies.service");
+const tierLimits = require("../policies/tierLimits.service");
 const outbox = require("../outbox/outbox.service");
 const { toAmountString, toMinorUnits, fromMinorUnits } = require("./money");
 
@@ -168,7 +169,7 @@ const verifyIdempotentRequest = (transaction, { sourceWalletId, destinationWalle
   return { transaction: formatTransaction(transaction), replayed: true };
 };
 
-const transfer = async ({ userId, destinationWalletId, amount, idempotencyKey }) => {
+const transfer = async ({ userId, destinationWalletId, amount, idempotencyKey, kyc }) => {
   const amountString = toAmountString(amount);
   const sourceWallet = await prisma.wallet.findUnique({
     where: { userId },
@@ -227,6 +228,19 @@ const transfer = async ({ userId, destinationWalletId, amount, idempotencyKey })
           feeCents,
           businessDate,
         });
+        // Platform policy caps the product; the KYC tier caps this customer on
+        // top of it, so a raised limit in the policy never lifts the tier.
+        const tierDecision = await tierLimits.assertWithinTierLimits({
+          tx,
+          userId,
+          kyc,
+          operation: "TRANSFER",
+          currency: sourceWallet.currency,
+          walletId: sourceWallet.id,
+          amountCents: principalCents,
+          feeCents,
+          businessDate,
+        });
 
         let totalCents;
         let feeString;
@@ -251,7 +265,10 @@ const transfer = async ({ userId, destinationWalletId, amount, idempotencyKey })
             amount: new Prisma.Decimal(amountString),
             feeAmount: new Prisma.Decimal(feeString),
             businessDate: new Date(`${businessDate}T00:00:00.000Z`),
-            policySnapshot: policies.policySnapshot(policy, feeCents, decision),
+            policySnapshot: {
+              ...policies.policySnapshot(policy, feeCents, decision),
+              kycTier: tierLimits.tierSnapshot(tierDecision, kyc),
+            },
             idempotencyKey,
           },
           select: transactionFields,
