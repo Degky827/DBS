@@ -111,6 +111,21 @@ const dueEntriesFor = (submission, now) => {
 };
 
 const createTask = async (entry) => {
+  // Checked first so the routine "task already exists" path of a repeated sweep
+  // does not surface as a unique-violation error in the logs. The catch below
+  // still covers the race between two sweeps.
+  const existing = await prisma.kycReVerificationTask.findUnique({
+    where: {
+      userId_reason_dueAt: {
+        userId: entry.userId,
+        reason: entry.reason,
+        dueAt: entry.dueAt,
+      },
+    },
+    select: { id: true },
+  });
+  if (existing) return null;
+
   try {
     return await prisma.kycReVerificationTask.create({
       data: {
