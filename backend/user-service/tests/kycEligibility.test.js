@@ -49,7 +49,7 @@ const approvedClient = (calls = []) => ({
 });
 
 const buildProtectedApp = () => {
-  const state = { handlerCalls: 0 };
+  const state = { handlerCalls: 0, kyc: undefined };
   const app = express();
   app.post(
     "/protected",
@@ -60,6 +60,7 @@ const buildProtectedApp = () => {
     requireKycApproval,
     (req, res) => {
       state.handlerCalls += 1;
+      state.kyc = req.kyc;
       res.status(201).json({ ok: true });
     }
   );
@@ -84,19 +85,133 @@ test("kyc client requests the internal status with the service key and parses ap
     },
     async () => {
       const result = await kycClient.getUserKycStatus(USER_ID);
-      assert.deepEqual(result, { status: "APPROVED", isApproved: true });
+      assert.deepEqual(result, {
+        status: "APPROVED",
+        isApproved: true,
+        tier: null,
+      });
     }
   );
 
-  assert.equal(
-    captured.url,
-    `https://kyc.test/api/v1/kyc/internal/users/${USER_ID}/status`
-  );
-  assert.equal(
-    captured.options.headers["X-Internal-Service-Key"],
-    "unit-test-internal-key"
-  );
+  assert.equal(captured.url, `https://kyc.test/api/v1/kyc/internal/users/${USER_ID}/status`);
+  assert.equal(captured.options.headers["X-Internal-Service-Key"], "unit-test-internal-key");
   assert.equal(captured.options.method, "GET");
+});
+
+test("the tier payload is parsed into limits the money paths clamp with", async () => {
+  await withFetch(
+    async () =>
+      jsonResponse({
+        data: {
+          userId: USER_ID,
+          status: "APPROVED",
+          isApproved: true,
+          tierCode: "TIER_2",
+          tierId: "tier-def-sample-tier-2",
+          tierVersion: 3,
+          tierSource: "ASSIGNMENT",
+          allowedOperations: ["DEPOSIT", "TRANSFER", "WITHDRAWAL"],
+          limits: [
+            {
+              operation: "TRANSFER",
+              currency: "ETB",
+              minAmount: "0.00",
+              maxAmount: "25000.00",
+              dailyAmount: "50000.00",
+              dailyCount: 20,
+              monthlyAmount: "200000.00",
+              maxBalance: null,
+              isAllowed: true,
+            },
+            {
+              operation: "WITHDRAWAL",
+              currency: "ETB",
+              minAmount: 0,
+              maxAmount: null,
+              dailyAmount: null,
+              dailyCount: null,
+              monthlyAmount: null,
+              maxBalance: null,
+              isAllowed: false,
+            },
+          ],
+        },
+      }),
+    async () => {
+      const result = await kycClient.getUserKycStatus(USER_ID);
+      assert.equal(result.tier.code, "TIER_2");
+      assert.equal(result.tier.version, 3);
+      assert.equal(result.tier.source, "ASSIGNMENT");
+      assert.deepEqual(result.tier.allowedOperations, ["DEPOSIT", "TRANSFER", "WITHDRAWAL"]);
+      // Decimals stay strings so no consumer trusts a float round-trip.
+      assert.equal(result.tier.limits[0].maxAmount, "25000.00");
+      assert.equal(result.tier.limits[0].maxBalance, null);
+      assert.equal(result.tier.limits[1].minAmount, "0");
+      assert.equal(result.tier.limits[1].isAllowed, false);
+    }
+  );
+
+  // A pre-tier response, and the documented "no tier policy" source, both mean
+  // platform policy alone rather than an unlimited tier.
+  for (const data of [
+    { status: "APPROVED", isApproved: true },
+    {
+      status: "APPROVED",
+      isApproved: true,
+      tierCode: null,
+      tierSource: "NOT_CONFIGURED",
+      limits: [],
+    },
+  ]) {
+    await withFetch(
+      async () => jsonResponse({ data }),
+      async () => {
+        const result = await kycClient.getUserKycStatus(USER_ID);
+        assert.equal(result.tier, null);
+      }
+    );
+  }
+});
+
+test("a malformed tier payload is unavailable, not an unclamped approval", async () => {
+  const cases = [
+    { status: "APPROVED", isApproved: true, tierCode: "TIER_1", limits: {} },
+    {
+      status: "APPROVED",
+      isApproved: true,
+      tierCode: "TIER_1",
+      limits: [{ operation: "TRANSFER", currency: "ETB", maxAmount: "many" }],
+    },
+    {
+      status: "APPROVED",
+      isApproved: true,
+      tierCode: "TIER_1",
+      limits: [{ operation: "TRANSFER", currency: "etb" }],
+    },
+    {
+      status: "APPROVED",
+      isApproved: true,
+      tierCode: "TIER_1",
+      limits: [{ operation: "TRANSFER", currency: "ETB", dailyCount: -2 }],
+    },
+    {
+      status: "APPROVED",
+      isApproved: true,
+      limits: [{ operation: "TRANSFER", currency: "ETB" }],
+    },
+  ];
+
+  for (const data of cases) {
+    await withFetch(
+      async () => jsonResponse({ data }),
+      async () => {
+        await assert.rejects(kycClient.getUserKycStatus(USER_ID), (error) => {
+          assert.equal(error.name, "KycUnavailableError");
+          return true;
+        });
+      }
+    );
+  }
 });
 
 test("kyc client fails closed on error statuses, invalid json and malformed payloads", async () => {
@@ -114,13 +229,10 @@ test("kyc client fails closed on error statuses, invalid json and malformed payl
 
   for (const impl of cases) {
     await withFetch(impl, async () => {
-      await assert.rejects(
-        kycClient.getUserKycStatus(USER_ID),
-        (error) => {
-          assert.equal(error.name, "KycUnavailableError");
-          return true;
-        }
-      );
+      await assert.rejects(kycClient.getUserKycStatus(USER_ID), (error) => {
+        assert.equal(error.name, "KycUnavailableError");
+        return true;
+      });
     });
   }
 });
@@ -171,15 +283,12 @@ test("eligibility fails closed with 503 when the status cannot be obtained", asy
     },
   });
   try {
-    await assert.rejects(
-      kycEligibility.assertApproved(USER_ID),
-      (error) => {
-        assertApiError(503, "KYC_STATUS_UNAVAILABLE")(error);
-        assert.equal(error.message.includes("kyc.test"), false);
-        assert.equal(error.message.includes("unit-test-internal-key"), false);
-        return true;
-      }
-    );
+    await assert.rejects(kycEligibility.assertApproved(USER_ID), (error) => {
+      assertApiError(503, "KYC_STATUS_UNAVAILABLE")(error);
+      assert.equal(error.message.includes("kyc.test"), false);
+      assert.equal(error.message.includes("unit-test-internal-key"), false);
+      return true;
+    });
   } finally {
     kycEligibility.setKycClient(null);
   }
@@ -195,6 +304,31 @@ test("the KYC gate uses the verified JWT subject and lets approved requests thro
     assert.equal(response.status, 201);
     assert.deepEqual(calls, [USER_ID]);
     assert.equal(state.handlerCalls, 1);
+  } finally {
+    kycEligibility.setKycClient(null);
+  }
+});
+
+test("the gate hands the resolved tier to the financial handler", async () => {
+  const tier = {
+    code: "TIER_1",
+    version: 1,
+    source: "FALLBACK",
+    allowedOperations: ["DEPOSIT", "TRANSFER"],
+    limits: [],
+  };
+  kycEligibility.setKycClient({
+    async getUserKycStatus() {
+      return { status: "APPROVED", isApproved: true, tier };
+    },
+  });
+  const { app, state } = buildProtectedApp();
+
+  try {
+    const response = await request(app).post("/protected").send({});
+    assert.equal(response.status, 201);
+    assert.equal(state.kyc.isApproved, true);
+    assert.equal(state.kyc.tier, tier);
   } finally {
     kycEligibility.setKycClient(null);
   }
@@ -293,10 +427,7 @@ test("provider webhooks settle without a KYC check because funds already left th
   };
 
   try {
-    const service = new PaymentsService(
-      { verifyWebhook: () => true },
-      db
-    );
+    const service = new PaymentsService({ verifyWebhook: () => true }, db);
     const result = await service.processVerification("dep_test", {
       webhookDelivery: {
         bodyHash: "a".repeat(64),
