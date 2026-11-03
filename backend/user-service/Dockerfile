@@ -29,6 +29,12 @@ CMD ["npx", "prisma", "migrate", "deploy"]
 FROM base AS runtime
 ENV NODE_ENV=production
 
+# npm and corepack are build-time tooling; the runtime only executes
+# `node server.js`. Removing them drops their bundled dependency tree - and the
+# advisories it carries - from the image that is actually served.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+
 COPY --from=build --chown=node:node /app ./
 RUN mkdir -p /app/uploads/avatars && chown -R node:node /app/uploads
 

@@ -23,6 +23,11 @@ RUN npm run build
 # ---------- Stage 2: serve ----------
 FROM nginx:alpine AS runtime
 
+# The nginx tag ships whatever Alpine package versions existed when it was
+# built. Upgrading inside the image picks up the patched libcurl, libexpat and
+# brotli the scan requires, without waiting for an upstream rebuild.
+RUN apk upgrade --no-cache
+
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/banking/tls.conf
 COPY nginx.http.conf /etc/nginx/banking/http.conf
