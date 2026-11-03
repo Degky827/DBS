@@ -22,6 +22,7 @@ async function decide(req, res) {
     reviewerId: req.user.id,
     decision: req.body.decision,
     reason: req.body.reason,
+    tierId: req.body.tierId,
   });
   return ApiResponse.success(res, result, "Review decision recorded");
 }
