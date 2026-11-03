@@ -159,6 +159,61 @@ groups:
             A Chapa payment could not be reconciled automatically. Follow the
             reconciliation runbook before writing any ledger entry.
 
+  - name: ledger
+    rules:
+      - alert: LedgerIntegrityFindings
+        expr: banking_ledger_open_issues{severity=~"CRITICAL|HIGH"} > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} ledger issues are open at {{ $labels.severity }}"
+          description: >-
+            The verification job found books that do not agree. Open the run
+            history in the admin integrity view, confirm the finding and record
+            a reversal or adjustment. Never edit a historical entry, and do not
+            suppress the issue unless a compliance decision has been documented.
+
+      - alert: LedgerVerificationRunFailed
+        expr: >-
+          increase(banking_ledger_verification_runs_total{outcome=~"failed|error"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ledger verification run reported {{ $labels.outcome }}"
+          description: >-
+            A run with outcome=error means at least one check could not complete,
+            so the books are unproven rather than clean. Investigate before the
+            next scheduled cycle.
+
+      - alert: LedgerVerificationStale
+        expr: >-
+          time() - banking_ledger_verification_last_run_timestamp_seconds
+            > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} has not completed a ledger verification run in 24h"
+          description: >-
+            The job is disabled, the process restarted without
+            LEDGER_VERIFICATION_ENABLED, or every cycle has hung. Absence of
+            this metric is not evidence the ledger is consistent.
+
+      - alert: VerificationIssueBacklogGrowing
+        expr: >-
+          sum(banking_ledger_open_issues)
+            - sum(banking_ledger_open_issues offset 1h) > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Open ledger issue backlog grew by more than 10 in an hour"
+          description: >-
+            New findings are appearing faster than reviewers close them. Check
+            whether a deployment or provider incident introduced them.
+
   - name: notifications
     rules:
       - alert: OutboxDeliveryStalled
