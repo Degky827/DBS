@@ -179,6 +179,10 @@ browser actually calls.
 | `AUTH_RATE_LIMIT_MAX` | No | No | Default 20 | Sensitive authenticated operations |
 | `WEBHOOK_RATE_LIMIT_MAX` | No | No | Default 120 / window | Dedicated limiter for the unauthenticated Didit webhook |
 | `KYC_APPROVAL_TTL_DAYS` | No | No | Default 365 (1–3650) | Approved KYC validity; expired approvals require a new application |
+| `OUTBOX_ENABLED` / `NOTIFICATION_SERVICE_URL` | No | Yes when enabled | Off by default; on in production when the URL is set | Delivers KYC reminders to notification-service; requires a strong `INTERNAL_SERVICE_KEY` |
+| `OUTBOX_INTERVAL_MS` / `OUTBOX_BATCH_SIZE` / `OUTBOX_MAX_ATTEMPTS` | No | No | 5000 / 25 / 12 | Dispatcher cadence, batch, and backoff ceiling |
+| `KYC_REVERIFICATION_ENABLED` | No | No | Off outside production | Sweeps expiring approvals, identity documents, and tier review intervals into the officer queue |
+| `KYC_REVERIFICATION_INTERVAL_MS` / `KYC_REVERIFICATION_BATCH_SIZE` | No | No | 6 h (15 min–24 h) / 200 (1–2000) | Sweep cadence and batch ceiling |
 | `ENABLE_API_DOCS` / `API_DOCS_USERNAME` / `API_DOCS_PASSWORD` | Docs only | Password is secret | As auth-service | Swagger UI |
 | `STORAGE_DIR` | No | No | Default `<service>/storage` | Encrypted document storage |
 | `MAX_FILE_SIZE_BYTES` | No | No | Default 10 MiB | Upload size limit |
