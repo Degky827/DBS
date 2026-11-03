@@ -35,7 +35,11 @@ const seed = async (count) => {
           aggregateType: "TestRun",
           aggregateId,
           payload: { runId },
-          nextAttemptAt: new Date(Date.now() - 1000),
+          // The shared test database holds unpublished rows from the suites
+          // that ran before this one, and the claim is ordered by nextAttemptAt
+          // with a batch limit, so backdating to the epoch is what guarantees
+          // this cycle picks up these rows rather than somebody else's.
+          nextAttemptAt: new Date(0),
         },
       })
     )
