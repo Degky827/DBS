@@ -43,6 +43,8 @@ model User {
     otpCodes          OtpCode[]
     refreshTokens     RefreshToken[]
     revokedAccessTokens AccessTokenRevocation[]
+    loginEvents       LoginEvent[]
+    devices           UserDevice[]
 
     @@index([status])
 }
@@ -94,4 +96,57 @@ model AccessTokenRevocation {
 
     @@index([userId])
     @@index([expiresAt])
+}
+
+// Login and session-history evidence for fraud detection. Every identifying
+// value (ip, device fingerprint, typed identifier) is stored as a SHA-256 hex
+// digest, never raw, so this table can be retained and aggregated without
+// becoming a surveillance archive.
+model LoginEvent {
+    id                    String   @id @default(uuid())
+    // Nullable: attempts against unknown accounts still need recording, and the
+    // trail survives an account removal.
+    userId                String?
+    user                  User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+    type                  String
+    outcome               String
+    identifierHash        String?
+    ipHash                String?
+    ipPrefix              String?
+    userAgent             String?
+    deviceFingerprintHash String?
+    mfaMethod             String?
+    failureReason         String?
+    correlationId         String?
+    occurredAt            DateTime @default(now())
+    createdAt             DateTime @default(now())
+
+    @@index([userId, occurredAt])
+    @@index([deviceFingerprintHash, occurredAt])
+    @@index([ipHash, occurredAt])
+    @@index([identifierHash, occurredAt])
+    @@index([occurredAt])
+}
+
+// Devices the customer has signed in from. A fingerprint that has never been
+// seen, or that the customer explicitly un-trusted, is a fraud signal rather
+// than a block — the customer decides whether a device is theirs.
+model UserDevice {
+    id                    String   @id @default(uuid())
+    userId                String
+    user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    deviceFingerprintHash String
+    label                 String?
+    userAgent             String?
+    firstSeenAt           DateTime @default(now())
+    lastSeenAt            DateTime @default(now())
+    lastIpHash            String?
+    isRecognized          Boolean  @default(false)
+    seenCount             Int      @default(1)
+    revokedAt             DateTime?
+    createdAt             DateTime @default(now())
+    updatedAt             DateTime @updatedAt
+
+    @@unique([userId, deviceFingerprintHash])
+    @@index([userId, lastSeenAt])
 }
