@@ -3,6 +3,7 @@ const env = require("../config/env");
 const ApiError = require("../utils/ApiError");
 const tierService = require("./tierService");
 const { SUBMISSION_STATUS, canTransition } = require("../constants/kycStatus");
+const { TASK_STATUS, OPEN_TASK_STATUSES } = require("../constants/kycTier");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -340,6 +341,19 @@ async function decide({ submissionId, reviewerId, decision, reason, tierId }) {
         decisionReason: attestationNote(evaluation) || reason,
       });
       assignment = { ...result.assignment, direction: result.direction };
+    }
+
+    if (finalStatus === SUBMISSION_STATUS.APPROVED) {
+      // Fresh approval is the evidence the outstanding re-verification requests
+      // were asking for, so they close in the same transaction as the decision.
+      await tx.kycReVerificationTask.updateMany({
+        where: {
+          userId: submission.userId,
+          submissionId: { not: submissionId },
+          status: { in: OPEN_TASK_STATUSES },
+        },
+        data: { status: TASK_STATUS.COMPLETED, completedAt: decidedAt },
+      });
     }
 
     const updated = await tx.kycSubmission.findUnique({
