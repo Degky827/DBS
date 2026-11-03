@@ -23,6 +23,7 @@ const EVENT_ICONS = {
   "dispute.opened": "Dispute",
   "dispute.updated": "Dispute",
   "scheduled_transfer.failed": "Scheduled transfer",
+  "ledger.integrity_failed": "Ledger integrity",
 };
 
 export default function Notifications() {
