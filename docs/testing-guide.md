@@ -192,6 +192,11 @@ npm run test:scheduled-transfers  # requires WALLET_TEST_DATABASE_URL
 npm run test:disputes             # requires WALLET_TEST_DATABASE_URL
 npm run test:integration          # requires KYC_TEST_DATABASE_URL (starts kyc-service)
 
+# Phase 4: ledger verification engine (checks, run history, issue workflow)
+npm run test:ledger-verification  # requires WALLET_TEST_DATABASE_URL
+npm run ledger:verify -- --json   # read-only integrity scan, no rows written
+npm run ledger:verify -- --record --trigger CI
+
 # Everything (runs files sequentially against one test database)
 npm run test:all
 ```
@@ -199,6 +204,15 @@ npm run test:all
 `scheduledTransfers.test.js` and `disputes.test.js` post ledger funding entries and
 transfer rows into the same test database as the other suites, so they must not run
 concurrently against it (`test:all` uses `--test-concurrency=1`).
+
+`ledgerVerification.test.js` behaves the same way and needs the same guard. It
+funds wallets through the ledger, then deliberately injects inconsistent rows
+(an orphan transfer, a settlement-less payout, a withdrawal without a
+reservation) to prove a run reports `FAILED`, records the finding exactly once
+and publishes one integrity alert through the outbox. Those fixtures are written
+to `WALLET_TEST_DATABASE_URL` and deleted afterwards; verification runs from
+earlier CI executions stay behind, which is why the suite asserts on relative
+counts and on its own run reference rather than on absolute totals.
 
 #### KYC Service
 
