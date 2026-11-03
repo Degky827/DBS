@@ -260,3 +260,46 @@ groups:
             Emails are not draining from the queue. Verify BREVO_API_KEY,
             provider status, and EMAIL_RETRY_INTERVAL_MS.
 
+
+  - name: kyc-reverification
+    rules:
+      - alert: KYCReVerificationSweepStale
+        expr: >-
+          time() - banking_kyc_reverification_last_run_timestamp_seconds
+            > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KYC re-verification has not completed a sweep in 24h"
+          description: >-
+            The sweeper is disabled, the process restarted without
+            KYC_REVERIFICATION_ENABLED, or every cycle is failing. Customers
+            are not being reminded, and an expired approval will not be
+            noticed by an officer until the queue is opened.
+
+      - alert: KYCReVerificationSweepFailing
+        expr: increase(banking_kyc_reverification_runs_total{outcome="failed"}[30m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KYC re-verification sweep failed"
+          description: >-
+            A sweep raised an error, so tasks for expiring approvals and
+            documents may not have been created this cycle. Check the
+            kyc-service logs and database availability.
+
+      - alert: KYCReVerificationOverdueBacklog
+        expr: >-
+          sum(banking_kyc_reverification_open_tasks{reason=~"APPROVAL_EXPIRED|DOCUMENT_EXPIRED"}) > 25
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} customers hold an expired KYC approval or document"
+          description: >-
+            Expired evidence is still on file for more than twenty-five
+            customers. This is an operational backlog, not evidence of fraud:
+            review the queue and request new documents where the customer is
+            still eligible to transact.
