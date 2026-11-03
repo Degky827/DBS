@@ -142,6 +142,7 @@ services:
       CHAPA_CALLBACK_URL: ${CHAPA_CALLBACK_URL:-}
       CHAPA_RETURN_URL: ${CHAPA_RETURN_URL:-}
       NOTIFICATION_SERVICE_URL: http://notification-service:5004/api/v1
+      ENABLE_JOBS: ${ENABLE_JOBS:-true}
       OUTBOX_ENABLED: ${OUTBOX_ENABLED:-true}
       OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-25}
@@ -205,6 +206,17 @@ services:
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
       USER_SERVICE_URL: http://user-service:5002/api/v1
       AUTH_SERVICE_URL: http://auth-service:5001/api/v1
+      # Re-verification reminders reach customers through the notification
+      # service; without this path the sweeper queues tasks nobody is told about.
+      ENABLE_JOBS: ${ENABLE_JOBS:-true}
+      NOTIFICATION_SERVICE_URL: http://notification-service:5004/api/v1
+      OUTBOX_ENABLED: ${OUTBOX_ENABLED:-true}
+      OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-25}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-12}
+      KYC_REVERIFICATION_ENABLED: ${KYC_REVERIFICATION_ENABLED:-false}
+      KYC_REVERIFICATION_INTERVAL_MS: ${KYC_REVERIFICATION_INTERVAL_MS:-21600000}
+      KYC_REVERIFICATION_BATCH_SIZE: ${KYC_REVERIFICATION_BATCH_SIZE:-200}
       CORS_ORIGIN: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
       TRUST_PROXY: 0
       ENABLE_HSTS: "false"

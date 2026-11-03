@@ -190,6 +190,9 @@ services:
       RECONCILIATION_STALE_MINUTES: ${RECONCILIATION_STALE_MINUTES:-15}
       RECONCILIATION_BATCH_SIZE: ${RECONCILIATION_BATCH_SIZE:-25}
       # Phase 3: transactional outbox delivery to notification-service.
+      # ENABLE_JOBS=false on every extra API replica; exactly one container
+      # should own the background work.
+      ENABLE_JOBS: ${ENABLE_JOBS:-true}
       NOTIFICATION_SERVICE_URL: http://notification-service:5004/api/v1
       OUTBOX_ENABLED: ${OUTBOX_ENABLED:-true}
       OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
@@ -273,6 +276,17 @@ services:
       UPLOAD_RATE_LIMIT_MAX: ${UPLOAD_RATE_LIMIT_MAX:-10}
       WEBHOOK_RATE_LIMIT_MAX: ${WEBHOOK_RATE_LIMIT_MAX:-120}
       KYC_APPROVAL_TTL_DAYS: ${KYC_APPROVAL_TTL_DAYS:-365}
+      # Phase 4: without this block the re-verification sweeper queues tasks but
+      # no reminder can leave the service, because the outbox has no destination.
+      ENABLE_JOBS: ${ENABLE_JOBS:-true}
+      NOTIFICATION_SERVICE_URL: http://notification-service:5004/api/v1
+      OUTBOX_ENABLED: ${OUTBOX_ENABLED:-true}
+      OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-25}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-12}
+      KYC_REVERIFICATION_ENABLED: ${KYC_REVERIFICATION_ENABLED:-true}
+      KYC_REVERIFICATION_INTERVAL_MS: ${KYC_REVERIFICATION_INTERVAL_MS:-21600000}
+      KYC_REVERIFICATION_BATCH_SIZE: ${KYC_REVERIFICATION_BATCH_SIZE:-200}
       STORAGE_DIR: /app/storage
       MAX_FILE_SIZE_BYTES: ${MAX_FILE_SIZE_BYTES:-10485760}
       STORAGE_ENCRYPTION_KEY: ${STORAGE_ENCRYPTION_KEY:?STORAGE_ENCRYPTION_KEY is required}
