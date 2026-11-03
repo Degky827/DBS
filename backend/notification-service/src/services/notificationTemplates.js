@@ -182,9 +182,20 @@ const TEMPLATES = {
   },
 };
 
+// The event type crosses a service boundary, so it is matched against the known
+// names instead of indexing the map with it. A name such as "constructor" or
+// "__proto__" then simply finds no template rather than an inherited value.
+const lookupTemplate = (eventType) => {
+  if (typeof eventType !== "string") return null;
+  for (const [name, template] of Object.entries(TEMPLATES)) {
+    if (name === eventType) return template;
+  }
+  return null;
+};
+
 const buildNotifications = (eventType, payload) => {
-  const template = TEMPLATES[eventType];
-  if (!template) return [];
+  const template = lookupTemplate(eventType);
+  if (typeof template !== "function") return [];
 
   const items = template(payload || {});
   // Lower-case for a stable identity across login providers and casing.

@@ -115,6 +115,21 @@ test("unknown event types are acknowledged without notifications", async () => {
   assert.equal(await prisma.notification.count(), 0);
 });
 
+// The event type crosses a service boundary. A name that exists on
+// Object.prototype must resolve to nothing, not to an inherited function.
+for (const inherited of ["constructor", "__proto__", "toString"]) {
+  test(`inherited property names are not dispatched as templates: ${inherited}`, async () => {
+    const response = await postEvent({
+      eventId: randomUUID(),
+      type: inherited,
+      payload: { user: { email: "someone@example.test" } },
+    });
+    assert.equal(response.status, 202);
+    assert.equal(response.body.data.ignored, true);
+    assert.equal(await prisma.notification.count(), 0);
+  });
+}
+
 test("notification reads are scoped to the token email", async () => {
   await postEvent(transferEvent());
 
