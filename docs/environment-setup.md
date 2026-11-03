@@ -77,6 +77,12 @@ The browser-facing refresh cookie path is `/api/auth` in the Compose/Nginx topol
 `/api/v1/auth` when the auth service is called directly. It must match the URL the
 browser actually calls.
 
+`http://localhost:8080` and `http://127.0.0.1:8080` are two different origins even though
+they reach the same container. Cookie-authenticated endpoints reject any request whose
+`Origin` (or `Referer`) is not listed in `CORS_ORIGIN` with `CSRF_ORIGIN_REJECTED`, so the
+dev allowlist names both spellings of every loopback port. When adding a new host or port
+for the SPA, add the matching origin to all four services instead of relaxing the check.
+
 ## 3. auth-service
 
 | Variable | Required | Secret | Format / default | Purpose and behavior when missing |

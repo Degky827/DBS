@@ -67,7 +67,7 @@ services:
       MFA_CHALLENGE_TTL_MS: ${MFA_CHALLENGE_TTL_MS:-300000}
       STEP_UP_TTL_MS: ${STEP_UP_TTL_MS:-600000}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
-      CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+      CORS_ORIGIN: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
       TRUST_PROXY: 0
       ENABLE_HSTS: "false"
       ENABLE_API_DOCS: "true"
@@ -129,7 +129,7 @@ services:
       KYC_SERVICE_URL: http://kyc-service:5003/api/v1/kyc
       STEP_UP_TTL_MS: ${STEP_UP_TTL_MS:-600000}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
-      CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+      CORS_ORIGIN: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
       TRUST_PROXY: 0
       ENABLE_HSTS: "false"
       ENABLE_API_DOCS: "true"
@@ -205,7 +205,7 @@ services:
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
       USER_SERVICE_URL: http://user-service:5002/api/v1
       AUTH_SERVICE_URL: http://auth-service:5001/api/v1
-      CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+      CORS_ORIGIN: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
       TRUST_PROXY: 0
       ENABLE_HSTS: "false"
       ENABLE_API_DOCS: "true"
@@ -268,7 +268,7 @@ services:
       JWT_AUDIENCE: banking-system
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
       AUTH_SERVICE_URL: http://auth-service:5001/api/v1
-      CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+      CORS_ORIGIN: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
       TRUST_PROXY: 0
       ENABLE_HSTS: "false"
       EMAIL_ENABLED: ${EMAIL_ENABLED:-}
