@@ -256,6 +256,67 @@ application code:
 `ledger:verify` is the operational integrity check. Run it after any incident,
 migration, or restore.
 
+### Verification runs and issues
+
+The same 33 read-only checks are available as a scheduled job, a CLI command and
+an admin API, so a failure means the same thing whichever door you came in
+through. They are aggregate SQL queries against the ledger tables — no
+application-side scan of every posting — and money is compared in exact decimal,
+never floating point.
+
+- **Run verdicts.** `PASSED` means every check completed and the current open
+  finding set has no `CRITICAL` or `HIGH`. `FAILED` means it does. `ERROR` means
+  at least one check could not execute — the books are *unproven*, which is why
+  an `ERROR` run also pages. `LOW` findings (for example development
+  `TEST_FUNDING` entries) are reported and never fail a run.
+- **Issue lifecycle.** A finding is `OPEN` until a reviewer `acknowledge`s it,
+  `resolve`s it with a note, or `suppress`es it with a note. Reopening is
+  ADMIN-only, as is suppression: those two actions change what the bank is
+  willing to ignore. Suppressing does not make the books consistent — the run
+  that recorded it still reports `FAILED`. Corrections are always reversal or
+  adjustment entries; a historical journal entry is never edited, and the
+  database triggers reject the attempt.
+- **Deduplication.** A rerun does not re-record a finding that is already
+  `OPEN`, `ACKNOWLEDGED` or `SUPPRESSED`; the partial unique index on
+  (classification, aggregate type, aggregate id) is the arbiter, so concurrent
+  runs cannot open the same finding twice. Only newly detected CRITICAL/HIGH
+  findings, or check errors, raise an alert — so a finding nobody resolves
+  surfaces once, not every cycle.
+- **Alerting.** A failing run enqueues a `ledger.integrity_failed` event in the
+  same transaction that records the run and its issues, then the outbox
+  dispatcher delivers it to notification-service, which emails every active
+  ADMIN (§14). The email and the database state therefore agree: a rolled-back
+  run cannot leave an alert behind.
+- **History.** `LedgerVerificationRun` rows keep the trigger (`SCHEDULED`,
+  `MANUAL`, `CI`), duration, counts, per-severity summary and totals;
+  `LedgerVerificationIssue` rows keep expected/actual/difference and status.
+  Nothing in the admin view is estimated or mocked — it reads these tables.
+  Runs left `RUNNING` by a crashed process are reaped to `ERROR` at the start of
+  the next cycle.
+
+Endpoints (ADMIN or FINANCIAL_OFFICER; suppression/reopening ADMIN-only):
+
+| Method | Path |
+| --- | --- |
+| GET | `/api/v1/admin/ledger/integrity` |
+| GET | `/api/v1/admin/ledger/verification/runs` |
+| POST | `/api/v1/admin/ledger/verification/runs` |
+| GET | `/api/v1/admin/ledger/verification/runs/{reference}` |
+| GET | `/api/v1/admin/ledger/verification/issues` |
+| POST | `/api/v1/admin/ledger/verification/issues/{id}/acknowledge` |
+| POST | `/api/v1/admin/ledger/verification/issues/{id}/resolve` |
+| POST | `/api/v1/admin/ledger/verification/issues/{id}/suppress` |
+| POST | `/api/v1/admin/ledger/verification/issues/{id}/reopen` |
+
+The job is enabled by default in production (`LEDGER_VERIFICATION_ENABLED`,
+`LEDGER_VERIFICATION_INTERVAL_MS`, default six hours) and can be triggered by an
+operator at any time. `npm run ledger:verify -- --json`, `--group
+<entries|accounts|transactions|withdrawals|payouts>` and `--record` cover
+read-only triage and an officially recorded run from the command line.
+
+These checks detect internal inconsistency. They are not an AML or sanctions
+screen, and passing them is not evidence of regulatory compliance.
+
 ## 8. Provider security
 
 - **Chapa**: base URL pinned to `https://api.chapa.global`; only
@@ -307,6 +368,14 @@ Exported series:
   `duplicate`, `accepted`, `rejected` (signature/timestamp), or `error`.
 - `banking_payment_reconciliation_total{outcome}` — `MATCHED`, `PENDING`,
   `MISMATCH`, `MANUAL_REVIEW`, or `ERROR`.
+- `banking_ledger_verification_runs_total{outcome}` — `passed`, `failed`, or
+  `error` per completed verification run (§7).
+- `banking_ledger_open_issues{severity}` — actionable OPEN/ACKNOWLEDGED ledger
+  findings. Every severity is exported on each refresh, including zeroes, so an
+  alert clears when the backlog drains instead of vanishing with the series.
+  Suppressed findings are excluded here while their run still reports `FAILED`.
+- `banking_ledger_verification_last_run_timestamp_seconds` — unix time of the
+  last completed run; used to prove the job is still running at all.
 - Process metrics: CPU, RSS, heap, event-loop lag, and service info.
 
 The opt-in monitoring profile runs Prometheus, Alertmanager, and an alert relay:
@@ -318,11 +387,16 @@ docker compose --profile monitoring up -d
 - `monitoring/prometheus/prometheus.yml` scrapes auth-service:5001,
   user-service:5002, and kyc-service:5003 every 15 seconds.
 - `monitoring/prometheus/alerts.yml` defines availability, HTTP, security, KYC,
-  and payment alerts: `ServiceDown`, `ServiceNotReady`,
+  payment, ledger, and notification alerts: `ServiceDown`, `ServiceNotReady`,
   `HighServerErrorRate`, `HighRequestLatency`, `RateLimitSpike`,
   `LoginFailureBurst`, `MfaFailureBurst`, `RefreshTokenReuseDetected`,
-  `KycProviderFailures`, `KycWebhookRejected`, and
-  `ReconciliationNeedsReview`.
+  `KycProviderFailures`, `KycWebhookRejected`,
+  `ReconciliationNeedsReview`, `LedgerIntegrityFindings`,
+  `LedgerVerificationRunFailed`, `LedgerVerificationStale`, and
+  `VerificationIssueBacklogGrowing`. `LedgerVerificationStale` exists because a
+  silent job is indistinguishable from a healthy ledger: the absence of runs is
+  itself an alert, not evidence of cleanliness. Validate rule changes with
+  `promtool check rules monitoring/prometheus/alerts.yml`.
 - `monitoring/alertmanager/alertmanager.yml` groups by alert and service and
   repeats critical alerts hourly. Every notification is delivered to
   `alert-relay`, which records it in `docker compose logs alert-relay`.
@@ -371,7 +445,9 @@ intended manual procedure.
    secret (§5) and revoke refresh sessions for affected users. Revoking a
    family forces re-authentication.
 2. **Assess** — pull logs by `X-Request-Id`; run `ledger:verify`; check
-   reconciliation records for Chapa and the KYC decision log.
+   `GET /api/v1/admin/ledger/integrity` and the run history for the findings
+   already known to reviewers (§7); check reconciliation records for Chapa and
+   the KYC decision log.
 3. **Preserve** — take a database snapshot before any remediation that writes
    data (see [backup-and-recovery.md](./backup-and-recovery.md)).
 4. **Remediate** — fix forward with a new commit; never edit posted ledger rows
@@ -414,7 +490,10 @@ limits, reversal-aware history, reconciliation ambiguity handling, and reversal
 invariants. Phase 3 adds outbox delivery and dead-letter replay, consumer
 deduplication, inbox scoping by token subject, the email queue, beneficiaries,
 scheduled transfers, statement balances and PDF export, and the dispute
-transition matrix.
+transition matrix. Phase 4 adds the ledger verification suite: run verdicts
+against injected inconsistencies, one-open-per-target deduplication, the
+reviewer transition matrix including ADMIN-only suppression and reopening, alert
+fan-out through the outbox, job single-flight, and abandoned-run reaping.
 See [testing-guide.md](./testing-guide.md) for commands and counts.
 
 ## 14. Event outbox and notification delivery
