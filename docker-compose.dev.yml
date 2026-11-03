@@ -141,6 +141,15 @@ services:
       CHAPA_BASE_URL: ${CHAPA_BASE_URL:-}
       CHAPA_CALLBACK_URL: ${CHAPA_CALLBACK_URL:-}
       CHAPA_RETURN_URL: ${CHAPA_RETURN_URL:-}
+      NOTIFICATION_SERVICE_URL: http://notification-service:5004/api/v1
+      OUTBOX_ENABLED: ${OUTBOX_ENABLED:-true}
+      OUTBOX_INTERVAL_MS: ${OUTBOX_INTERVAL_MS:-5000}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-25}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-12}
+      SCHEDULED_TRANSFERS_ENABLED: ${SCHEDULED_TRANSFERS_ENABLED:-true}
+      SCHEDULED_TRANSFERS_INTERVAL_MS: ${SCHEDULED_TRANSFERS_INTERVAL_MS:-30000}
+      SCHEDULED_TRANSFERS_BATCH_SIZE: ${SCHEDULED_TRANSFERS_BATCH_SIZE:-10}
+      STATEMENT_MAX_RANGE_DAYS: ${STATEMENT_MAX_RANGE_DAYS:-366}
     ports:
       - "127.0.0.1:5002:5002"
     volumes:
@@ -227,6 +236,69 @@ services:
       retries: 3
       start_period: 15s
 
+  notification-migrate:
+    build:
+      context: ./backend/notification-service
+      target: migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD:-dev-only-postgres-password}@postgres:5432/notification_db?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notification-service:
+    build:
+      context: ./backend/notification-service
+      target: runtime
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: development
+      PORT: 5004
+      DB_ADAPTER: pg
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meridian}:${POSTGRES_PASSWORD:-dev-only-postgres-password}@postgres:5432/notification_db?schema=public
+      JWT_ALGORITHM: HS256
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-please-change-0123456789abcdef}
+      JWT_ISSUER: auth-service
+      JWT_AUDIENCE: banking-system
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-only-internal-service-key-0123456789abcdef}
+      AUTH_SERVICE_URL: http://auth-service:5001/api/v1
+      CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+      TRUST_PROXY: 0
+      ENABLE_HSTS: "false"
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-}
+      EMAIL_TRANSPORT: ${EMAIL_TRANSPORT:-api}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      BREVO_API_BASE_URL: ${BREVO_API_BASE_URL:-https://api.brevo.com/v3}
+      EMAIL_FROM: ${EMAIL_FROM:-Meridian Bank}
+      EMAIL_FROM_EMAIL: ${EMAIL_FROM_EMAIL:-no-reply@meridianbank.example}
+      EMAIL_TIMEOUT_MS: ${EMAIL_TIMEOUT_MS:-8000}
+      EMAIL_RETRY_INTERVAL_MS: ${EMAIL_RETRY_INTERVAL_MS:-30000}
+      EMAIL_MAX_ATTEMPTS: ${EMAIL_MAX_ATTEMPTS:-6}
+      APP_ORIGIN: http://localhost:5173
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+    ports:
+      - "127.0.0.1:5004:5004"
+    depends_on:
+      notification-migrate:
+        condition: service_completed_successfully
+      auth-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5004/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   frontend:
     profiles: ["spa"]
     build:
@@ -235,6 +307,7 @@ services:
         VITE_AUTH_API: ${VITE_AUTH_API:-/api/auth}
         VITE_USER_API: ${VITE_USER_API:-/api/user}
         VITE_KYC_API: ${VITE_KYC_API:-/api/kyc}
+        VITE_NOTIFICATION_API: ${VITE_NOTIFICATION_API:-/api/notifications}
     restart: unless-stopped
     depends_on:
       auth-service:
@@ -242,6 +315,8 @@ services:
       user-service:
         condition: service_healthy
       kyc-service:
+        condition: service_healthy
+      notification-service:
         condition: service_healthy
     ports:
       - "127.0.0.1:8080:80"
