@@ -4,11 +4,8 @@ const ApiError = require("../../utils/ApiError");
 const audit = require("../../utils/audit");
 const ledger = require("../ledger/ledger.service");
 const policies = require("../policies/policies.service");
-const {
-  toAmountString,
-  toMinorUnits,
-  fromMinorUnits,
-} = require("./money");
+const outbox = require("../outbox/outbox.service");
+const { toAmountString, toMinorUnits, fromMinorUnits } = require("./money");
 
 const walletFields = {
   id: true,
@@ -64,9 +61,7 @@ const formatTransaction = (transaction) => ({
   reversedAmount: transaction.reversedAmount.toFixed(2),
   ledgerEntryReference: transaction.journalEntry?.reference ?? null,
   createdAt: transaction.createdAt,
-  ...(transaction.reversals
-    ? { reversals: transaction.reversals.map(formatReversal) }
-    : {}),
+  ...(transaction.reversals ? { reversals: transaction.reversals.map(formatReversal) } : {}),
 });
 
 const toDecimal = (value) => new Prisma.Decimal(value ?? 0);
@@ -96,10 +91,7 @@ const isSerializationConflict = (error) => {
   if (error.code === "P2034") return true;
   if (error.code !== "P2010") return false;
   const cause = error.meta?.driverAdapterError?.cause;
-  return (
-    cause?.originalCode === "40001" ||
-    cause?.kind === "SerializationFailure"
-  );
+  return cause?.originalCode === "40001" || cause?.kind === "SerializationFailure";
 };
 
 const isNumericOverflow = (error) => {
@@ -123,10 +115,7 @@ const createWallet = async (userId) => {
     return { wallet: formatWallet(wallet) };
   } catch (error) {
     if (error.code === "P2002") {
-      throw ApiError.conflict(
-        "A wallet already exists for this account",
-        "WALLET_EXISTS"
-      );
+      throw ApiError.conflict("A wallet already exists for this account", "WALLET_EXISTS");
     }
     throw error;
   }
@@ -165,10 +154,7 @@ const findIdempotentTransaction = async (userId, idempotencyKey) =>
     select: transactionFields,
   });
 
-const verifyIdempotentRequest = (
-  transaction,
-  { sourceWalletId, destinationWalletId, amount }
-) => {
+const verifyIdempotentRequest = (transaction, { sourceWalletId, destinationWalletId, amount }) => {
   if (
     transaction.sourceWalletId !== sourceWalletId ||
     transaction.destinationWalletId !== destinationWalletId ||
@@ -182,12 +168,7 @@ const verifyIdempotentRequest = (
   return { transaction: formatTransaction(transaction), replayed: true };
 };
 
-const transfer = async ({
-  userId,
-  destinationWalletId,
-  amount,
-  idempotencyKey,
-}) => {
+const transfer = async ({ userId, destinationWalletId, amount, idempotencyKey }) => {
   const amountString = toAmountString(amount);
   const sourceWallet = await prisma.wallet.findUnique({
     where: { userId },
@@ -226,21 +207,14 @@ const transfer = async ({
 
         const destinationWallet = await tx.wallet.findUnique({
           where: { id: destinationWalletId },
-          select: { id: true, currency: true },
+          select: { id: true, currency: true, userId: true },
         });
         if (!destinationWallet) {
-          throw ApiError.notFound(
-            "Destination wallet not found",
-            "WALLET_NOT_FOUND"
-          );
+          throw ApiError.notFound("Destination wallet not found", "WALLET_NOT_FOUND");
         }
 
         const principalCents = toMinorUnits(amountString);
-        const policy = await policies.getPolicy(
-          tx,
-          "TRANSFER",
-          sourceWallet.currency
-        );
+        const policy = await policies.getPolicy(tx, "TRANSFER", sourceWallet.currency);
         policies.assertAmountWithinPolicy(policy, principalCents);
         const feeCents = policies.calculateFeeCents(policy, principalCents);
         const businessDate = policies.businessDateFor(policy.timezone);
@@ -323,6 +297,45 @@ const transfer = async ({
           ],
         });
 
+        const profileFields = { email: true, firstName: true, lastName: true };
+        const [senderProfile, recipientProfile] = await Promise.all([
+          tx.userProfile.findUnique({ where: { id: userId }, select: profileFields }),
+          tx.userProfile.findUnique({
+            where: { id: destinationWallet.userId },
+            select: profileFields,
+          }),
+        ]);
+
+        await outbox.enqueue(tx, {
+          type: "transfer.completed",
+          aggregateType: "transaction",
+          aggregateId: transaction.id,
+          payload: {
+            transactionReference: transaction.reference,
+            amount: amountString,
+            feeAmount: feeString,
+            currency: sourceWallet.currency,
+            sourceWalletId: sourceWallet.id,
+            destinationWalletId: destinationWallet.id,
+            ledgerEntryReference: entry.reference,
+            sender: {
+              userId,
+              email: senderProfile?.email ?? null,
+              name:
+                [senderProfile?.firstName, senderProfile?.lastName].filter(Boolean).join(" ") ||
+                null,
+            },
+            recipient: {
+              userId: destinationWallet.userId,
+              email: recipientProfile?.email ?? null,
+              name:
+                [recipientProfile?.firstName, recipientProfile?.lastName]
+                  .filter(Boolean)
+                  .join(" ") || null,
+            },
+          },
+        });
+
         return {
           transaction: formatTransaction({
             ...transaction,
@@ -380,13 +393,7 @@ const transfer = async ({
   );
 };
 
-const reverseTransaction = async ({
-  actorUserId,
-  reference,
-  amount,
-  reason,
-  idempotencyKey,
-}) => {
+const reverseTransaction = async ({ actorUserId, reference, amount, reason, idempotencyKey }) => {
   const attempt = () =>
     prisma.$transaction(
       async (tx) => {
@@ -475,8 +482,7 @@ const reverseTransaction = async ({
           const amountMatches =
             amount === null ||
             toMinorUnits(String(existing.amount)) === toMinorUnits(String(amount));
-          const reasonMatches =
-            existing.reason === String(reason ?? "").trim();
+          const reasonMatches = existing.reason === String(reason ?? "").trim();
           if (!amountMatches || !reasonMatches) {
             throw ApiError.conflict(
               "Idempotency key was already used for a different reversal",
@@ -525,10 +531,7 @@ const listTransactions = async (userId, options) => {
       : options.direction === "outgoing"
         ? { sourceWalletId: wallet.id }
         : {
-            OR: [
-              { sourceWalletId: wallet.id },
-              { destinationWalletId: wallet.id },
-            ],
+            OR: [{ sourceWalletId: wallet.id }, { destinationWalletId: wallet.id }],
           };
   const dateFilter =
     options.from || options.to
@@ -542,9 +545,7 @@ const listTransactions = async (userId, options) => {
   const attributeFilter = {
     ...(options.type ? { type: options.type } : {}),
     ...(options.status ? { status: options.status } : {}),
-    ...(options.q
-      ? { reference: { contains: options.q, mode: "insensitive" } }
-      : {}),
+    ...(options.q ? { reference: { contains: options.q, mode: "insensitive" } } : {}),
   };
   const where = { ...walletFilter, ...dateFilter, ...attributeFilter };
   const summaryWhere = { ...dateFilter, ...attributeFilter };
@@ -566,17 +567,14 @@ const listTransactions = async (userId, options) => {
   // fees are paid by the sender, so only deposit fees reduce incoming totals.
   const includeDepositFees = !options.type || options.type === "DEPOSIT";
   // A fee is refunded only when a transfer is fully reversed.
-  const includeRefundedFees =
-    !options.status || options.status === "REVERSED";
+  const includeRefundedFees = !options.status || options.status === "REVERSED";
 
   const [page, total, incomingSummary, outgoingSummary, depositFees, refundedFees] =
     await Promise.all([
       prisma.transaction.findMany({
         where,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        ...(options.cursor
-          ? { cursor: { id: options.cursor }, skip: 1 }
-          : {}),
+        ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
         take: options.limit + 1,
         select: transactionFields,
       }),
