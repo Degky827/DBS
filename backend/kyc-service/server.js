@@ -3,6 +3,10 @@ const app = require("./src/app");
 const prisma = require("./src/config/database");
 const logger = require("./src/config/logger");
 const { startOutboxDispatcher, stopOutboxDispatcher } = require("./src/jobs/outboxDispatcher");
+const {
+  startReVerificationSweeper,
+  stopReVerificationSweeper,
+} = require("./src/jobs/reVerificationSweeper");
 
 const MAX_DB_ATTEMPTS = 3;
 
@@ -49,6 +53,7 @@ function registerShutdown(server) {
 
     server.close(async () => {
       stopOutboxDispatcher();
+      stopReVerificationSweeper();
       await prisma.$disconnect();
       logger.info("Shutdown complete");
       process.exit(0);
@@ -75,6 +80,7 @@ async function start() {
 
   registerShutdown(server);
   startOutboxDispatcher();
+  startReVerificationSweeper();
 }
 
 start().catch((error) => {
