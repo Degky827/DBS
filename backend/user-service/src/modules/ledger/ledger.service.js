@@ -2,11 +2,7 @@ const crypto = require("crypto");
 const { Prisma } = require("@prisma/client");
 
 const ApiError = require("../../utils/ApiError");
-const {
-  toMinorUnits,
-  fromMinorUnits,
-  decimalStringToMinorUnits,
-} = require("../wallets/money");
+const { toMinorUnits, fromMinorUnits, decimalStringToMinorUnits } = require("../wallets/money");
 
 const ACCOUNT_CODES = Object.freeze({
   PROVIDER_CLEARING: "PLATFORM:PROVIDER_CLEARING",
@@ -18,8 +14,7 @@ const ACCOUNT_CODES = Object.freeze({
 const DIRECTIONS = Object.freeze(["DEBIT", "CREDIT"]);
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 
-const newReference = (prefix) =>
-  `${prefix}-${crypto.randomUUID().replace(/-/g, "")}`;
+const newReference = (prefix) => `${prefix}-${crypto.randomUUID().replace(/-/g, "")}`;
 
 const assertTransaction = (tx) => {
   if (!tx || typeof tx.journalEntry?.create !== "function") {
@@ -114,16 +109,10 @@ const resolveAccounts = async (tx, postings, currency) => {
       ? byId.get(posting.accountId)
       : byCode.get(posting.accountCode);
     if (!account) {
-      throw ApiError.conflict(
-        "A required ledger account does not exist",
-        "LEDGER_ACCOUNT_MISSING"
-      );
+      throw ApiError.conflict("A required ledger account does not exist", "LEDGER_ACCOUNT_MISSING");
     }
     if (!account.isActive) {
-      throw ApiError.conflict(
-        "A required ledger account is inactive",
-        "LEDGER_ACCOUNT_INACTIVE"
-      );
+      throw ApiError.conflict("A required ledger account is inactive", "LEDGER_ACCOUNT_INACTIVE");
     }
     if (account.currency !== currency) {
       throw ApiError.conflict(
@@ -162,10 +151,7 @@ const lockAccounts = async (tx, postings) => {
   return postings.map((posting) => {
     const account = byId.get(posting.account.id);
     if (!account) {
-      throw ApiError.conflict(
-        "A required ledger account does not exist",
-        "LEDGER_ACCOUNT_MISSING"
-      );
+      throw ApiError.conflict("A required ledger account does not exist", "LEDGER_ACCOUNT_MISSING");
     }
     return { ...posting, lockedAccount: account };
   });
@@ -173,11 +159,7 @@ const lockAccounts = async (tx, postings) => {
 
 const lockWallets = async (tx, postings, walletGuards = []) => {
   const walletIds = [
-    ...new Set(
-      postings
-        .map((posting) => posting.lockedAccount.walletId)
-        .filter(Boolean)
-    ),
+    ...new Set(postings.map((posting) => posting.lockedAccount.walletId).filter(Boolean)),
   ].sort();
 
   if (walletIds.length === 0) return new Map();
@@ -198,10 +180,7 @@ const lockWallets = async (tx, postings, walletGuards = []) => {
     }
     const guard = walletGuards.find((candidate) => candidate.walletId === walletId);
     if (guard?.requireActive && !wallet.isActive) {
-      throw ApiError.conflict(
-        "Wallet is inactive",
-        "WALLET_INACTIVE"
-      );
+      throw ApiError.conflict("Wallet is inactive", "WALLET_INACTIVE");
     }
   }
 
@@ -214,8 +193,7 @@ const applyWalletProjection = async (tx, postings) => {
     const walletId = posting.lockedAccount.walletId;
     if (!walletId) continue;
     const normal = posting.lockedAccount.normalBalance;
-    const rawDelta =
-      posting.direction === normal ? posting.cents : -posting.cents;
+    const rawDelta = posting.direction === normal ? posting.cents : -posting.cents;
     deltas.set(walletId, (deltas.get(walletId) || 0n) + rawDelta);
   }
 
@@ -238,10 +216,7 @@ const applyWalletProjection = async (tx, postings) => {
         data: { balance: { decrement: new Prisma.Decimal(amount) } },
       });
       if (updated.count !== 1) {
-        throw ApiError.conflict(
-          "Insufficient wallet balance",
-          "INSUFFICIENT_FUNDS"
-        );
+        throw ApiError.conflict("Insufficient wallet balance", "INSUFFICIENT_FUNDS");
       }
     }
   }
@@ -283,9 +258,7 @@ const postEntry = async ({
   // Validate balances before writing. The database trigger and deferred
   // constraint checks repeat these invariants independently.
   for (const posting of locked) {
-    const accountBalance = decimalStringToMinorUnits(
-      String(posting.lockedAccount.balance)
-    );
+    const accountBalance = decimalStringToMinorUnits(String(posting.lockedAccount.balance));
     const normal = posting.lockedAccount.normalBalance;
     const delta = posting.direction === normal ? posting.cents : -posting.cents;
     const walletId = posting.lockedAccount.walletId;
@@ -294,10 +267,7 @@ const postEntry = async ({
     // fee, reserve, and equity accounts are allowed to swing negative because
     // they represent internal positions, not customer funds.
     if (walletId && accountBalance + delta < 0n) {
-      throw ApiError.conflict(
-        "Insufficient wallet balance",
-        "INSUFFICIENT_FUNDS"
-      );
+      throw ApiError.conflict("Insufficient wallet balance", "INSUFFICIENT_FUNDS");
     }
 
     if (walletId) {
@@ -432,16 +402,13 @@ const reverseTransaction = async ({
     const existingCents = toMinorUnits(String(existing.amount));
     const metadata = existing.journalEntry?.metadata;
     const amountOmitted =
-      metadata !== null &&
-      typeof metadata === "object" &&
-      metadata.amountProvided === false;
+      metadata !== null && typeof metadata === "object" && metadata.amountProvided === false;
     // A request that omitted the amount reverses whatever remained at the time.
     // After a partial reversal the recovered row no longer equals the original
     // amount, so the recorded metadata is authoritative for a null request.
     const requestedMatches =
       amount === null
-        ? amountOmitted ||
-          existingCents === toMinorUnits(String(transaction.amount))
+        ? amountOmitted || existingCents === toMinorUnits(String(transaction.amount))
         : existingCents === toMinorUnits(amount);
     if (!requestedMatches || existing.reason !== normalizedReason) {
       throw ApiError.conflict(
@@ -465,10 +432,7 @@ const reverseTransaction = async ({
   const requestedCents = amount === null ? remainingCents : toMinorUnits(amount);
 
   if (requestedCents <= 0n) {
-    throw ApiError.badRequest(
-      "Reversal amount must be positive",
-      "INVALID_REVERSAL_AMOUNT"
-    );
+    throw ApiError.badRequest("Reversal amount must be positive", "INVALID_REVERSAL_AMOUNT");
   }
   if (requestedCents > remainingCents) {
     throw ApiError.conflict(
@@ -479,16 +443,12 @@ const reverseTransaction = async ({
 
   const original = await findOriginalEntry(tx, transaction.id);
   if (!original) {
-    throw ApiError.conflict(
-      "Transaction does not have a ledger entry",
-      "LEDGER_ENTRY_MISSING"
-    );
+    throw ApiError.conflict("Transaction does not have a ledger entry", "LEDGER_ENTRY_MISSING");
   }
 
   const sourcePosting = original.postings.find(
     (posting) =>
-      posting.ledgerAccount.walletId === transaction.sourceWalletId &&
-      posting.direction === "DEBIT"
+      posting.ledgerAccount.walletId === transaction.sourceWalletId && posting.direction === "DEBIT"
   );
   const destinationPosting = original.postings.find(
     (posting) =>
