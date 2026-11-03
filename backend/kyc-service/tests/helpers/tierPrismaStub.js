@@ -16,6 +16,9 @@ const tierPrismaStub = () => ({
     updateMany: async () => ({ count: 0 }),
     create: async ({ data }) => ({ id: "tier-assignment-stub", ...data }),
   },
+  kycReVerificationTask: {
+    updateMany: async () => ({ count: 0 }),
+  },
   kycOutboxEvent: {
     create: async ({ data }) => ({ id: "outbox-event-stub", ...data }),
     count: async () => 0,

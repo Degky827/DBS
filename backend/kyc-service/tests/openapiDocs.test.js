@@ -1,6 +1,5 @@
 process.env.NODE_ENV = "test";
-process.env.DATABASE_URL =
-  "postgresql://test:test@localhost:5432/kyc_docs_test?schema=public";
+process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/kyc_docs_test?schema=public";
 process.env.CORS_ORIGIN = "http://localhost:5173";
 process.env.INTERNAL_SERVICE_KEY = "kyc-test-internal-key-0123456789abcdef";
 process.env.ENABLE_API_DOCS = "true";
@@ -22,4 +21,7 @@ test("KYC OpenAPI document exposes every route as a top-level path", async () =>
   assert.ok(paths["/submissions/{submissionId}/compare"].post);
   assert.ok(paths["/officer/reviews"].get);
   assert.ok(paths["/officer/submissions/{submissionId}/decision"].post);
+  assert.ok(paths["/reverification/tasks"].get);
+  assert.ok(paths["/officer/reverification/tasks"].get);
+  assert.ok(paths["/officer/reverification/tasks/{taskId}/waive"].post);
 });
