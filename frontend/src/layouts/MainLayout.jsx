@@ -5,8 +5,11 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   ArrowLeftRight,
   Bell,
+  CalendarClock,
   ChevronDown,
   CreditCard,
+  FileText,
+  Gavel,
   Info,
   KeyRound,
   LayoutDashboard,
@@ -17,6 +20,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   UserRound,
+  Users,
   WalletCards,
   X,
 } from "lucide-react";
@@ -24,8 +28,10 @@ import Logo from "../components/Logo";
 import Alert from "../components/ui/Alert";
 import { AccountProvider, useAccount } from "../context/AccountContext";
 import { logoutUser } from "../services/authService";
+import { getUnreadNotificationCount, listNotifications } from "../services/notificationService";
+import { normalizeApiError } from "../utils/apiError";
 import { roleLabel } from "../utils/roles";
-import { initialsOf } from "../utils/format";
+import { formatDateTime, initialsOf } from "../utils/format";
 
 const PAGE_META = [
   { pattern: /^\/transactions\/[^/]+$/, title: "Transaction details", parent: "Banking" },
@@ -34,6 +40,12 @@ const PAGE_META = [
   { prefix: "/transfers", title: "Send money", parent: "Banking" },
   { prefix: "/transactions", title: "Transactions", parent: "Banking" },
   { prefix: "/payments", title: "Payments", parent: "Banking" },
+  { prefix: "/beneficiaries", title: "Saved beneficiaries", parent: "Banking" },
+  { prefix: "/scheduled-transfers", title: "Scheduled transfers", parent: "Banking" },
+  { prefix: "/statements", title: "Account statement", parent: "Banking" },
+  { pattern: /^\/disputes\/[^/]+$/, title: "Dispute case", parent: "Support" },
+  { prefix: "/disputes", title: "Disputes", parent: "Support" },
+  { prefix: "/notifications", title: "Notifications", parent: "Account" },
   { prefix: "/kyc/verify", title: "Verify identity", parent: "Identity verification" },
   { prefix: "/kyc/status", title: "Verification status", parent: "Identity verification" },
   { prefix: "/kyc", title: "Identity verification", parent: "Account" },
@@ -64,12 +76,16 @@ const NAV_SECTIONS = [
       { to: "/transfers", label: "Send money", icon: Send },
       { to: "/transactions", label: "Transactions", icon: ArrowLeftRight },
       { to: "/payments", label: "Payments", icon: CreditCard },
+      { to: "/beneficiaries", label: "Beneficiaries", icon: Users },
+      { to: "/scheduled-transfers", label: "Scheduled transfers", icon: CalendarClock },
+      { to: "/statements", label: "Statements", icon: FileText },
     ],
   },
   {
     label: "Account",
     items: [
       { to: "/kyc", label: "Identity verification", icon: ShieldCheck },
+      { to: "/disputes", label: "Disputes", icon: Gavel },
       { to: "/profile", label: "Profile", icon: UserRound },
       { to: "/settings", label: "Settings", icon: Settings },
     ],
@@ -157,6 +173,9 @@ function AuthenticatedLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [noticesOpen, setNoticesOpen] = useState(false);
+  const [inbox, setInbox] = useState({ unread: 0, items: [] });
+  const [inboxError, setInboxError] = useState("");
+  const [inboxKey, setInboxKey] = useState(0);
   const menuRef = useRef(null);
   const noticesRef = useRef(null);
   const drawerCloseRef = useRef(null);
@@ -168,6 +187,7 @@ function AuthenticatedLayout() {
   const initials = initialsOf(displayUser?.firstName, displayUser?.lastName);
   const fullName = [displayUser?.firstName, displayUser?.lastName].filter(Boolean).join(" ");
   const statusNotice = ACCOUNT_STATUS_NOTICES[user?.status];
+  const badgeCount = actionableNoticeCount + (inboxError ? 0 : inbox.unread);
 
   useEffect(() => {
     if (!drawerOpen) return undefined;
@@ -216,6 +236,32 @@ function AuthenticatedLayout() {
     await logoutUser();
     navigate("/login");
   };
+
+  // The notification service is optional for the shell: when it is unreachable
+  // the contextual account notices still work, so failures only surface inside
+  // the panel instead of blocking the header.
+  useEffect(() => {
+    let active = true;
+    const fetchInbox = async () => {
+      try {
+        const [list, count] = await Promise.all([
+          listNotifications({ limit: 5 }),
+          getUnreadNotificationCount(),
+        ]);
+        if (!active) return;
+        setInbox({ unread: count.unreadCount || 0, items: list.notifications || [] });
+        setInboxError("");
+      } catch (requestError) {
+        if (active) setInboxError(normalizeApiError(requestError).message);
+      }
+    };
+    fetchInbox();
+    const timer = setInterval(fetchInbox, 60000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [inboxKey]);
 
   const sidebarContent = (onNavigate) => (
     <>
@@ -331,22 +377,22 @@ function AuthenticatedLayout() {
                 <button
                   type="button"
                   onClick={() => {
-                    setNoticesOpen((open) => !open);
+                    const next = !noticesOpen;
+                    setNoticesOpen(next);
                     setMenuOpen(false);
+                    if (next) setInboxKey((key) => key + 1);
                   }}
                   aria-label={
-                    actionableNoticeCount
-                      ? `Account notices, ${actionableNoticeCount} need attention`
-                      : "Account notices"
+                    badgeCount ? `Notifications, ${badgeCount} need attention` : "Notifications"
                   }
                   aria-haspopup="dialog"
                   aria-expanded={noticesOpen}
                   className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-muted transition hover:border-ink-200 hover:bg-ink-50 hover:text-midnight"
                 >
                   <Bell size={18} />
-                  {actionableNoticeCount > 0 ? (
+                  {badgeCount > 0 ? (
                     <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-600 px-1 text-[9px] font-bold text-white">
-                      {actionableNoticeCount > 9 ? "9+" : actionableNoticeCount}
+                      {badgeCount > 9 ? "9+" : badgeCount}
                     </span>
                   ) : null}
                 </button>
@@ -406,6 +452,55 @@ function AuthenticatedLayout() {
                             ))}
                           </ul>
                         )}
+                      </div>
+
+                      <div className="border-t border-ink-100 bg-ink-50/60 px-4 py-3">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted">
+                          Recent activity
+                        </p>
+                        {inboxError ? (
+                          <p className="mt-2 text-[12px] leading-relaxed text-muted">
+                            {inboxError}
+                          </p>
+                        ) : inbox.items.length === 0 ? (
+                          <p className="mt-2 text-[12px] text-muted">
+                            No transaction notifications yet.
+                          </p>
+                        ) : (
+                          <ul className="mt-2 space-y-2">
+                            {inbox.items.map((notification) => (
+                              <li key={notification.id} className="flex items-start gap-2">
+                                {!notification.readAt ? (
+                                  <span
+                                    className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-600"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <span
+                                    className="mt-1.5 h-1.5 w-1.5 shrink-0"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                                <span className="min-w-0">
+                                  <span className="block truncate text-[12.5px] font-bold text-midnight">
+                                    {notification.title}
+                                  </span>
+                                  <span className="block text-[11px] text-muted">
+                                    {formatDateTime(notification.createdAt)}
+                                  </span>
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <Link
+                          to="/notifications"
+                          onClick={() => setNoticesOpen(false)}
+                          className="mt-2.5 inline-block text-[12px] font-bold text-brand-700 hover:underline"
+                        >
+                          Open notification inbox
+                          {inbox.unread > 0 ? ` (${inbox.unread} unread)` : ""}
+                        </Link>
                       </div>
                     </motion.div>
                   ) : null}
