@@ -98,6 +98,20 @@ const outboxPending = createGauge(
   "banking_outbox_pending",
   "Outbox events still awaiting delivery"
 );
+const ledgerVerificationRuns = createCounter(
+  "banking_ledger_verification_runs_total",
+  "Ledger verification runs by outcome",
+  ["service", "outcome"]
+);
+const ledgerOpenIssues = createGauge(
+  "banking_ledger_open_issues",
+  "Ledger integrity issues still open, by severity",
+  ["service", "severity"]
+);
+const ledgerVerificationLastRun = createGauge(
+  "banking_ledger_verification_last_run_timestamp_seconds",
+  "Unix time of the most recent completed ledger verification run"
+);
 
 const markReady = (ready) => readiness.set(ready ? 1 : 0, { service: SERVICE_NAME });
 
@@ -109,6 +123,23 @@ const recordReconciliationOutcome = (outcome) =>
 const recordOutboxEvent = (outcome) => outboxEvents.inc({ service: SERVICE_NAME, outcome });
 
 const setOutboxPending = (count) => outboxPending.set(count, { service: SERVICE_NAME });
+
+const LEDGER_ISSUE_SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+
+const recordLedgerVerification = (outcome) =>
+  ledgerVerificationRuns.inc({ service: SERVICE_NAME, outcome });
+
+// Every severity is exported on each refresh, including zeroes: an alert on
+// "open critical issues > 0" must resolve when the count drops, not silently
+// disappear with the series.
+const setLedgerOpenIssues = (counts = {}) => {
+  for (const severity of LEDGER_ISSUE_SEVERITIES) {
+    ledgerOpenIssues.set(Number(counts[severity] || 0), { service: SERVICE_NAME, severity });
+  }
+};
+
+const setLedgerVerificationLastRun = (seconds) =>
+  ledgerVerificationLastRun.set(seconds, { service: SERVICE_NAME });
 
 const httpMiddleware = () => (req, res, next) => {
   if (req.path === "/metrics") return next();
@@ -288,5 +319,8 @@ module.exports = {
   recordReconciliationOutcome,
   recordOutboxEvent,
   setOutboxPending,
+  recordLedgerVerification,
+  setLedgerOpenIssues,
+  setLedgerVerificationLastRun,
   render,
 };
