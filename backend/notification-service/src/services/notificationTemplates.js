@@ -149,6 +149,37 @@ const TEMPLATES = {
       }),
     ];
   },
+
+  // Operations alert, not a customer message. The emitting service resolves the
+  // staff recipients itself and puts them on the event, because this service has
+  // no view of who administers the bank.
+  "ledger.integrity_failed": (payload) => {
+    const recipients = Array.isArray(payload.recipients) ? payload.recipients : [];
+    const counts = payload.severityCounts || {};
+    const detail = { ...payload };
+    delete detail.recipients;
+
+    return recipients
+      .filter((recipient) => recipient && typeof recipient.email === "string")
+      .map((recipient) =>
+        notification({
+          recipient: {
+            userId: recipient.userId || null,
+            email: recipient.email,
+            name: recipient.name,
+          },
+          title: "Ledger integrity check failed",
+          body:
+            `Ledger verification run ${payload.runReference} (${payload.trigger || "SCHEDULED"}) found ` +
+            `${counts.CRITICAL || 0} critical and ${counts.HIGH || 0} high inconsistency(ies)` +
+            (payload.checkErrors
+              ? `, and ${payload.checkErrors} check(s) could not complete`
+              : "") +
+            `. Debit/credit difference: ${payload.difference || "0.00"}. Review the open issues before the next close.`,
+          data: detail,
+        })
+      );
+  },
 };
 
 const buildNotifications = (eventType, payload) => {
