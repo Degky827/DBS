@@ -1,0 +1,41 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Event-level idempotency. The outbox delivers at-least-once, so each eventId
+// is recorded before notifications are created; duplicates return a conflict
+// the dispatcher treats as already delivered.
+model ProcessedEvent {
+  eventId    String   @id
+  type       String
+  receivedAt DateTime @default(now())
+
+  @@index([receivedAt])
+}
+
+model Notification {
+  id                 String    @id @default(uuid())
+  eventId            String
+  eventType          String
+  recipientEmail     String
+  userId             String?
+  title              String
+  body               String
+  data               Json?
+  readAt             DateTime?
+  emailStatus        String    @default("PENDING")
+  emailAttempts      Int       @default(0)
+  emailNextAttemptAt DateTime  @default(now())
+  emailSentAt        DateTime?
+  emailError         String?
+  createdAt          DateTime  @default(now())
+
+  @@unique([eventId, recipientEmail])
+  @@index([recipientEmail, createdAt])
+  @@index([recipientEmail, readAt])
+  @@index([emailStatus, emailNextAttemptAt])
+}
