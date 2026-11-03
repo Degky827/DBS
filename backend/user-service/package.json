@@ -20,6 +20,7 @@
     "test:payments-adapter": "node --test tests/chapa.adapter.test.js",
     "test:ledger": "node --test tests/ledger.test.js",
     "test:policies": "node --test tests/policies.test.js",
+    "test:tier-limits": "node --test tests/tierLimits.test.js",
     "test:admin": "node --test tests/admin.test.js",
     "test:beneficiaries": "node --test tests/beneficiaries.test.js",
     "test:scheduled-transfers": "node --test --test-concurrency=1 tests/scheduledTransfers.test.js",
