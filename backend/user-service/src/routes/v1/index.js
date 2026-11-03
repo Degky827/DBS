@@ -11,6 +11,11 @@ const paymentsRoutes = require("../../modules/payments/payments.routes");
 const reconciliationRoutes = require("../../modules/payments/reconciliation.routes");
 const policiesRoutes = require("../../modules/policies/policies.routes");
 const adminRoutes = require("../../modules/admin/admin.routes");
+const outboxRoutes = require("../../modules/outbox/outbox.routes");
+const beneficiariesRoutes = require("../../modules/beneficiaries/beneficiaries.routes");
+const scheduledTransfersRoutes = require("../../modules/scheduledTransfers/scheduledTransfers.routes");
+const disputesRoutes = require("../../modules/disputes/disputes.routes");
+const statementsRoutes = require("../../modules/statements/statements.routes");
 
 router.use("/", healthRoutes);
 
@@ -25,6 +30,11 @@ router.use("/", transactionsRoutes);
 router.use("/", paymentsRoutes);
 router.use("/", reconciliationRoutes);
 router.use("/", policiesRoutes);
+router.use("/", outboxRoutes);
+router.use("/", beneficiariesRoutes);
+router.use("/", scheduledTransfersRoutes);
+router.use("/", disputesRoutes);
+router.use("/", statementsRoutes);
 router.use("/", adminRoutes);
 
 module.exports = router;

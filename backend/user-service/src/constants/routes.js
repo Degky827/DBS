@@ -25,6 +25,25 @@ const ROUTES = Object.freeze({
     BY_REFERENCE: "/transactions/:reference",
     REVERSALS: "/transactions/:reference/reversals",
   }),
+  BENEFICIARIES: Object.freeze({
+    ROOT: "/beneficiaries",
+    BY_ID: "/beneficiaries/:beneficiaryId",
+  }),
+  SCHEDULED_TRANSFERS: Object.freeze({
+    ROOT: "/scheduled-transfers",
+    BY_ID: "/scheduled-transfers/:scheduleId",
+    PAUSE: "/scheduled-transfers/:scheduleId/pause",
+    RESUME: "/scheduled-transfers/:scheduleId/resume",
+    CANCEL: "/scheduled-transfers/:scheduleId/cancel",
+  }),
+  STATEMENTS: Object.freeze({
+    ROOT: "/statements",
+    EXPORT_PDF: "/statements/export.pdf",
+  }),
+  DISPUTES: Object.freeze({
+    ROOT: "/disputes",
+    BY_REFERENCE: "/disputes/:reference",
+  }),
   ADMIN: Object.freeze({
     OVERVIEW: "/admin/overview",
     ANALYTICS: "/admin/analytics",
@@ -36,6 +55,10 @@ const ROUTES = Object.freeze({
     FINANCIAL_POLICIES: "/admin/financial-policies",
     FINANCIAL_POLICY: "/admin/financial-policies/:type",
     PAYMENT_RECONCILIATION: "/admin/payments/reconciliation",
+    DISPUTES: "/admin/disputes",
+    DISPUTE_BY_REFERENCE: "/admin/disputes/:reference",
+    OUTBOX: "/admin/outbox",
+    OUTBOX_REPLAY: "/admin/outbox/:eventId/replay",
   }),
   OPERATIONS: Object.freeze({
     ANALYTICS: "/operations/analytics",
