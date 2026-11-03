@@ -2,8 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 process.env.NODE_ENV = "test";
-process.env.DATABASE_URL =
-  "postgresql://test:test@localhost:5432/user_account_test?schema=public";
+process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/user_account_test?schema=public";
 process.env.AUTH_MODE = "jwt";
 process.env.JWT_SECRET = "user-account-test-secret-0123456789abcdef";
 process.env.AUTH_SERVICE_URL = "https://auth.test/api/v1";
