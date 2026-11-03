@@ -155,6 +155,8 @@ browser actually calls.
 | `CHAPA_CALLBACK_URL` / `CHAPA_RETURN_URL` | When Chapa is enabled | No | HTTPS URLs | Provider callback and browser return |
 | `RECONCILIATION_ENABLED` | No | No | Default false | Scheduled reconciliation |
 | `RECONCILIATION_INTERVAL_MS` / `RECONCILIATION_STALE_MINUTES` / `RECONCILIATION_BATCH_SIZE` | No | No | Defaults 5 min / 15 min / 25 | Reconciliation tuning |
+| `LEDGER_VERIFICATION_ENABLED` | No | No | Default `true` in production, `false` elsewhere | Runs the 33 ledger integrity checks on a schedule and records a verification run; manual runs use `POST /api/v1/admin/ledger/verification/runs` |
+| `LEDGER_VERIFICATION_INTERVAL_MS` | No | No | Default 6 hours, clamped 15 min – 24 h | Verification cycle length; `LedgerVerificationStale` fires when no run completes within 24 h |
 | `METRICS_TOKEN` | No | Yes | Bearer token, any string | Requires `Authorization: Bearer <token>` on `GET /metrics`; unset means the endpoint is open on the private network |
 
 ## 5. kyc-service

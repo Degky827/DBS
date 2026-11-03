@@ -198,6 +198,11 @@ services:
       SCHEDULED_TRANSFERS_ENABLED: ${SCHEDULED_TRANSFERS_ENABLED:-true}
       SCHEDULED_TRANSFERS_INTERVAL_MS: ${SCHEDULED_TRANSFERS_INTERVAL_MS:-30000}
       SCHEDULED_TRANSFERS_BATCH_SIZE: ${SCHEDULED_TRANSFERS_BATCH_SIZE:-10}
+      # Phase 4: double-entry ledger verification. Runs every six hours by
+      # default; a failed run pages through the ledger alerts in
+      # monitoring/prometheus/alerts.yml.
+      LEDGER_VERIFICATION_ENABLED: ${LEDGER_VERIFICATION_ENABLED:-true}
+      LEDGER_VERIFICATION_INTERVAL_MS: ${LEDGER_VERIFICATION_INTERVAL_MS:-21600000}
       STATEMENT_MAX_RANGE_DAYS: ${STATEMENT_MAX_RANGE_DAYS:-366}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
