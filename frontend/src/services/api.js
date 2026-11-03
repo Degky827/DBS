@@ -12,6 +12,7 @@ export const authApi = createApi(import.meta.env.VITE_AUTH_API, {
 });
 export const userApi = createApi(import.meta.env.VITE_USER_API);
 export const kycApi = createApi(import.meta.env.VITE_KYC_API);
+export const notificationApi = createApi(import.meta.env.VITE_NOTIFICATION_API);
 
 // These endpoints either establish a session or are the refresh/logout calls
 // themselves. A 401 from them must never trigger another refresh attempt.
@@ -115,3 +116,4 @@ const attachAuthInterceptors = (instance) => {
 attachAuthInterceptors(authApi);
 attachAuthInterceptors(userApi);
 attachAuthInterceptors(kycApi);
+attachAuthInterceptors(notificationApi);
