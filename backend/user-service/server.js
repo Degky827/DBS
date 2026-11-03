@@ -14,6 +14,10 @@ const {
   startScheduledTransferWorker,
   stopScheduledTransferWorker,
 } = require("./src/modules/scheduledTransfers/scheduledTransfers.worker");
+const {
+  startLedgerVerificationJob,
+  stopLedgerVerificationJob,
+} = require("./src/modules/ledger/ledgerVerify.job");
 
 const MAX_DB_ATTEMPTS = 3;
 
@@ -62,6 +66,7 @@ function registerShutdown(server) {
       stopReconciliationJob();
       stopOutboxDispatcher();
       stopScheduledTransferWorker();
+      stopLedgerVerificationJob();
       await prisma.$disconnect();
       logger.info("Shutdown complete");
       process.exit(0);
@@ -90,6 +95,7 @@ async function start() {
   startReconciliationJob();
   startOutboxDispatcher();
   startScheduledTransferWorker();
+  startLedgerVerificationJob();
 }
 
 start().catch((error) => {

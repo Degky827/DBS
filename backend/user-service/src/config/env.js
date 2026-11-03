@@ -279,6 +279,20 @@ const statementMaxRangeDays = readInteger("STATEMENT_MAX_RANGE_DAYS", 366, {
   max: 366,
 });
 
+// --- Phase 4: ledger verification ---
+// The check itself is read-only SQL over the whole book, so the cadence is an
+// operator choice rather than a paging concern. Six hours is a compromise
+// between a same-day close and the cost of a full scan.
+const ledgerVerificationEnabled = readBoolean("LEDGER_VERIFICATION_ENABLED", isProduction);
+const ledgerVerificationIntervalMs = readInteger(
+  "LEDGER_VERIFICATION_INTERVAL_MS",
+  6 * 60 * 60 * 1000,
+  {
+    min: 15000,
+    max: 24 * 60 * 60 * 1000,
+  }
+);
+
 const enableHsts = readBoolean("ENABLE_HSTS", false);
 if (enableHsts && !isProduction) {
   console.warn("[config] ENABLE_HSTS is set outside production; verify the deployment uses HTTPS.");
@@ -400,6 +414,8 @@ const env = Object.freeze({
   SCHEDULED_TRANSFERS_ENABLED: scheduledTransfersEnabled,
   SCHEDULED_TRANSFERS_INTERVAL_MS: scheduledTransfersIntervalMs,
   SCHEDULED_TRANSFERS_BATCH_SIZE: scheduledTransfersBatchSize,
+  LEDGER_VERIFICATION_ENABLED: ledgerVerificationEnabled,
+  LEDGER_VERIFICATION_INTERVAL_MS: ledgerVerificationIntervalMs,
   STATEMENT_MAX_RANGE_DAYS: statementMaxRangeDays,
 
   // --- Payment Provider (Chapa Test-Mode) ---
