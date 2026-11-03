@@ -7,9 +7,7 @@ const PHONE_PATTERN = /^\+?[0-9]{7,15}$/;
 const requiredString = (label) =>
   z.string({
     error: (issue) =>
-      issue.input === undefined
-        ? `${label} is required`
-        : `${label} must be a string`,
+      issue.input === undefined ? `${label} is required` : `${label} must be a string`,
   });
 
 const nameField = (label) =>
@@ -17,18 +15,12 @@ const nameField = (label) =>
     .trim()
     .min(2, `${label} must be at least 2 characters`)
     .max(60, `${label} must not exceed 60 characters`)
-    .regex(
-      NAME_PATTERN,
-      `${label} may only contain letters, spaces, hyphens and apostrophes`
-    );
+    .regex(NAME_PATTERN, `${label} may only contain letters, spaces, hyphens and apostrophes`);
 
 const optionalNameField = (label) => nameField(label).optional();
 
 const optionalShortText = (label, max) =>
-  requiredString(label)
-    .trim()
-    .max(max, `${label} must not exceed ${max} characters`)
-    .optional();
+  requiredString(label).trim().max(max, `${label} must not exceed ${max} characters`).optional();
 
 const updateProfileSchema = z
   .object({
@@ -37,10 +29,7 @@ const updateProfileSchema = z
     lastName: optionalNameField("lastName"),
     phoneNumber: requiredString("phoneNumber")
       .trim()
-      .regex(
-        PHONE_PATTERN,
-        "phoneNumber must be 7-15 digits, optionally prefixed with +"
-      )
+      .regex(PHONE_PATTERN, "phoneNumber must be 7-15 digits, optionally prefixed with +")
       .optional(),
     gender: z
       .enum(GENDERS, {
@@ -84,10 +73,7 @@ const updateProfileSchema = z
       .optional(),
   })
   .strict()
-  .refine(
-    (data) => Object.keys(data).length > 0,
-    "At least one profile field must be provided"
-  );
+  .refine((data) => Object.keys(data).length > 0, "At least one profile field must be provided");
 
 const newPasswordField = requiredString("newPassword")
   .min(8, "newPassword must be at least 8 characters")
@@ -119,8 +105,11 @@ const closeAccountSchema = z
   })
   .strict();
 
+const contactParamsSchema = z.object({ userId: z.uuid() }).strict();
+
 module.exports = {
   updateProfileSchema,
   changePasswordSchema,
   closeAccountSchema,
+  contactParamsSchema,
 };

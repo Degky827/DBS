@@ -14,6 +14,9 @@ const ROUTES = Object.freeze({
     ME: "/users/me",
     ME_PASSWORD: "/users/me/password",
   }),
+  INTERNAL: Object.freeze({
+    USER_CONTACT: "/internal/users/:userId/contact",
+  }),
   WALLETS: Object.freeze({
     ROOT: "/wallets",
     ME: "/wallets/me",

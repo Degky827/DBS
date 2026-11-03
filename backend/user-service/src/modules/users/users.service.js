@@ -3,6 +3,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const env = require("../../config/env");
 const logger = require("../../config/logger");
+const prisma = require("../../config/database");
 const userRepository = require("../../repositories/user.repository");
 const devSessionRepository = require("../../repositories/devSession.repository");
 const ApiError = require("../../utils/ApiError");
@@ -361,10 +362,31 @@ const closeMyAccount = async (authCtx, input) => {
   };
 };
 
+// Contact fields are the only profile data another service needs to send a
+// customer message. Keeping this lookup narrow means the internal endpoint
+// cannot be used to read a full profile.
+async function getContact(userId) {
+  const profile = await prisma.userProfile.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, firstName: true, lastName: true, accountStatus: true },
+  });
+  if (!profile) {
+    throw ApiError.notFound("User profile not found", "USER_PROFILE_NOT_FOUND");
+  }
+
+  return {
+    userId: profile.id,
+    email: profile.email,
+    name: [profile.firstName, profile.lastName].filter(Boolean).join(" ") || null,
+    accountStatus: profile.accountStatus || "ACTIVE",
+  };
+}
+
 module.exports = {
   getResolvedUserId,
   getMyProfile,
   updateMyProfile,
   changeMyPassword,
   closeMyAccount,
+  getContact,
 };
