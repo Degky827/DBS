@@ -150,6 +150,40 @@ const TEMPLATES = {
     ];
   },
 
+  // kyc-service decides when a customer is due for re-verification and resolves
+  // the contact; this template only renders the reminder.
+  "kyc.reverification.due": (payload) => {
+    const user = identity(payload, "user");
+    if (!user.email) return [];
+
+    const reasons = {
+      APPROVAL_EXPIRED: "Your KYC approval has expired",
+      APPROVAL_EXPIRING: "Your KYC approval expires soon",
+      DOCUMENT_EXPIRED: "Your identity document has expired",
+      DOCUMENT_EXPIRING: "Your identity document expires soon",
+      PERIODIC_REVIEW: "Your periodic KYC review is due",
+      SCREENING_FOLLOW_UP: "Your KYC review needs a screening follow-up",
+    };
+    const reasonText = reasons[payload.reason] || "Your KYC details need attention";
+    const dueText =
+      typeof payload.dueAt === "string" && payload.dueAt
+        ? ` The request is due by ${payload.dueAt.slice(0, 10)}.`
+        : "";
+
+    return [
+      notification({
+        recipient: user,
+        title: "KYC re-verification needed",
+        body: `${reasonText}. Open the KYC section of the app to submit updated details.${dueText}`,
+        data: {
+          taskId: payload.taskId || null,
+          reason: payload.reason || null,
+          dueAt: payload.dueAt || null,
+        },
+      }),
+    ];
+  },
+
   // Operations alert, not a customer message. The emitting service resolves the
   // staff recipients itself and puts them on the event, because this service has
   // no view of who administers the bank.

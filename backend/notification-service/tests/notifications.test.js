@@ -130,6 +130,34 @@ for (const inherited of ["constructor", "__proto__", "toString"]) {
   });
 }
 
+test("a KYC re-verification reminder reaches the customer with the reason and due date", async () => {
+  const response = await postEvent({
+    eventId: randomUUID(),
+    type: "kyc.reverification.due",
+    aggregateType: "KYC_REVERIFICATION_TASK",
+    aggregateId: randomUUID(),
+    occurredAt: new Date().toISOString(),
+    payload: {
+      taskId: randomUUID(),
+      reason: "DOCUMENT_EXPIRING",
+      dueAt: "2026-12-01T00:00:00.000Z",
+      user: { userId: randomUUID(), email: "kyc-customer@example.test", name: "KYC Customer" },
+    },
+  });
+
+  assert.equal(response.status, 202);
+  assert.equal(response.body.data.notificationsCreated, 1);
+
+  const list = await request(app)
+    .get("/api/v1/notifications")
+    .set("Authorization", `Bearer ${tokenFor("kyc-customer@example.test")}`);
+  const [notification] = list.body.data.notifications;
+  assert.equal(notification.title, "KYC re-verification needed");
+  assert.match(notification.body, /identity document expires soon/i);
+  assert.match(notification.body, /2026-12-01/);
+  assert.equal(notification.data.reason, "DOCUMENT_EXPIRING");
+});
+
 test("notification reads are scoped to the token email", async () => {
   await postEvent(transferEvent());
 
