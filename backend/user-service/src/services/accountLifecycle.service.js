@@ -3,15 +3,11 @@ const env = require("../config/env");
 const logger = require("../config/logger");
 const ApiError = require("../utils/ApiError");
 const audit = require("../utils/audit");
+const outbox = require("../modules/outbox/outbox.service");
 const authClient = require("./authClient");
 const devSessionRepository = require("../repositories/devSession.repository");
 
-const ACCOUNT_STATUSES = Object.freeze([
-  "ACTIVE",
-  "FROZEN",
-  "SUSPENDED",
-  "CLOSED",
-]);
+const ACCOUNT_STATUSES = Object.freeze(["ACTIVE", "FROZEN", "SUSPENDED", "CLOSED"]);
 
 // Mirrors auth-service so invalid transitions fail before the cross-service
 // call; auth-service re-validates and remains the source of truth.
@@ -77,24 +73,24 @@ const assertSettled = async (userId) => {
   }
 };
 
-const applyLocalStatus = async (userId, status) => {
-  const updates = [
-    prisma.userProfile.update({
+const applyLocalStatus = async (userId, status, event = null) => {
+  await prisma.$transaction(async (tx) => {
+    await tx.userProfile.update({
       where: { id: userId },
       data: { accountStatus: status },
-    }),
-  ];
+    });
 
-  if (status === "CLOSED") {
-    updates.push(
-      prisma.wallet.updateMany({
+    if (status === "CLOSED") {
+      await tx.wallet.updateMany({
         where: { userId },
         data: { isActive: false },
-      })
-    );
-  }
+      });
+    }
 
-  await prisma.$transaction(updates);
+    if (event) {
+      await outbox.enqueue(tx, event);
+    }
+  });
   await devSessionRepository.revokeAllForUser(userId);
 };
 
@@ -103,7 +99,13 @@ const applyLocalStatus = async (userId, status) => {
 const changeStatus = async ({ userId, status, reason, actorId }) => {
   const user = await prisma.userProfile.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, accountStatus: true },
+    select: {
+      id: true,
+      email: true,
+      accountStatus: true,
+      firstName: true,
+      lastName: true,
+    },
   });
   if (!user) {
     throw ApiError.notFound("User not found", "USER_NOT_FOUND");
@@ -130,7 +132,22 @@ const changeStatus = async ({ userId, status, reason, actorId }) => {
     });
   }
 
-  await applyLocalStatus(user.id, status);
+  await applyLocalStatus(user.id, status, {
+    type: "account.status_changed",
+    aggregateType: "user",
+    aggregateId: user.id,
+    payload: {
+      from: current,
+      to: status,
+      reason: trimmedReason || null,
+      actorId: actorId || null,
+      user: {
+        userId: user.id,
+        email: user.email,
+        name: [user.firstName, user.lastName].filter(Boolean).join(" ") || null,
+      },
+    },
+  });
 
   audit("ACCOUNT_STATUS_CHANGED", {
     userId: user.id,
@@ -169,9 +186,7 @@ const overlayAuthoritativeStatus = async (users) => {
   }
 
   try {
-    const rows = await authClient.fetchAccountStatuses(
-      users.map((user) => user.email)
-    );
+    const rows = await authClient.fetchAccountStatuses(users.map((user) => user.email));
     const byEmail = new Map(rows.map((row) => [row.email, row]));
     return users.map((user) => {
       const row = byEmail.get(user.email);
@@ -183,10 +198,7 @@ const overlayAuthoritativeStatus = async (users) => {
       };
     });
   } catch (error) {
-    logger.warn(
-      { error: error.message },
-      "Unable to refresh account statuses from auth-service"
-    );
+    logger.warn({ error: error.message }, "Unable to refresh account statuses from auth-service");
     return users;
   }
 };
