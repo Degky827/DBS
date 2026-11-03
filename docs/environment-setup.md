@@ -14,6 +14,7 @@ each service, not by copying a template.
 | auth-service | `dotenv` from `backend/auth-service/.env`, then process environment | Compose/production must inject values; a real `.env` is never committed |
 | user-service | `dotenv` from `backend/user-service/.env`, then process environment | `DATABASE_URL` is required |
 | kyc-service | `dotenv` from `backend/kyc-service/.env`, then process environment | `STORAGE_ENCRYPTION_KEY` is required in production |
+| notification-service | `dotenv` from `backend/notification-service/.env`, then process environment | `DATABASE_URL` is required; `AUTH_SERVICE_URL` and `INTERNAL_SERVICE_KEY` are required in production |
 | frontend | Vite `import.meta.env.VITE_*` at build time | Only public values; never secrets |
 | Prisma CLI | `prisma.config.mjs` reads `DATABASE_URL` | Used by `prisma migrate deploy` and `prisma generate` |
 | Docker Compose | Root `.env` interpolation plus per-service `environment:` blocks | See `docker-compose.yml` and `.env.production.example` |
@@ -53,6 +54,7 @@ Supported variables:
 | auth-service | `DATABASE_URL`, `JWT_SECRET`, `JWT_PRIVATE_KEY`, `JWT_PRIVATE_KEY_BASE64`, `JWT_PUBLIC_KEY`, `JWT_PUBLIC_KEY_BASE64`, `INTERNAL_SERVICE_KEY`, `MFA_ENCRYPTION_KEY`, `BREVO_API_KEY`, `API_DOCS_PASSWORD` |
 | user-service | `DATABASE_URL`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, `JWT_PUBLIC_KEY_BASE64`, `INTERNAL_SERVICE_KEY`, `CHAPA_SECRET_KEY`, `CHAPA_WEBHOOK_SECRET`, `API_DOCS_PASSWORD` |
 | kyc-service | `DATABASE_URL`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, `JWT_PUBLIC_KEY_BASE64`, `INTERNAL_SERVICE_KEY`, `STORAGE_ENCRYPTION_KEY`, `DIDIT_API_KEY`, `DIDIT_WEBHOOK_SECRET`, `DIDIT_WEBHOOK_SECRET_PREVIOUS`, `API_DOCS_PASSWORD` |
+| notification-service | `DATABASE_URL`, `JWT_SECRET`, `INTERNAL_SERVICE_KEY`, `METRICS_TOKEN`, `BREVO_API_KEY` |
 
 The TLS certificate and private key are files by nature; see
 [deployment-guide.md](./deployment-guide.md#6-tls-certificates).
@@ -61,12 +63,13 @@ The TLS certificate and private key are files by nature; see
 
 | Value | Services | Consequence if mismatched |
 |---|---|---|
-| `JWT_ALGORITHM` | auth, user, KYC | Verifiers reject access tokens |
-| `JWT_SECRET` (HS256) | auth signs; user and KYC verify | All authenticated requests fail with 401 |
-| `JWT_PUBLIC_KEY_BASE64` / `JWT_PUBLIC_KEY` (RS256) | user and KYC verify; auth signs with the private key | All authenticated requests fail with 401 |
-| `JWT_ISSUER`, `JWT_AUDIENCE` | auth, user, KYC | Token verification fails |
-| `INTERNAL_SERVICE_KEY` | auth, user, KYC | Internal KYC-status calls and password-change proxying fail with 401 |
-| `APP_ORIGIN` / `CORS_ORIGIN` | auth, user, KYC, Nginx | Cookie endpoints reject browser requests; CORS fails |
+| `JWT_ALGORITHM` | auth, user, KYC, notification | Verifiers reject access tokens |
+| `JWT_SECRET` (HS256) | auth signs; user, KYC, and notification verify | All authenticated requests fail with 401 |
+| `JWT_PUBLIC_KEY_BASE64` / `JWT_PUBLIC_KEY` (RS256) | user, KYC, and notification verify; auth signs with the private key | All authenticated requests fail with 401 |
+| `JWT_ISSUER`, `JWT_AUDIENCE` | auth, user, KYC, notification | Token verification fails |
+| `INTERNAL_SERVICE_KEY` | auth, user, KYC, notification | Internal KYC-status calls, password-change proxying, and outbox event delivery fail with 401 |
+| `NOTIFICATION_SERVICE_URL` | user-service only | Default `http://notification-service:5004/api/v1`; outbox events stay unpublished when it is missing |
+| `APP_ORIGIN` / `CORS_ORIGIN` | auth, user, KYC, notification, Nginx | Cookie endpoints reject browser requests; CORS fails |
 | `POSTGRES_*` | all services via Compose | Services cannot connect to their databases |
 | `CHAPA_CALLBACK_URL` / `CHAPA_RETURN_URL` | user-service and the public HTTPS host | Chapa cannot notify or redirect the browser |
 
@@ -186,19 +189,51 @@ browser actually calls.
 | `DIDIT_WEBHOOK_SECRET_PREVIOUS` | No | Yes | Previous signing secret | Rotation overlap window |
 | `METRICS_TOKEN` | No | Yes | Bearer token, any string | Requires `Authorization: Bearer <token>` on `GET /metrics`; unset means the endpoint is open on the private network |
 
-## 6. frontend
+## 6. notification-service
+
+| Variable | Required | Secret | Format / default | Purpose and behavior when missing |
+|---|---|---|---|---|
+| `NODE_ENV` | Yes in deployed environments | No | `development` \| `test` \| `production` | Selects production validation |
+| `PORT` | No | No | Default `5004` | HTTP listener |
+| `DB_ADAPTER` | No | No | `pg` only | Prisma driver adapter |
+| `DATABASE_URL` | Yes | Yes | PostgreSQL URL | Startup fails if missing |
+| `JWT_ALGORITHM` / `JWT_SECRET` / `JWT_PUBLIC_KEY_BASE64` | As user-service | Yes / public | Same material as auth-service | Access-token verification for inbox reads |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | No | No | Defaults `auth-service` / `banking-system` | Token verification |
+| `INTERNAL_SERVICE_KEY` | **Yes in production** | Yes | 32+ high-entropy chars | Guards `POST /internal/notifications/events`; user-service signs outbox deliveries with it |
+| `AUTH_SERVICE_URL` | **Yes in production** | No | Default `http://localhost:5001/api/v1` | Introspects access tokens so revoked sessions cannot read an inbox |
+| `CORS_ORIGIN` / `TRUST_PROXY` / `ENABLE_HSTS` | No | No | As auth-service | Browser/proxy behavior |
+| `LOG_LEVEL` | No | No | Default `info` | Pino level |
+| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX` | No | No | Default 15 min / 300 | Global limiter for inbox routes |
+| `INTERNAL_RATE_LIMIT_MAX` | No | No | Default 300 | Limiter for the internal event route; must exceed the outbox burst rate |
+| `NOTIFICATION_PAGE_SIZE` | No | No | Default 20 (1–100) | Inbox page size when the client sends no `limit` |
+| `METRICS_TOKEN` | No | Yes | Bearer token | Optional `GET /metrics` protection, as in the other services |
+| `EMAIL_ENABLED` | No | No | Defaults to true when `BREVO_API_KEY` is set | When false, in-app notifications are still stored and email is skipped |
+| `BREVO_API_KEY` / `BREVO_API_KEY_FILE` | Email only | Yes | `xkeysib-...` | Transactional email transport; `EMAIL_ENABLED=true` without it fails startup |
+| `BREVO_API_BASE_URL` | No | No | Must be HTTPS, default `https://api.brevo.com/v3` | Provider origin |
+| `EMAIL_TRANSPORT` | No | No | `api` only | Anything else fails startup |
+| `EMAIL_FROM` / `EMAIL_FROM_EMAIL` | Email only | No | Display name / address | `EMAIL_ENABLED` requires `EMAIL_FROM_EMAIL` |
+| `EMAIL_TIMEOUT_MS` | No | No | Default 8000 (1000–60000) | Per-request provider timeout |
+| `EMAIL_RETRY_INTERVAL_MS` | No | No | Default 30000 (5000–3600000) | Email worker retry cadence |
+| `EMAIL_MAX_ATTEMPTS` | No | No | Default 6 (1–50) | Attempts before an email is marked failed |
+| `APP_ORIGIN` | No | No | Public HTTPS origin | Links embedded in emails |
+
+The service has no OpenAPI document of its own; its contract is
+`backend/notification-service/src/routes/v1/`.
+
+## 7. frontend
 
 | Variable | Required | Secret | Notes |
 |---|---|---|---|
 | `VITE_AUTH_API` | Yes | No | Dev default `http://localhost:5001/api/v1`; production image default `/api/auth` |
 | `VITE_USER_API` | Yes | No | Dev default `http://localhost:5002/api/v1`; production default `/api/user` |
 | `VITE_KYC_API` | Yes | No | Dev default `http://localhost:5003/api/v1/kyc`; production default `/api/kyc` |
+| `VITE_NOTIFICATION_API` | Yes | No | Dev default `http://localhost:5004/api/v1`; production default `/api/notifications` |
 
 Vite inlines every `VITE_*` variable into the browser bundle. Never place database
 credentials, JWT secrets, internal service keys, webhook secrets, provider API keys, or
 encryption keys in frontend variables.
 
-## 7. Production Compose-only values
+## 8. Production Compose-only values
 
 These are consumed by `docker-compose.yml` interpolation rather than by Node code:
 `APP_ORIGIN`, `TLS_ENABLED`, `FRONTEND_HTTP_PORT`, `FRONTEND_HTTPS_PORT`,
@@ -208,7 +243,7 @@ These are consumed by `docker-compose.yml` interpolation rather than by Node cod
 `CORS_ORIGIN`, and proxy settings from the Compose file. The monitoring profile
 reads `PROMETHEUS_RETENTION` (default `15d`).
 
-## 8. Local setup
+## 9. Local setup
 
 ```bash
 # Backend dependencies
@@ -235,7 +270,7 @@ cd backend/auth-service && npx prisma generate && npx prisma migrate deploy && n
 Use a separate database per service (`auth_db`, `user_db`, `kyc_db`). Test databases must
 end in `_test` and must never be production databases.
 
-## 9. Startup validation summary
+## 10. Startup validation summary
 
 The services fail fast instead of starting with unsafe or non-functional configuration:
 
@@ -247,8 +282,14 @@ The services fail fast instead of starting with unsafe or non-functional configu
 - kyc-service: missing/weak JWT or internal key, missing or malformed
   `STORAGE_ENCRYPTION_KEY`, non-Didit API origin, unsafe production origin, docs enabled
   without credentials.
+- notification-service: missing/weak JWT or internal key, missing `AUTH_SERVICE_URL` in
+  production, unsupported `DB_ADAPTER` or `EMAIL_TRANSPORT`, non-HTTPS
+  `BREVO_API_BASE_URL`, `EMAIL_ENABLED` without `BREVO_API_KEY` or `EMAIL_FROM_EMAIL`,
+  out-of-range `EMAIL_*` intervals or page sizes.
+- user-service also refuses `OUTBOX_ENABLED=true` in production without
+  `NOTIFICATION_SERVICE_URL`, so events cannot be produced with nowhere to go.
 
-## 10. Redis, RabbitMQ, MinIO, and other infrastructure
+## 11. Redis, RabbitMQ, MinIO, and other infrastructure
 
 No application code reads environment variables for Redis, RabbitMQ, MinIO, or object
 storage. Those services are intentionally absent from the Compose files. Adding them
@@ -256,7 +297,7 @@ requires a real integration first (for example, Redis-backed rate limiting or se
 storage), not just new environment variables. Do not add credentials for unused services
 to production templates.
 
-## 11. What to do when a credential is unavailable
+## 12. What to do when a credential is unavailable
 
 1. Leave the corresponding feature disabled; do not invent placeholder credentials.
 2. In production, auth-service now refuses to start without a Brevo key because login
