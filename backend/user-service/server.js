@@ -6,6 +6,14 @@ const {
   startReconciliationJob,
   stopReconciliationJob,
 } = require("./src/modules/payments/reconciliation.service");
+const {
+  startOutboxDispatcher,
+  stopOutboxDispatcher,
+} = require("./src/modules/outbox/outbox.dispatcher");
+const {
+  startScheduledTransferWorker,
+  stopScheduledTransferWorker,
+} = require("./src/modules/scheduledTransfers/scheduledTransfers.worker");
 
 const MAX_DB_ATTEMPTS = 3;
 
@@ -27,9 +35,7 @@ async function connectDatabase() {
           logger.fatal("Database unreachable - refusing to start in production");
           process.exit(1);
         }
-        logger.warn(
-          "Starting without a verified database connection - check DATABASE_URL"
-        );
+        logger.warn("Starting without a verified database connection - check DATABASE_URL");
         return;
       }
 
@@ -54,6 +60,8 @@ function registerShutdown(server) {
 
     server.close(async () => {
       stopReconciliationJob();
+      stopOutboxDispatcher();
+      stopScheduledTransferWorker();
       await prisma.$disconnect();
       logger.info("Shutdown complete");
       process.exit(0);
@@ -80,6 +88,8 @@ async function start() {
 
   registerShutdown(server);
   startReconciliationJob();
+  startOutboxDispatcher();
+  startScheduledTransferWorker();
 }
 
 start().catch((error) => {

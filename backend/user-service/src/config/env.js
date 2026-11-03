@@ -156,8 +156,7 @@ const validateChapaUrl = (key, value, { allowLocalHttp = false } = {}) => {
     url.username ||
     url.password ||
     url.hash ||
-    (url.protocol !== "https:" &&
-      !(allowLocalHttp && isLocalhost && url.protocol === "http:"))
+    (url.protocol !== "https:" && !(allowLocalHttp && isLocalhost && url.protocol === "http:"))
   ) {
     fail(`${key} must use HTTPS${allowLocalHttp ? " (except localhost)" : ""}.`);
   }
@@ -171,7 +170,8 @@ if (!["HS256", "RS256"].includes(jwtAlgorithm)) {
 }
 
 const jwtSecret = readOptionalSecret("JWT_SECRET");
-const jwtPublicKey = decodeKey("JWT_PUBLIC_KEY", "JWT_PUBLIC_KEY_BASE64");const jwtIssuer = readOptional("JWT_ISSUER") || "auth-service";
+const jwtPublicKey = decodeKey("JWT_PUBLIC_KEY", "JWT_PUBLIC_KEY_BASE64");
+const jwtIssuer = readOptional("JWT_ISSUER") || "auth-service";
 const jwtAudience = readOptional("JWT_AUDIENCE") || "banking-system";
 
 if (authMode === "jwt") {
@@ -231,21 +231,53 @@ if (isProduction && enableApiDocs) {
 
 // --- Phase 3: reconciliation scheduler ---
 const reconciliationEnabled = readBoolean("RECONCILIATION_ENABLED", false);
-const reconciliationIntervalMs = readInteger(
-  "RECONCILIATION_INTERVAL_MS",
-  5 * 60 * 1000,
-  { min: 1000, max: 24 * 60 * 60 * 1000 }
+const reconciliationIntervalMs = readInteger("RECONCILIATION_INTERVAL_MS", 5 * 60 * 1000, {
+  min: 1000,
+  max: 24 * 60 * 60 * 1000,
+});
+const reconciliationStaleMinutes = readInteger("RECONCILIATION_STALE_MINUTES", 15, {
+  min: 1,
+  max: 7 * 24 * 60,
+});
+const reconciliationBatchSize = readInteger("RECONCILIATION_BATCH_SIZE", 25, { min: 1, max: 500 });
+
+// --- Phase 3: outbox, notifications, scheduled transfers ---
+const notificationServiceUrl = readOptional("NOTIFICATION_SERVICE_URL").replace(/\/+$/, "");
+const outboxEnabled = readBoolean(
+  "OUTBOX_ENABLED",
+  isProduction && Boolean(notificationServiceUrl)
 );
-const reconciliationStaleMinutes = readInteger(
-  "RECONCILIATION_STALE_MINUTES",
-  15,
-  { min: 1, max: 7 * 24 * 60 }
-);
-const reconciliationBatchSize = readInteger(
-  "RECONCILIATION_BATCH_SIZE",
-  25,
-  { min: 1, max: 500 }
-);
+const outboxIntervalMs = readInteger("OUTBOX_INTERVAL_MS", 5000, {
+  min: 1000,
+  max: 5 * 60 * 1000,
+});
+const outboxBatchSize = readInteger("OUTBOX_BATCH_SIZE", 25, { min: 1, max: 200 });
+const outboxMaxAttempts = readInteger("OUTBOX_MAX_ATTEMPTS", 12, { min: 1, max: 100 });
+
+if (isProduction && outboxEnabled && !notificationServiceUrl) {
+  fail("OUTBOX_ENABLED requires NOTIFICATION_SERVICE_URL in production.");
+}
+if (notificationServiceUrl && !isStrongSecret(internalServiceKey)) {
+  if (isProduction) {
+    fail(
+      "NOTIFICATION_SERVICE_URL requires a strong INTERNAL_SERVICE_KEY so outbox events can be authenticated."
+    );
+  }
+}
+
+const scheduledTransfersEnabled = readBoolean("SCHEDULED_TRANSFERS_ENABLED", isProduction);
+const scheduledTransfersIntervalMs = readInteger("SCHEDULED_TRANSFERS_INTERVAL_MS", 30000, {
+  min: 5000,
+  max: 60 * 60 * 1000,
+});
+const scheduledTransfersBatchSize = readInteger("SCHEDULED_TRANSFERS_BATCH_SIZE", 10, {
+  min: 1,
+  max: 100,
+});
+const statementMaxRangeDays = readInteger("STATEMENT_MAX_RANGE_DAYS", 366, {
+  min: 31,
+  max: 366,
+});
 
 const enableHsts = readBoolean("ENABLE_HSTS", false);
 if (enableHsts && !isProduction) {
@@ -358,6 +390,17 @@ const env = Object.freeze({
   RECONCILIATION_INTERVAL_MS: reconciliationIntervalMs,
   RECONCILIATION_STALE_MINUTES: reconciliationStaleMinutes,
   RECONCILIATION_BATCH_SIZE: reconciliationBatchSize,
+
+  // --- Outbox, notifications and scheduled transfers ---
+  NOTIFICATION_SERVICE_URL: notificationServiceUrl,
+  OUTBOX_ENABLED: outboxEnabled,
+  OUTBOX_INTERVAL_MS: outboxIntervalMs,
+  OUTBOX_BATCH_SIZE: outboxBatchSize,
+  OUTBOX_MAX_ATTEMPTS: outboxMaxAttempts,
+  SCHEDULED_TRANSFERS_ENABLED: scheduledTransfersEnabled,
+  SCHEDULED_TRANSFERS_INTERVAL_MS: scheduledTransfersIntervalMs,
+  SCHEDULED_TRANSFERS_BATCH_SIZE: scheduledTransfersBatchSize,
+  STATEMENT_MAX_RANGE_DAYS: statementMaxRangeDays,
 
   // --- Payment Provider (Chapa Test-Mode) ---
   CHAPA_SECRET_KEY: chapaSecretKey,
