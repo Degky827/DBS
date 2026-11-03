@@ -159,6 +159,7 @@ for the SPA, add the matching origin to all four services instead of relaxing th
 | `CHAPA_WEBHOOK_SECRET` | When Chapa is enabled | Yes | 16+ chars | Webhook HMAC |
 | `CHAPA_BASE_URL` | No | No | Must be `https://api.chapa.global` | Pinned test-mode host |
 | `CHAPA_CALLBACK_URL` / `CHAPA_RETURN_URL` | When Chapa is enabled | No | HTTPS URLs | Provider callback and browser return |
+| `ENABLE_JOBS` | No | No | Default true | Master switch for the outbox dispatcher, scheduled transfers, ledger verification and reconciliation. Set `false` on extra API replicas and keep one container at `true`. |
 | `RECONCILIATION_ENABLED` | No | No | Default false | Scheduled reconciliation |
 | `RECONCILIATION_INTERVAL_MS` / `RECONCILIATION_STALE_MINUTES` / `RECONCILIATION_BATCH_SIZE` | No | No | Defaults 5 min / 15 min / 25 | Reconciliation tuning |
 | `LEDGER_VERIFICATION_ENABLED` | No | No | Default `true` in production, `false` elsewhere | Runs the 33 ledger integrity checks on a schedule and records a verification run; manual runs use `POST /api/v1/admin/ledger/verification/runs` |
@@ -185,6 +186,7 @@ for the SPA, add the matching origin to all four services instead of relaxing th
 | `AUTH_RATE_LIMIT_MAX` | No | No | Default 20 | Sensitive authenticated operations |
 | `WEBHOOK_RATE_LIMIT_MAX` | No | No | Default 120 / window | Dedicated limiter for the unauthenticated Didit webhook |
 | `KYC_APPROVAL_TTL_DAYS` | No | No | Default 365 (1–3650) | Approved KYC validity; expired approvals require a new application |
+| `ENABLE_JOBS` | No | No | Default true | Master switch for the outbox dispatcher and the re-verification sweeper; `false` on extra API replicas. |
 | `OUTBOX_ENABLED` / `NOTIFICATION_SERVICE_URL` | No | Yes when enabled | Off by default; on in production when the URL is set | Delivers KYC reminders to notification-service; requires a strong `INTERNAL_SERVICE_KEY` |
 | `OUTBOX_INTERVAL_MS` / `OUTBOX_BATCH_SIZE` / `OUTBOX_MAX_ATTEMPTS` | No | No | 5000 / 25 / 12 | Dispatcher cadence, batch, and backoff ceiling |
 | `KYC_REVERIFICATION_ENABLED` | No | No | Off outside production | Sweeps expiring approvals, identity documents, and tier review intervals into the officer queue |

@@ -131,7 +131,7 @@ let timer = null;
 let running = false;
 
 const startReconciliationJob = () => {
-  if (!env.RECONCILIATION_ENABLED || timer) return null;
+  if (!env.ENABLE_JOBS || !env.RECONCILIATION_ENABLED || timer) return null;
   if (!env.CHAPA_SECRET_KEY) {
     logger.warn(
       "RECONCILIATION_ENABLED is set but Chapa Test Mode is not configured; scheduler will not start"

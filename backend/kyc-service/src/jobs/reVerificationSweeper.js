@@ -20,7 +20,7 @@ const runOnce = async () => {
 };
 
 const startReVerificationSweeper = () => {
-  if (!env.KYC_REVERIFICATION_ENABLED) {
+  if (!env.ENABLE_JOBS || !env.KYC_REVERIFICATION_ENABLED) {
     logger.info("KYC re-verification sweeper disabled");
     return;
   }

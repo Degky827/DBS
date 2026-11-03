@@ -21,7 +21,7 @@ const tick = async () => {
 };
 
 const startScheduledTransferWorker = () => {
-  if (!env.SCHEDULED_TRANSFERS_ENABLED) {
+  if (!env.ENABLE_JOBS || !env.SCHEDULED_TRANSFERS_ENABLED) {
     logger.info("Scheduled transfer worker disabled");
     return;
   }

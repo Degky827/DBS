@@ -265,8 +265,12 @@ if (notificationServiceUrl && !isStrongSecret(internalServiceKey)) {
   }
 }
 
-const scheduledTransfersEnabled = readBoolean("SCHEDULED_TRANSFERS_ENABLED", isProduction);
-const scheduledTransfersIntervalMs = readInteger("SCHEDULED_TRANSFERS_INTERVAL_MS", 30000, {
+// Background work (outbox dispatch, scheduled transfers, ledger checks) is
+// meant to run in exactly one place. Scale API replicas with ENABLE_JOBS=false
+// and keep one container that owns the jobs.
+const jobsEnabled = readBoolean("ENABLE_JOBS", true);
+
+const scheduledTransfersEnabled = readBoolean("SCHEDULED_TRANSFERS_ENABLED", isProduction);const scheduledTransfersIntervalMs = readInteger("SCHEDULED_TRANSFERS_INTERVAL_MS", 30000, {
   min: 5000,
   max: 60 * 60 * 1000,
 });
@@ -406,6 +410,7 @@ const env = Object.freeze({
   RECONCILIATION_BATCH_SIZE: reconciliationBatchSize,
 
   // --- Outbox, notifications and scheduled transfers ---
+  ENABLE_JOBS: jobsEnabled,
   NOTIFICATION_SERVICE_URL: notificationServiceUrl,
   OUTBOX_ENABLED: outboxEnabled,
   OUTBOX_INTERVAL_MS: outboxIntervalMs,

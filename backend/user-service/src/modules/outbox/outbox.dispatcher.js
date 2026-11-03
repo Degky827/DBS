@@ -6,6 +6,31 @@ const metrics = require("../../utils/metrics");
 const REQUEST_TIMEOUT_MS = 5000;
 const BASE_BACKOFF_MS = 5000;
 const MAX_BACKOFF_MS = 60 * 60 * 1000;
+// How long a claimed row stays off the table while this instance works on it.
+const LEASE_SECONDS = 60;
+
+// Replica safety: FOR UPDATE SKIP LOCKED makes a second dispatcher take other
+// rows instead of the same ones, and pushing nextAttemptAt forward leases the
+// claim. A worker that dies mid-delivery simply loses the lease and the row is
+// retried; notification-service dedupes by eventId, so a retry is not a second
+// notification.
+const claimDue = () =>
+  prisma.$queryRaw`
+    WITH picked AS (
+      SELECT "id"
+      FROM "OutboxEvent"
+      WHERE "publishedAt" IS NULL
+        AND "nextAttemptAt" <= now()
+        AND "attempts" < ${env.OUTBOX_MAX_ATTEMPTS}
+      ORDER BY "nextAttemptAt"
+      LIMIT ${env.OUTBOX_BATCH_SIZE}
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE "OutboxEvent" AS o
+    SET "nextAttemptAt" = now() + make_interval(secs => ${LEASE_SECONDS}::int)
+    FROM picked
+    WHERE o."id" = picked."id"
+    RETURNING o.*`;
 
 let timer = null;
 let running = false;
@@ -47,15 +72,7 @@ const processBatch = async () => {
   running = true;
 
   try {
-    const due = await prisma.outboxEvent.findMany({
-      where: {
-        publishedAt: null,
-        nextAttemptAt: { lte: new Date() },
-        attempts: { lt: env.OUTBOX_MAX_ATTEMPTS },
-      },
-      orderBy: { nextAttemptAt: "asc" },
-      take: env.OUTBOX_BATCH_SIZE,
-    });
+    const due = await claimDue();
 
     for (const event of due) {
       try {
@@ -97,7 +114,7 @@ const processBatch = async () => {
 };
 
 const startOutboxDispatcher = () => {
-  if (!env.OUTBOX_ENABLED) {
+  if (!env.ENABLE_JOBS || !env.OUTBOX_ENABLED) {
     logger.info("Outbox dispatcher disabled");
     return;
   }

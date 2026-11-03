@@ -24,7 +24,7 @@ const runCycle = async () => {
 
 const startLedgerVerificationJob = () => {
   if (timer) return timer;
-  if (!env.LEDGER_VERIFICATION_ENABLED) {
+  if (!env.ENABLE_JOBS || !env.LEDGER_VERIFICATION_ENABLED) {
     logger.info("Ledger verification job disabled");
     return null;
   }

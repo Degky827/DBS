@@ -198,6 +198,9 @@ const kycApprovalTtlDays = readInteger("KYC_APPROVAL_TTL_DAYS", 365, {
 });
 
 // --- Phase 4: event delivery and periodic re-verification ---
+// Background work should run in one place: scale API replicas with
+// ENABLE_JOBS=false and keep a single container that owns the jobs.
+const jobsEnabled = readBoolean("ENABLE_JOBS", true);
 // Tier re-verification notices reach customers through notification-service, so
 // kyc-service keeps its own outbox table and dispatcher: a task and the
 // notification asking the customer to act on it must commit together.
@@ -318,6 +321,7 @@ const env = Object.freeze({
   API_DOCS_USERNAME: apiDocsUsername,
   API_DOCS_PASSWORD: apiDocsPassword,
   KYC_APPROVAL_TTL_DAYS: kycApprovalTtlDays,
+  ENABLE_JOBS: jobsEnabled,
   NOTIFICATION_SERVICE_URL: notificationServiceUrl,
   OUTBOX_ENABLED: outboxEnabled,
   OUTBOX_INTERVAL_MS: outboxIntervalMs,
