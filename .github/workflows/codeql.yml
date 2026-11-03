@@ -1,0 +1,91 @@
+name: Code Scanning
+
+on:
+  pull_request:
+    branches: ['main', 'develop', 'dev']
+  push:
+    branches: ['main', 'develop', 'dev']
+  schedule:
+    - cron: '23 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: code-scanning-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@4bfa242aa49c5f7c6770b98670d354a7dfac05f8 # v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@4bfa242aa49c5f7c6770b98670d354a7dfac05f8 # v3
+        with:
+          category: '/language:${{ matrix.language }}'
+          # Alerts keep flowing to the Security tab and PR annotations even when
+          # the run does not fail, so the pre-existing baseline can be triaged
+          # without freezing every branch. The gate below still blocks anything
+          # with a CRITICAL CVSS score.
+          fail-build: false
+          output: /tmp/codeql-output
+
+      - name: Block critical findings
+        env:
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const dir = "/tmp/codeql-output";
+            const files = fs.existsSync(dir)
+              ? fs.readdirSync(dir).filter((f) => f.endsWith(".sarif"))
+              : [];
+            let critical = 0;
+            for (const file of files) {
+              const sarif = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+              for (const run of sarif.runs || []) {
+                const rules = new Map(
+                  (run.tool?.driver?.rules || []).map((rule) => [rule.id, rule])
+                );
+                for (const result of run.results || []) {
+                  const score = Number(
+                    result.properties?.["security-severity"] ??
+                      rules.get(result.ruleId)?.properties?.["security-severity"] ??
+                      0
+                  );
+                  if (score >= 9) {
+                    critical += 1;
+                    console.error(`CRITICAL: ${result.ruleId} in ${JSON.stringify((result.locations || []).map((l) => l.physicalLocation?.artifactLocation?.uri))}`);
+                  }
+                }
+              }
+            }
+            console.log(`Scanned ${files.length} SARIF file(s); ${critical} critical finding(s).`);
+            if (critical > 0) process.exit(1);
+          '
