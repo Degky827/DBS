@@ -9,6 +9,9 @@ const ACCOUNT_CODES = Object.freeze({
   FEE_REVENUE: "PLATFORM:FEE_REVENUE",
   OPENING_BALANCE: "PLATFORM:OPENING_BALANCE",
   WITHDRAWAL_RESERVED: "PLATFORM:WITHDRAWAL_RESERVED",
+  // Funds handed to an external payout provider. Seeded by the Phase 4
+  // migration; payouts move money here out of WITHDRAWAL_RESERVED.
+  PAYOUT_SETTLEMENT: "PLATFORM:PAYOUT_SETTLEMENT",
 });
 
 const DIRECTIONS = Object.freeze(["DEBIT", "CREDIT"]);
