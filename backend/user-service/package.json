@@ -26,6 +26,7 @@
     "test:statements": "node --test tests/statements.test.js",
     "test:disputes": "node --test --test-concurrency=1 tests/disputes.test.js",
     "test:financial-integrity": "node --test tests/financialIntegrity.test.js",
+    "test:ledger-verification": "node --test tests/ledgerVerification.test.js",
     "test:integration": "node --test tests/kycService.integration.test.js",
     "test:phase3": "node --test --test-concurrency=1 tests/wallets.test.js tests/payments.test.js tests/ledger.test.js tests/policies.test.js",
     "test:all": "node --test --test-concurrency=1 tests/**/*.test.js",
