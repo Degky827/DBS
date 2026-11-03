@@ -21,6 +21,12 @@ const Transactions = lazy(() => import("../pages/transactions/Transactions"));
 const TransactionDetails = lazy(() => import("../pages/transactions/TransactionDetails"));
 const Transfers = lazy(() => import("../pages/transfers/Transfers"));
 const Payments = lazy(() => import("../pages/payments/Payments"));
+const Beneficiaries = lazy(() => import("../pages/beneficiaries/Beneficiaries"));
+const ScheduledTransfers = lazy(() => import("../pages/scheduledTransfers/ScheduledTransfers"));
+const Statements = lazy(() => import("../pages/statements/Statements"));
+const Disputes = lazy(() => import("../pages/disputes/Disputes"));
+const DisputeDetail = lazy(() => import("../pages/disputes/DisputeDetail"));
+const Notifications = lazy(() => import("../pages/notifications/Notifications"));
 const KycOverview = lazy(() => import("../pages/kyc/KycOverview"));
 const KycWizard = lazy(() => import("../pages/kyc/KycWizard"));
 const KycStatus = lazy(() => import("../pages/kyc/KycStatus"));
@@ -34,12 +40,15 @@ const AdminDashboard = lazy(() => import("../pages/admin/AdminDashboard"));
 const AdminUsers = lazy(() => import("../pages/admin/AdminUsers"));
 const AdminPolicies = lazy(() => import("../pages/admin/AdminPolicies"));
 const AdminAuditLogs = lazy(() => import("../pages/admin/AdminAuditLogs"));
+const AdminOutbox = lazy(() => import("../pages/admin/AdminOutbox"));
 const OfficerDashboard = lazy(() => import("../pages/officer/OfficerDashboard"));
 const OfficerVerifications = lazy(() => import("../pages/officer/OfficerVerifications"));
 const OfficerReviewDetail = lazy(() => import("../pages/officer/OfficerReviewDetail"));
 const FinanceDashboard = lazy(() => import("../pages/finance/FinanceDashboard"));
 const FinanceTransactions = lazy(() => import("../pages/finance/FinanceTransactions"));
 const FinanceTransactionDetail = lazy(() => import("../pages/finance/FinanceTransactionDetail"));
+const FinanceDisputes = lazy(() => import("../pages/finance/FinanceDisputes"));
+const FinanceDisputeDetail = lazy(() => import("../pages/finance/FinanceDisputeDetail"));
 const FinancialReports = lazy(() => import("../components/staff/FinancialReports"));
 import { Spinner } from "../components/ui/Spinner";
 import { getMe } from "../services/authService";
@@ -122,14 +131,7 @@ function RouteAnnouncer() {
     }
   }, [pathname]);
 
-  return (
-    <div
-      ref={regionRef}
-      aria-live="polite"
-      aria-atomic="true"
-      className="sr-only"
-    />
-  );
+  return <div ref={regionRef} aria-live="polite" aria-atomic="true" className="sr-only" />;
 }
 
 function AppRoutes() {
@@ -183,6 +185,12 @@ function AppRoutes() {
                 <Route path="/transactions" element={<Transactions />} />
                 <Route path="/transactions/:reference" element={<TransactionDetails />} />
                 <Route path="/payments" element={<Payments />} />
+                <Route path="/beneficiaries" element={<Beneficiaries />} />
+                <Route path="/scheduled-transfers" element={<ScheduledTransfers />} />
+                <Route path="/statements" element={<Statements />} />
+                <Route path="/disputes" element={<Disputes />} />
+                <Route path="/disputes/:reference" element={<DisputeDetail />} />
+                <Route path="/notifications" element={<Notifications />} />
                 <Route path="/kyc" element={<KycOverview />} />
                 <Route path="/kyc/verify" element={<KycWizard />} />
                 <Route path="/kyc/status" element={<KycStatus />} />
@@ -201,6 +209,7 @@ function AppRoutes() {
                 <Route path="/admin/users" element={<AdminUsers />} />
                 <Route path="/admin/policies" element={<AdminPolicies />} />
                 <Route path="/admin/audit-logs" element={<AdminAuditLogs />} />
+                <Route path="/admin/outbox" element={<AdminOutbox />} />
                 <Route path="/admin/reports" element={<FinancialReports scope="admin" />} />
               </Route>
             </Route>
@@ -227,6 +236,8 @@ function AppRoutes() {
                   element={<FinanceTransactionDetail />}
                 />
                 <Route path="/finance/reports" element={<FinancialReports scope="finance" />} />
+                <Route path="/finance/disputes" element={<FinanceDisputes />} />
+                <Route path="/finance/disputes/:reference" element={<FinanceDisputeDetail />} />
               </Route>
             </Route>
 
