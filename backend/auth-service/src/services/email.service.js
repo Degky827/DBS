@@ -60,6 +60,8 @@ const otpBlock = (otp) => `
   <p style="margin:0;font-size:13px;color:${BRAND.muted};">This code expires in 10 minutes and can be used once.</p>
 `;
 
+const EMAIL_API_TIMEOUT_MS = 10 * 1000;
+
 const resolveTransport = () => {
   if (env.EMAIL_TRANSPORT) return env.EMAIL_TRANSPORT;
   // xkeysib- keys are REST API keys; xsmtpsib- keys are SMTP keys.
@@ -74,6 +76,9 @@ const sendViaApi = async ({ to, subject, html }) => {
       "content-type": "application/json",
       accept: "application/json",
     },
+    // A stalled provider must not hold the request (and the OTP flow) open
+    // indefinitely.
+    signal: AbortSignal.timeout(EMAIL_API_TIMEOUT_MS),
     body: JSON.stringify({
       sender: { name: env.EMAIL_FROM, email: env.EMAIL_FROM_EMAIL },
       to: [{ email: to }],
@@ -102,6 +107,7 @@ const sendViaSmtp = async ({ to, subject, html }) => {
     },
     connectionTimeout: 10000,
     greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
 
   await transporter.sendMail({
@@ -138,21 +144,14 @@ const sendOtpEmail = async ({ to, otp, purpose }) => {
     await sender({ to, subject, html });
     return { delivered: true, transport };
   } catch (error) {
-    logger.error(
-      { to, purpose, transport, error: error.message },
-      "Failed to send OTP email"
-    );
+    logger.error({ to, purpose, transport, error: error.message }, "Failed to send OTP email");
     throw new Error(`Failed to send verification email: ${error.message}`, {
       cause: error,
     });
   }
 };
 
-const sendSecurityAlertEmail = async ({
-  to,
-  changedAt = new Date(),
-  via = "PASSWORD_CHANGE",
-}) => {
+const sendSecurityAlertEmail = async ({ to, changedAt = new Date(), via = "PASSWORD_CHANGE" }) => {
   const changed = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
