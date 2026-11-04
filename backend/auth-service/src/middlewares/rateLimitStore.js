@@ -17,15 +17,16 @@ const note = (message, error) => {
 };
 
 // A Redis round trip sits in front of every request once the store is shared,
-// so a slow primary must not stall the API. The timer is unref'd to keep a
-// pending command from holding the process open at shutdown.
+// so a slow primary must not stall the API. The timer stays referenced: an
+// unref'd timer does not hold the loop open, so a command that hangs while
+// nothing else is pending would never be abandoned. It is cleared as soon as
+// the command settles, so it costs at most timeoutMs at shutdown.
 const withTimeout = (operation, timeoutMs) =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`Redis rate limit command did not answer in ${timeoutMs}ms`)),
       timeoutMs
     );
-    timer.unref();
     Promise.resolve()
       .then(operation)
       .then(

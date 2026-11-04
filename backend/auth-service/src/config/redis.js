@@ -41,13 +41,9 @@ const create = () => {
   created.on("connecting", () => {
     connecting = null;
   });
-  created.on("ready", () => {
-    // The Redis socket must not be the reason a process cannot exit. The HTTP
-    // listener keeps the service alive, while a script or a test run ends as
-    // soon as its own work is done. Reconnecting yields a new socket, so this
-    // runs on every ready.
-    created.unref();
-  });
+  // The socket stays referenced: an unref'd client lets node exit while a
+  // command is still in flight, abandoning the caller that awaits it. Every
+  // entry point closes the client through shutdown() before exiting.
   return created;
 };
 
