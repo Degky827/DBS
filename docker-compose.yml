@@ -14,7 +14,7 @@
 #
 # TLS is terminated by the frontend container by default. Provide
 # certs/tls.crt and certs/tls.key, or set TLS_ENABLED=false and terminate TLS at
-# an upstream load balancer. See docs/deployment-guide.md.
+# an upstream load balancer. See docs/deployment/deployment-guide.md.
 
 name: meridian
 
@@ -146,7 +146,7 @@ services:
       EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-587}
       # Optional bearer token required by /metrics. Monitoring profile scrapes
       # without it by default; set it only together with the Prometheus
-      # bearer_token_file change documented in docs/security-and-operations.md.
+      # bearer_token_file change documented in docs/operations/security-and-operations.md.
       METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       auth-migrate:

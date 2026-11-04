@@ -387,7 +387,7 @@ and restore from backup instead.
 
 ## 13. API and OpenAPI
 
-The OpenAPI document at `docs/openapi.json` (served at `GET /api/v1/openapi.json`
+The OpenAPI document at `backend/user-service/docs/openapi.json` (served at `GET /api/v1/openapi.json`
 when docs are enabled, with Swagger UI at `/docs`) documents:
 
 - `POST /api/v1/transactions/{reference}/reversals` (ADMIN)

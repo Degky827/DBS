@@ -2,7 +2,7 @@
 
 Independent Express service for **profile management** and **authenticated wallet transfers**.
 
-> **Authentication modes.** `AUTH_MODE=jwt` verifies access tokens from `auth-service` and is required in production. `AUTH_MODE=dev` uses opaque development sessions for standalone work and is rejected when `NODE_ENV=production`. Profile IDs are still separate from the auth-service user ID (`sub`); see [docs/INTEGRATION.md](docs/INTEGRATION.md).
+> **Authentication modes.** `AUTH_MODE=jwt` verifies access tokens from `auth-service` and is required in production. `AUTH_MODE=dev` uses opaque development sessions for standalone work and is rejected when `NODE_ENV=production`. Profile IDs are still separate from the auth-service user ID (`sub`); see [user/auth integration](../architecture/user-auth-integration.md).
 
 ## Service Overview
 
@@ -162,7 +162,7 @@ Withdrawals use an internal reservation lifecycle only. `POST /api/v1/payments/w
 
 ### Phase 3 ledger, reversals, policies, and reconciliation
 
-Every wallet movement is posted through a double-entry ledger. Wallet balances are customer liabilities, not platform revenue; deposits debit `PLATFORM:PROVIDER_CLEARING` and credit the wallet liability, and fees (when configured) credit `PLATFORM:FEE_REVENUE`. Posted entries are immutable and must balance per currency. `Wallet.balance` is a database-checked projection of its ledger account. See [docs/phase3-ledger.md](docs/phase3-ledger.md) for the account model, journal examples, lifecycle states, and guarantees.
+Every wallet movement is posted through a double-entry ledger. Wallet balances are customer liabilities, not platform revenue; deposits debit `PLATFORM:PROVIDER_CLEARING` and credit the wallet liability, and fees (when configured) credit `PLATFORM:FEE_REVENUE`. Posted entries are immutable and must balance per currency. `Wallet.balance` is a database-checked projection of its ledger account. See [ledger design](../architecture/ledger-design.md) for the account model, journal examples, lifecycle states, and guarantees.
 
 Administrators can reverse internal transfers with `POST /api/v1/transactions/{reference}/reversals` (full or partial, reason required, idempotent). Pre-ledger transactions are marked `LEGACY` and cannot be reversed through the ledger. Transaction responses now include `status`, `currency`, `feeAmount`, `reversedAmount`, and `ledgerEntryReference`.
 
@@ -193,7 +193,7 @@ Every rejected response carries the tier code, version and source plus the limit
 
 ### Phase 4 migration and test setup
 
-The additive `20261027100000_wallet_transactions` migration creates the ETB wallet and internal transfer tables. The `20261027110000_payments_chapa` migration adds payment records, transaction-to-payment linkage for deposits, and deduplicated webhook-delivery records. The `20261028120000_double_entry_ledger` migration adds the ledger, policy, withdrawal, and reconciliation tables, marks pre-ledger transactions `LEGACY`, and snapshots positive wallet balances into balanced opening entries. Apply migrations only after backing up and verifying on a disposable copy; see [docs/phase3-ledger.md](docs/phase3-ledger.md) for the procedure and rollback limits:
+The additive `20261027100000_wallet_transactions` migration creates the ETB wallet and internal transfer tables. The `20261027110000_payments_chapa` migration adds payment records, transaction-to-payment linkage for deposits, and deduplicated webhook-delivery records. The `20261028120000_double_entry_ledger` migration adds the ledger, policy, withdrawal, and reconciliation tables, marks pre-ledger transactions `LEGACY`, and snapshots positive wallet balances into balanced opening entries. Apply migrations only after backing up and verifying on a disposable copy; see [ledger design](../architecture/ledger-design.md) for the procedure and rollback limits:
 
 ```bash
 npx prisma generate

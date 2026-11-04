@@ -6,7 +6,7 @@
 **HEAD:** `a60b900` (all audit changes are uncommitted in the working tree)
 **Classification:** **DEVELOPMENT READY** — not staging ready, not production ready.
 
-This report supersedes [phase4-final-report.md](./phase4-final-report.md) for
+This report supersedes the Phase 4 final report (retained in git history) for
 readiness decisions. It records only what was executed and observed. Nothing in
 this document was inferred from a provider dashboard, a CI run, or a deployment
 that did not happen.
@@ -173,7 +173,7 @@ Both were removed after a repository-wide reference check.
 | Tests | `backend/*/tests/*.test.js`, `frontend/tests/*.test.js` | 221 tests |
 | CI | `.github/workflows/ci.yml` | KYC DB provisioning, JSON validation |
 | Compose | `docker-compose.yml`, `docker-compose.dev.yml` | Service wiring, health checks |
-| Docs | `docs/*.md`, `README.md` | Environment, security, providers, readiness |
+| Docs | `docs/**/*.md`, `README.md` | Environment, security, providers, readiness |
 | Hygiene | `.gitignore`, deletions | Secret safety, dead files |
 
 ---
@@ -274,7 +274,7 @@ critical advisories.
 
 Every variable, its format, whether it is secret, its default, and which
 services must share a value is documented in
-[environment-setup.md](./environment-setup.md). Summary of the current local
+[environment-setup.md](../deployment/environment-setup.md). Summary of the current local
 state (names only; no values were read into this report):
 
 | Service | Configured | Notably absent |
@@ -293,7 +293,7 @@ Missing or intentionally absent:
 - **Redis** — used by application code for shared rate-limit windows and the
   user-service KYC-status cache; optional in the sense that unset `REDIS_URL`
   falls back to per-process counters. See
-  [environment-setup.md](./environment-setup.md), section 11.
+  [environment-setup.md](../deployment/environment-setup.md), section 11.
 - **RabbitMQ / MinIO** — not consumed by application code and deliberately
   absent. Do not add them without a real integration.
 
@@ -306,7 +306,7 @@ Production startup rejects weak or missing secrets.
 ## 12. External providers
 
 Full detail in
-[provider-integration-testing.md](./provider-integration-testing.md).
+[provider-integration-testing.md](../operations/provider-integration-testing.md).
 
 | Provider | Credentials present | Automated tests | Real call made | Verified |
 |---|---|---|---|---|
@@ -375,7 +375,7 @@ No other file was deleted. No user-authored uncommitted work was discarded.
 ## 16. Security posture and open findings
 
 Implemented controls are documented in
-[security-and-operations.md](./security-and-operations.md). The controls
+[security-and-operations.md](../operations/security-and-operations.md). The controls
 verified by tests include refresh rotation and reuse revocation, CSRF trusted
 origins, CORS allowlisting, layered rate limits, CSP/HSTS headers, production
 secret validation, KYC fail-closed gating, officer self-review prevention,
