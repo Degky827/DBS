@@ -31,13 +31,17 @@ ENV NODE_ENV=production
 # npm and corepack are build-time tooling; the runtime only executes
 # `node server.js`. Removing them drops their bundled dependency tree - and the
 # advisories it carries - from the image that is actually served.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+RUN apk add --no-cache su-exec \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
   && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 COPY --from=build --chown=node:node /app ./
 RUN mkdir -p /app/storage && chown -R node:node /app/storage
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-USER node
+# The entrypoint starts as root only long enough to repair volume ownership,
+# then drops to the node user before running the service.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 EXPOSE 5003
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
