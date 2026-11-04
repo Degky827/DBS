@@ -1,5 +1,6 @@
 const env = require("../config/env");
 const logger = require("../config/logger");
+const cache = require("./cache");
 
 const TIMEOUT_MS = 5 * 1000;
 
@@ -96,6 +97,10 @@ const getUserKycStatus = async (userId) => {
     throw new KycUnavailableError("KYC_SERVICE_URL is not configured");
   }
 
+  const cacheKey = `kyc-status:${userId}`;
+  const cached = await cache.getJson(cacheKey);
+  if (cached) return cached;
+
   const url = `${env.KYC_SERVICE_URL}/internal/users/${encodeURIComponent(userId)}/status`;
 
   let response;
@@ -133,11 +138,23 @@ const getUserKycStatus = async (userId) => {
     throw new KycUnavailableError("KYC service returned an invalid status");
   }
 
-  return {
+  const result = {
     status: typeof data.status === "string" ? data.status : "UNKNOWN",
     isApproved: data.isApproved,
     tier: parseTier(data),
   };
+  await cache.setJson(cacheKey, result, cacheTtlSeconds(data));
+  return result;
+};
+
+// A cached approval never outlives the expiry kyc-service just reported, and a
+// tier an officer can change is only reused for a short, configurable window.
+// Zero or less means the value is freshest-read only, which is what an
+// already-expired or imminently-expiring approval needs.
+const cacheTtlSeconds = (data) => {
+  const expiresAt = Date.parse(data.approvalExpiresAt ?? "");
+  if (!Number.isFinite(expiresAt)) return env.KYC_STATUS_CACHE_TTL_SECONDS;
+  return Math.min(env.KYC_STATUS_CACHE_TTL_SECONDS, Math.floor((expiresAt - Date.now()) / 1000));
 };
 
 module.exports = { getUserKycStatus, KycUnavailableError };

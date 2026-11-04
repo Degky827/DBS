@@ -270,7 +270,8 @@ if (notificationServiceUrl && !isStrongSecret(internalServiceKey)) {
 // and keep one container that owns the jobs.
 const jobsEnabled = readBoolean("ENABLE_JOBS", true);
 
-const scheduledTransfersEnabled = readBoolean("SCHEDULED_TRANSFERS_ENABLED", isProduction);const scheduledTransfersIntervalMs = readInteger("SCHEDULED_TRANSFERS_INTERVAL_MS", 30000, {
+const scheduledTransfersEnabled = readBoolean("SCHEDULED_TRANSFERS_ENABLED", isProduction);
+const scheduledTransfersIntervalMs = readInteger("SCHEDULED_TRANSFERS_INTERVAL_MS", 30000, {
   min: 5000,
   max: 60 * 60 * 1000,
 });
@@ -399,6 +400,27 @@ const env = Object.freeze({
   RATE_LIMIT_MAX: readNumber("RATE_LIMIT_MAX", 300),
   AUTH_RATE_LIMIT_MAX: readNumber("AUTH_RATE_LIMIT_MAX", 20),
   WEBHOOK_RATE_LIMIT_MAX: readNumber("WEBHOOK_RATE_LIMIT_MAX", 120),
+  // Redis is optional: unset, every limiter counts this process alone.
+  REDIS_URL: readOptional("REDIS_URL"),
+  REDIS_KEY_PREFIX: readOptional("REDIS_KEY_PREFIX") || "user",
+  REDIS_COMMAND_TIMEOUT_MS: readInteger("REDIS_COMMAND_TIMEOUT_MS", 500, {
+    min: 50,
+    max: 5000,
+  }),
+  REDIS_CONNECT_TIMEOUT_MS: readInteger("REDIS_CONNECT_TIMEOUT_MS", 2000, {
+    min: 100,
+    max: 15000,
+  }),
+  REDIS_RECONNECT_PERIOD_MS: readInteger("REDIS_RECONNECT_PERIOD_MS", 5000, {
+    min: 100,
+    max: 60000,
+  }),
+  // A tier can change while a customer is working, so a cached KYC status is
+  // only allowed to lag this long before the money path re-reads it.
+  KYC_STATUS_CACHE_TTL_SECONDS: readInteger("KYC_STATUS_CACHE_TTL_SECONDS", 10, {
+    min: 1,
+    max: 3600,
+  }),
   ENABLE_API_DOCS: enableApiDocs,
   API_DOCS_USERNAME: apiDocsUsername,
   API_DOCS_PASSWORD: apiDocsPassword,
