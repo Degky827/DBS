@@ -117,6 +117,23 @@ groups:
             A revoked refresh token was presented. The family is revoked
             automatically; investigate whether a token was stolen.
 
+      # Rate limiters fall back to per-process counters whenever Redis is
+      # unreachable, so a quota no longer means one budget cluster-wide.
+      - alert: SharedRateLimitStoreUnavailable
+        expr: >-
+          increase(
+            banking_security_events_total{event="rate_limit_shared_store_unavailable"}[10m]
+          ) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Shared rate limit store unavailable on {{ $labels.service }}"
+          description: >-
+            A limiter could not reach Redis and is counting only this process.
+            While it lasts, the effective budget grows with the replica count.
+            Check Redis availability and the service's REDIS_URL.
+
   - name: kyc
     rules:
       - alert: KycProviderFailures
