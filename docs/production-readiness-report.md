@@ -290,8 +290,12 @@ Missing or intentionally absent:
   `PAYMENT_PROVIDER_NOT_CONFIGURED`. This is the intended fail-closed behavior.
 - **Payout provider** — withdrawals have ledger support but no payout
   integration; no provider is configured or implemented.
-- **Redis / RabbitMQ / MinIO** — not consumed by application code and
-  deliberately absent. Do not add them without a real integration.
+- **Redis** — used by application code for shared rate-limit windows and the
+  user-service KYC-status cache; optional in the sense that unset `REDIS_URL`
+  falls back to per-process counters. See
+  [environment-setup.md](./environment-setup.md), section 11.
+- **RabbitMQ / MinIO** — not consumed by application code and deliberately
+  absent. Do not add them without a real integration.
 
 `INTERNAL_SERVICE_KEY` must match across user-service and KYC-service.
 `JWT_SECRET` (or the RS256 public key) must match across all three services.

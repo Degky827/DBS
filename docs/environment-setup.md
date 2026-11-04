@@ -121,6 +121,10 @@ for the SPA, add the matching origin to all four services instead of relaxing th
 | `LOGIN_RATE_LIMIT_MAX` | No | No | Default 10 | Per IP + email login limiter |
 | `SENSITIVE_AUTH_RATE_LIMIT_MAX` | No | No | Default 20 | Register/OTP/reset limiter |
 | `REFRESH_RATE_LIMIT_MAX` | No | No | Default 60 | Refresh/logout limiter |
+| `REDIS_URL` | No | Yes (carries the password) | `redis://[:password@host:6379]`; unset | When set, the limiters above count in Redis so replicas share one window; unset keeps per-process counting |
+| `REDIS_KEY_PREFIX` | No | No | Default `auth` | Redis key namespace for this service; keep it distinct per service |
+| `REDIS_COMMAND_TIMEOUT_MS` | No | No | Default 500 (50–5000) | Ceiling for one Redis rate-limit command; over it, the request is counted in this process instead |
+| `REDIS_CONNECT_TIMEOUT_MS` / `REDIS_RECONNECT_PERIOD_MS` | No | No | Default 2 s / 5 s | Connection timing; startup and requests never wait on Redis |
 | `ENABLE_API_DOCS` | No | No | Default true in development, false in production | Swagger UI |
 | `API_DOCS_USERNAME` / `API_DOCS_PASSWORD` | Only when docs are enabled in production | Password is secret | Username + 16+ char password | Basic auth for docs |
 | `MFA_ENCRYPTION_KEY` | Recommended | Yes | Exactly 64 hex characters | AES-256-GCM key for TOTP secrets and HMAC key for recovery codes; falls back to a key derived from JWT material when unset |
@@ -153,6 +157,11 @@ for the SPA, add the matching origin to all four services instead of relaxing th
 | `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX` | No | No | Default 15 min / 300 | Global limiter |
 | `AUTH_RATE_LIMIT_MAX` | No | No | Default 20 | Authenticated profile/password operations |
 | `WEBHOOK_RATE_LIMIT_MAX` | No | No | Default 120 / window | Dedicated limiter for the unauthenticated Chapa webhook |
+| `REDIS_URL` | No | Yes (carries the password) | `redis://[:password@host:6379]`; unset | When set, the limiters above count in Redis so replicas share one window, and the KYC-status read cache is used; unset keeps per-process counting and no cache |
+| `REDIS_KEY_PREFIX` | No | No | Default `user` | Redis key namespace for this service; keep it distinct per service |
+| `REDIS_COMMAND_TIMEOUT_MS` | No | No | Default 500 (50–5000) | Ceiling for one Redis command; over it, the request is counted in this process instead and a cache read is a miss |
+| `REDIS_CONNECT_TIMEOUT_MS` / `REDIS_RECONNECT_PERIOD_MS` | No | No | Default 2 s / 5 s | Connection timing; startup and requests never wait on Redis |
+| `KYC_STATUS_CACHE_TTL_SECONDS` | No | No | Default 10 (1–3600) | How long a KYC tier read may be reused on the money path. A cached copy is never kept past the approval's own `approvalExpiresAt`, and a tier change becomes visible when the window ends |
 | `LOG_LEVEL` | No | No | Default `info` | Pino level |
 | `ENABLE_API_DOCS` / `API_DOCS_USERNAME` / `API_DOCS_PASSWORD` | Docs only | Password is secret | As auth-service | Swagger UI |
 | `CHAPA_SECRET_KEY` | No | Yes | Must be a test key (`CHASECK_TEST-...` or `CHAPA_TEST_...`) | Deposits stay disabled when empty |
@@ -185,6 +194,10 @@ for the SPA, add the matching origin to all four services instead of relaxing th
 | `UPLOAD_RATE_LIMIT_MAX` | No | No | Default 10 | Document-upload limiter |
 | `AUTH_RATE_LIMIT_MAX` | No | No | Default 20 | Sensitive authenticated operations |
 | `WEBHOOK_RATE_LIMIT_MAX` | No | No | Default 120 / window | Dedicated limiter for the unauthenticated Didit webhook |
+| `REDIS_URL` | No | Yes (carries the password) | `redis://[:password@host:6379]`; unset | When set, the limiters above count in Redis so replicas share one window; unset keeps per-process counting |
+| `REDIS_KEY_PREFIX` | No | No | Default `kyc` | Redis key namespace for this service; keep it distinct per service |
+| `REDIS_COMMAND_TIMEOUT_MS` | No | No | Default 500 (50–5000) | Ceiling for one Redis rate-limit command; over it, the request is counted in this process instead |
+| `REDIS_CONNECT_TIMEOUT_MS` / `REDIS_RECONNECT_PERIOD_MS` | No | No | Default 2 s / 5 s | Connection timing; startup and requests never wait on Redis |
 | `KYC_APPROVAL_TTL_DAYS` | No | No | Default 365 (1–3650) | Approved KYC validity; expired approvals require a new application |
 | `ENABLE_JOBS` | No | No | Default true | Master switch for the outbox dispatcher and the re-verification sweeper; `false` on extra API replicas. |
 | `OUTBOX_ENABLED` / `NOTIFICATION_SERVICE_URL` | No | Yes when enabled | Off by default; on in production when the URL is set | Delivers KYC reminders to notification-service; requires a strong `INTERNAL_SERVICE_KEY` |
@@ -219,6 +232,10 @@ for the SPA, add the matching origin to all four services instead of relaxing th
 | `LOG_LEVEL` | No | No | Default `info` | Pino level |
 | `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX` | No | No | Default 15 min / 300 | Global limiter for inbox routes |
 | `INTERNAL_RATE_LIMIT_MAX` | No | No | Default 300 | Limiter for the internal event route; must exceed the outbox burst rate |
+| `REDIS_URL` | No | Yes (carries the password) | `redis://[:password@host:6379]`; unset | When set, both limiters above count in Redis so replicas share one window; unset keeps per-process counting |
+| `REDIS_KEY_PREFIX` | No | No | Default `notification` | Redis key namespace for this service; keep it distinct per service |
+| `REDIS_COMMAND_TIMEOUT_MS` | No | No | Default 500 (50–5000) | Ceiling for one Redis rate-limit command; over it, the request is counted in this process instead |
+| `REDIS_CONNECT_TIMEOUT_MS` / `REDIS_RECONNECT_PERIOD_MS` | No | No | Default 2 s / 5 s | Connection timing; startup and requests never wait on Redis |
 | `NOTIFICATION_PAGE_SIZE` | No | No | Default 20 (1–100) | Inbox page size when the client sends no `limit` |
 | `METRICS_TOKEN` | No | Yes | Bearer token | Optional `GET /metrics` protection, as in the other services |
 | `EMAIL_ENABLED` | No | No | Defaults to true when `BREVO_API_KEY` is set | When false, in-app notifications are still stored and email is skipped |
@@ -305,11 +322,23 @@ The services fail fast instead of starting with unsafe or non-functional configu
 
 ## 11. Redis, RabbitMQ, MinIO, and other infrastructure
 
-No application code reads environment variables for Redis, RabbitMQ, MinIO, or object
-storage. Those services are intentionally absent from the Compose files. Adding them
-requires a real integration first (for example, Redis-backed rate limiting or session
-storage), not just new environment variables. Do not add credentials for unused services
-to production templates.
+Redis is used by application code and is part of both Compose files. Each service
+reads `REDIS_URL`; when it is unset every rate limiter counts only its own process,
+which is exactly the behaviour from before Redis was added, and the user-service
+KYC-status cache stays off. Nothing in Redis is a source of truth: rate-limit windows
+expire on their own and cached KYC statuses are re-read from kyc-service when their
+short TTL ends, so a Redis outage or an emptied Redis never loses or falsifies money
+records. Production Compose requires `REDIS_PASSWORD` and refuses to start without it.
+
+Run `GET /api/v1/ready` to see what a replica actually has: its payload reports
+`redis.enabled` (configured) and `redis.connected` (handshake finished). A configured
+but disconnected Redis is a warning, not a failing readiness probe, because requests
+keep being served and rate limited locally.
+
+RabbitMQ and MinIO/object storage are still **not** used by application code and stay
+out of the Compose files. Event delivery uses the transactional outbox in PostgreSQL
+with HTTP push to notification-service. Adding a broker requires a real integration
+first, not just new environment variables.
 
 ## 12. What to do when a credential is unavailable
 

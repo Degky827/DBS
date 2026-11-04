@@ -59,6 +59,7 @@
                     │  - User Service (5002)     │
                     │  - KYC Service (5003)      │
                     │  - PostgreSQL (5432)       │
+                    │  - Redis (6379)            │
                     └────────────────────────────┘
 ```
 
@@ -70,9 +71,13 @@
 - PostgreSQL NOT exposed externally
 - TLS 1.2/1.3 with HSTS emitted by the frontend container
 
-> **Note:** Earlier drafts of this guide included Redis and RabbitMQ.
-> Neither is used by the application code yet, so both were removed from the
-> Compose files and from the required environment variables.
+> **Note:** Redis is part of the stack: with `REDIS_URL` set the four backend
+> services share their rate-limit windows through it, and user-service caches
+> KYC-status reads there. Production Compose fails to start unless
+> `REDIS_PASSWORD` is set, and the containers keep working when Redis is down —
+> limits then fall back to counting per process. Earlier drafts of this guide
+> also included RabbitMQ; it is still not used by application code, so it stays
+> out of the Compose files and out of the required environment variables.
 
 ---
 

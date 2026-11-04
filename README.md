@@ -235,6 +235,17 @@ cd backend/notification-service
 NOTIFICATION_TEST_DATABASE_URL='postgresql://auth:auth@localhost:5432/notification_test?schema=public' npm test
 ```
 
+The shared-rate-limit and KYC-cache specs need a reachable Redis and skip with an
+explicit reason when `REDIS_URL` is unset. Point them at any disposable Redis
+(the dev Compose stack publishes one on `127.0.0.1:6379`):
+
+```bash
+export REDIS_URL='redis://:dev-only-redis-password@127.0.0.1:6379'
+cd backend/user-service
+npm run test:rate-limit-store
+npm run test:kyc-cache
+```
+
 #### Frontend Tests
 
 ```bash
@@ -324,7 +335,7 @@ delivery resumes automatically once notification-service is healthy again.
 - Wallet and payment tests that need PostgreSQL require `WALLET_TEST_DATABASE_URL` pointing at an isolated test database ending in `_test`.
 - OCR downloads Tesseract language data on first use; the repository no longer carries an unused local `eng.traineddata` copy.
 - External payments remain disabled unless Chapa Test Mode credentials are configured. Live payments are not supported.
-- Redis, RabbitMQ, and MinIO are **not used by application code** and are not part of the Compose files. Add them only alongside a real integration.
+- Redis carries shared rate-limit windows and the short-lived KYC-status cache, and is part of both Compose files. It holds no session, credential, or financial record: with `REDIS_URL` unset every limiter counts per process and the cache is off. RabbitMQ and MinIO are still **not used by application code**; add them only alongside a real integration.
 - The outbox dispatcher and the scheduled-transfer worker are in-process pollers. They run only while user-service runs, and they need no external broker; a long outage grows the backlog instead of dropping events.
 - Dispute resolution records the officer's decision and the case timeline. Returning funds is a separate ledger action (`/transactions/:reference/reversals`) so a decision can never move money implicitly.
 - Statements are generated on request from ledger rows; there is no archived statement store. Beneficiary account numbers are masked on read, so editing a beneficiary only changes the account number when a new value is typed.

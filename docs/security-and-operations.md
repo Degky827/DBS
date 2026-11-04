@@ -83,10 +83,17 @@ response header. Health and readiness probes are exempt.
 sits behind a trusted shared NAT. Do not raise login limits as a workaround for
 shared IPs — use the per-IP+email key instead.
 
-**Limitation:** the counters are in-process. Multiple replicas each keep their
-own budget, and a restart clears them. Distributing limits requires a shared
-store (Redis), which is not currently an application dependency (see
-[environment-setup.md](./environment-setup.md), section 10).
+**Shared counters (optional Redis):** with `REDIS_URL` set, every limiter above
+keeps its window in Redis, so replicas share one budget and a restart no longer
+clears it. When Redis is unreachable, slow, or not configured, the request is
+counted in this process instead — a degraded deployment tightens limits rather
+than removing them, and never returns 500 for a store error. Each fallback counts
+only its own replica, so during an outage the effective budget grows with the replica count;
+`banking_security_events_total{event="rate_limit_shared_store_unavailable"}` in
+`/metrics` (auth, user and KYC services) is the signal to page on. Sessions are
+still issued by auth-service and stored in PostgreSQL — Redis holds no session,
+credential, or financial state. See
+[environment-setup.md](./environment-setup.md), section 11.
 
 ## 5. Secrets and configuration
 
@@ -390,7 +397,7 @@ docker compose --profile monitoring up -d
   payment, ledger, and notification alerts: `ServiceDown`, `ServiceNotReady`,
   `HighServerErrorRate`, `HighRequestLatency`, `RateLimitSpike`,
   `LoginFailureBurst`, `MfaFailureBurst`, `RefreshTokenReuseDetected`,
-  `KycProviderFailures`, `KycWebhookRejected`,
+  `SharedRateLimitStoreUnavailable`, `KycProviderFailures`, `KycWebhookRejected`,
   `ReconciliationNeedsReview`, `LedgerIntegrityFindings`,
   `LedgerVerificationRunFailed`, `LedgerVerificationStale`, and
   `VerificationIssueBacklogGrowing`. `LedgerVerificationStale` exists because a

@@ -45,7 +45,10 @@ Not included:
   secret store that issued them.
 - `.env` and secret values — keep them in the secret manager. Backups are
   useless without the KYC encryption keys and JWT/MFA keys.
-- Redis or RabbitMQ — neither is part of the current deployment.
+- Redis — holds only rate-limit windows and short-TTL read caches, all of them
+  rebuilt on their own. No session, credential, ledger or KYC record lives there,
+  so a restore never has to include it. RabbitMQ and object storage are still not
+  part of the deployment.
 
 ---
 
