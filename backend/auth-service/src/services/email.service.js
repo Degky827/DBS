@@ -133,7 +133,10 @@ const sendOtpEmail = async ({ to, otp, purpose }) => {
   const html = layout({ heading, body: intro + otpBlock(otp) });
 
   if (!env.BREVO_API_KEY) {
-    logger.warn({ to, purpose }, "Brevo key not set — OTP email delivery unavailable");
+    logger.warn(
+      { to, verification: isVerification },
+      "Brevo key not set — OTP email delivery unavailable"
+    );
     return { delivered: false };
   }
 
@@ -144,7 +147,12 @@ const sendOtpEmail = async ({ to, otp, purpose }) => {
     await sender({ to, subject, html });
     return { delivered: true, transport };
   } catch (error) {
-    logger.error({ to, purpose, transport, error: error.message }, "Failed to send OTP email");
+    // The provider error can echo the request body, which carries the OTP, so
+    // only the error's identity is logged. The full message is rethrown.
+    logger.error(
+      { transport, errorName: error.name, errorCode: error.code },
+      "Failed to send OTP email"
+    );
     throw new Error(`Failed to send verification email: ${error.message}`, {
       cause: error,
     });
@@ -193,7 +201,7 @@ const sendSecurityAlertEmail = async ({ to, changedAt = new Date(), via = "PASSW
     return { delivered: true, transport };
   } catch (error) {
     logger.error(
-      { to, purpose: via, transport, error: error.message },
+      { via, transport, errorName: error.name, errorCode: error.code },
       "Failed to send security alert email"
     );
     throw new Error(`Failed to send security alert email: ${error.message}`, {
