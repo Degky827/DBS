@@ -8,6 +8,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.dev.yml}"
+case "$COMPOSE_FILE" in
+  *dev*) ;;
+  *)
+    echo "refusing: COMPOSE_FILE must point at a development Compose file" >&2
+    exit 1
+    ;;
+esac
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-banking-system}"
 PG_SERVICE="${PG_SERVICE:-postgres}"
 PG_USER="${POSTGRES_USER:-meridian}"
