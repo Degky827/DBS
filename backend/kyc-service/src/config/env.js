@@ -317,6 +317,21 @@ const env = Object.freeze({
   UPLOAD_RATE_LIMIT_MAX: readNumber("UPLOAD_RATE_LIMIT_MAX", 10),
   WEBHOOK_RATE_LIMIT_MAX: readNumber("WEBHOOK_RATE_LIMIT_MAX", 120),
   AUTH_RATE_LIMIT_MAX: readNumber("AUTH_RATE_LIMIT_MAX", 20),
+  // Redis is optional: unset, every limiter counts this process alone.
+  REDIS_URL: readOptional("REDIS_URL"),
+  REDIS_KEY_PREFIX: readOptional("REDIS_KEY_PREFIX") || "kyc",
+  REDIS_COMMAND_TIMEOUT_MS: readInteger("REDIS_COMMAND_TIMEOUT_MS", 500, {
+    min: 50,
+    max: 5000,
+  }),
+  REDIS_CONNECT_TIMEOUT_MS: readInteger("REDIS_CONNECT_TIMEOUT_MS", 2000, {
+    min: 100,
+    max: 15000,
+  }),
+  REDIS_RECONNECT_PERIOD_MS: readInteger("REDIS_RECONNECT_PERIOD_MS", 5000, {
+    min: 100,
+    max: 60000,
+  }),
   ENABLE_API_DOCS: enableApiDocs,
   API_DOCS_USERNAME: apiDocsUsername,
   API_DOCS_PASSWORD: apiDocsPassword,

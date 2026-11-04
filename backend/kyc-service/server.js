@@ -2,6 +2,7 @@ const env = require("./src/config/env");
 const app = require("./src/app");
 const prisma = require("./src/config/database");
 const logger = require("./src/config/logger");
+const redis = require("./src/config/redis");
 const { startOutboxDispatcher, stopOutboxDispatcher } = require("./src/jobs/outboxDispatcher");
 const {
   startReVerificationSweeper,
@@ -55,6 +56,7 @@ function registerShutdown(server) {
       stopOutboxDispatcher();
       stopReVerificationSweeper();
       await prisma.$disconnect();
+      await redis.shutdown();
       logger.info("Shutdown complete");
       process.exit(0);
     });
@@ -66,6 +68,16 @@ function registerShutdown(server) {
 
 async function start() {
   await connectDatabase();
+
+  if (redis.isConfigured()) {
+    // Start the handshake in the background: a slow or absent Redis must not
+    // delay startup, and readiness should report the connection it really has.
+    redis.getReadyClient();
+  } else if (env.IS_PRODUCTION) {
+    logger.warn(
+      "REDIS_URL is unset: rate limits are counted per process, so every replica gets its own budget."
+    );
+  }
 
   const server = app.listen(env.PORT, () => {
     logger.info(

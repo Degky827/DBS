@@ -4,6 +4,7 @@ const ROUTES = require("../../constants/routes");
 const ApiResponse = require("../../utils/ApiResponse");
 const prisma = require("../../config/database");
 const metrics = require("../../utils/metrics");
+const redis = require("../../config/redis");
 
 router.get(ROUTES.HEALTH, (req, res) => {
   return ApiResponse.success(
@@ -24,7 +25,7 @@ router.get(ROUTES.READY, async (req, res) => {
     metrics.markReady(true);
     return ApiResponse.success(
       res,
-      { service: "kyc-service", status: "ready" },
+      { service: "kyc-service", status: "ready", redis: redis.status() },
       "Service is ready"
     );
   } catch {

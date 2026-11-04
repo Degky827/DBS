@@ -2,6 +2,7 @@ const { rateLimit } = require("express-rate-limit");
 
 const env = require("../config/env");
 const ApiResponse = require("../utils/ApiResponse");
+const { createRateLimitStore } = require("./rateLimitStore");
 
 const buildHandler = (message) => (req, res) => {
   const retryAfter = Math.ceil(
@@ -27,6 +28,7 @@ const globalLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.RATE_LIMIT_MAX,
+  store: createRateLimitStore("global"),
   skip: skipHealthChecks,
   handler: buildHandler("Too many requests, please try again later"),
 });
@@ -37,6 +39,7 @@ const uploadLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.UPLOAD_RATE_LIMIT_MAX,
+  store: createRateLimitStore("upload"),
   handler: buildHandler("Too many document uploads, please try again later"),
 });
 
@@ -46,6 +49,7 @@ const webhookLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.WEBHOOK_RATE_LIMIT_MAX,
+  store: createRateLimitStore("webhook"),
   handler: buildHandler("Too many webhook requests, please try again later"),
 });
 
