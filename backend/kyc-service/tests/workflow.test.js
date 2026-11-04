@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
 
+const { tierPrismaStub } = require("./helpers/tierPrismaStub");
+
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = "postgresql://auth:auth@localhost:5432/kyc_test?schema=public";
 process.env.JWT_SECRET = "kyc-workflow-test-secret";
@@ -12,72 +14,91 @@ process.env.DIDIT_API_BASE_URL = "https://verification.didit.me";
 process.env.STORAGE_ENCRYPTION_KEY = "13".repeat(32);
 
 const submissions = new Map([
-  ["submission-match", {
-    id: "submission-match",
-    userId: "customer-1",
-    status: "DRAFT",
-    providerStatus: "Approved",
-    documentVerificationStatus: "Approved",
-    dataComparisonStatus: null,
-    faceMatchStatus: "Approved",
-    livenessStatus: "Approved",
-  }],
-  ["submission-mismatch", {
-    id: "submission-mismatch",
-    userId: "customer-1",
-    status: "DRAFT",
-    providerStatus: "Approved",
-    documentVerificationStatus: "Approved",
-    dataComparisonStatus: null,
-    faceMatchStatus: "Approved",
-    livenessStatus: "Approved",
-  }],
-  ["submission-review-compare", {
-    id: "submission-review-compare",
-    userId: "customer-1",
-    status: "PENDING_REVIEW",
-    providerStatus: "Approved",
-    documentVerificationStatus: "Approved",
-    dataComparisonStatus: null,
-    faceMatchStatus: "Approved",
-    livenessStatus: "Approved",
-  }],
-  ["submission-no-evidence", {
-    id: "submission-no-evidence",
-    userId: "customer-1",
-    status: "PENDING_REVIEW",
-    providerStatus: "Approved",
-    documentVerificationStatus: "Approved",
-    dataComparisonStatus: "MATCH",
-    faceMatchStatus: "Approved",
-    livenessStatus: "Approved",
-  }],
-  ["submission-declined-provider", {
-    id: "submission-declined-provider",
-    userId: "customer-1",
-    status: "PENDING_REVIEW",
-    providerStatus: "Declined",
-    documentVerificationStatus: "Declined",
-    dataComparisonStatus: "MATCH",
-    faceMatchStatus: "Approved",
-    livenessStatus: "Approved",
-  }],
-  ["submission-not-pending", {
-    id: "submission-not-pending",
-    userId: "customer-1",
-    status: "DRAFT",
-    providerStatus: "Approved",
-    documentVerificationStatus: "Approved",
-    dataComparisonStatus: "MATCH",
-    faceMatchStatus: "Approved",
-    livenessStatus: "Approved",
-  }],
+  [
+    "submission-match",
+    {
+      id: "submission-match",
+      userId: "customer-1",
+      status: "DRAFT",
+      providerStatus: "Approved",
+      documentVerificationStatus: "Approved",
+      dataComparisonStatus: null,
+      faceMatchStatus: "Approved",
+      livenessStatus: "Approved",
+    },
+  ],
+  [
+    "submission-mismatch",
+    {
+      id: "submission-mismatch",
+      userId: "customer-1",
+      status: "DRAFT",
+      providerStatus: "Approved",
+      documentVerificationStatus: "Approved",
+      dataComparisonStatus: null,
+      faceMatchStatus: "Approved",
+      livenessStatus: "Approved",
+    },
+  ],
+  [
+    "submission-review-compare",
+    {
+      id: "submission-review-compare",
+      userId: "customer-1",
+      status: "PENDING_REVIEW",
+      providerStatus: "Approved",
+      documentVerificationStatus: "Approved",
+      dataComparisonStatus: null,
+      faceMatchStatus: "Approved",
+      livenessStatus: "Approved",
+    },
+  ],
+  [
+    "submission-no-evidence",
+    {
+      id: "submission-no-evidence",
+      userId: "customer-1",
+      status: "PENDING_REVIEW",
+      providerStatus: "Approved",
+      documentVerificationStatus: "Approved",
+      dataComparisonStatus: "MATCH",
+      faceMatchStatus: "Approved",
+      livenessStatus: "Approved",
+    },
+  ],
+  [
+    "submission-declined-provider",
+    {
+      id: "submission-declined-provider",
+      userId: "customer-1",
+      status: "PENDING_REVIEW",
+      providerStatus: "Declined",
+      documentVerificationStatus: "Declined",
+      dataComparisonStatus: "MATCH",
+      faceMatchStatus: "Approved",
+      livenessStatus: "Approved",
+    },
+  ],
+  [
+    "submission-not-pending",
+    {
+      id: "submission-not-pending",
+      userId: "customer-1",
+      status: "DRAFT",
+      providerStatus: "Approved",
+      documentVerificationStatus: "Approved",
+      dataComparisonStatus: "MATCH",
+      faceMatchStatus: "Approved",
+      livenessStatus: "Approved",
+    },
+  ],
 ]);
 const auditEvents = [];
 const reviewEvents = [];
 let ocrDocuments = [];
 let evidenceCount = 1;
 const fakePrisma = {
+  ...tierPrismaStub(),
   $transaction: async (callback) => callback(fakePrisma),
   kycSubmission: {
     findFirst: async ({ where }) => {
@@ -92,7 +113,8 @@ const fakePrisma = {
       ).length,
     findUnique: async ({ where }) => {
       const submission = submissions.get(where.id);
-      return submission ? { ...submission } : null;
+      // The tier engine reads the captured documents off the submission.
+      return submission ? { documents: [], ...submission } : null;
     },
     update: async ({ where, data }) => {
       const submission = submissions.get(where.id);
@@ -195,11 +217,10 @@ test("comparison normalizes names and unambiguous date representations", async (
 
     assert.equal(response.status, 200);
     assert.equal(response.body.data.status, "MATCH");
-    assert.deepEqual(response.body.data.fields.map(({ status }) => status), [
-      "MATCH",
-      "MATCH",
-      "MATCH",
-    ]);
+    assert.deepEqual(
+      response.body.data.fields.map(({ status }) => status),
+      ["MATCH", "MATCH", "MATCH"]
+    );
     assert.equal(submissions.get("submission-match").dataComparisonStatus, "MATCH");
   } finally {
     global.fetch = originalFetch;
@@ -310,10 +331,7 @@ test("comparison can complete during review and then satisfy the approval requir
       .send({});
     assert.equal(comparison.status, 200);
     assert.equal(comparison.body.data.status, "MATCH");
-    assert.equal(
-      submissions.get("submission-review-compare").dataComparisonStatus,
-      "MATCH"
-    );
+    assert.equal(submissions.get("submission-review-compare").dataComparisonStatus, "MATCH");
 
     const approved = await request(app)
       .post("/api/v1/kyc/officer/submissions/submission-review-compare/decision")

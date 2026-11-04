@@ -2,12 +2,11 @@ const rateLimit = require("express-rate-limit");
 
 const env = require("../config/env");
 const ApiResponse = require("../utils/ApiResponse");
+const { createRateLimitStore } = require("./rateLimitStore");
 
 const buildHandler = (message) => (req, res) => {
   const retryAfter = Math.ceil(
-    (req.rateLimit.resetTime
-      ? new Date(req.rateLimit.resetTime).getTime() - Date.now()
-      : 0) / 1000
+    (req.rateLimit.resetTime ? new Date(req.rateLimit.resetTime).getTime() - Date.now() : 0) / 1000
   );
 
   res.setHeader("Retry-After", String(Math.max(retryAfter, 1)));
@@ -27,6 +26,7 @@ const globalLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.RATE_LIMIT_MAX,
+  store: createRateLimitStore("global"),
   skip: (req) =>
     req.path === "/api/v1/health" ||
     req.path === "/api/v1/ready" ||
@@ -40,6 +40,7 @@ const webhookLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.WEBHOOK_RATE_LIMIT_MAX,
+  store: createRateLimitStore("webhook"),
   handler: buildHandler("Too many webhook requests, please try again later"),
 });
 
@@ -47,9 +48,8 @@ const authLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.AUTH_RATE_LIMIT_MAX,
-  handler: buildHandler(
-    "Too many authentication attempts, please try again later"
-  ),
+  store: createRateLimitStore("auth"),
+  handler: buildHandler("Too many authentication attempts, please try again later"),
 });
 
 module.exports = { globalLimiter, authLimiter, webhookLimiter };

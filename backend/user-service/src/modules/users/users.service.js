@@ -3,17 +3,14 @@ const fs = require("fs/promises");
 const path = require("path");
 const env = require("../../config/env");
 const logger = require("../../config/logger");
+const prisma = require("../../config/database");
 const userRepository = require("../../repositories/user.repository");
 const devSessionRepository = require("../../repositories/devSession.repository");
 const ApiError = require("../../utils/ApiError");
 const audit = require("../../utils/audit");
 const { changeAuthPassword, closeAccount } = require("../../services/authClient");
 const accountLifecycle = require("../../services/accountLifecycle.service");
-const {
-  hashPassword,
-  comparePassword,
-  DUMMY_HASH,
-} = require("../../utils/password.util");
+const { hashPassword, comparePassword, DUMMY_HASH } = require("../../utils/password.util");
 
 const toPublicProfile = (user) => ({
   id: user.id,
@@ -62,19 +59,14 @@ const IMAGE_TYPES = [
     mimeType: "image/jpeg",
     extension: "jpg",
     matches: (buffer) =>
-      buffer.length >= 3 &&
-      buffer[0] === 0xff &&
-      buffer[1] === 0xd8 &&
-      buffer[2] === 0xff,
+      buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff,
   },
   {
     mimeType: "image/png",
     extension: "png",
     matches: (buffer) =>
       buffer.length >= 8 &&
-      buffer.subarray(0, 8).equals(
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-      ),
+      buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
   },
   {
     mimeType: "image/webp",
@@ -87,9 +79,7 @@ const IMAGE_TYPES = [
 ];
 
 const getAvatarType = (file) =>
-  IMAGE_TYPES.find(
-    (type) => type.mimeType === file.mimetype && type.matches(file.buffer)
-  );
+  IMAGE_TYPES.find((type) => type.mimeType === file.mimetype && type.matches(file.buffer));
 
 const removePreviousAvatar = async (avatarUrl) => {
   const prefix = "/uploads/avatars/";
@@ -108,8 +98,13 @@ const removePreviousAvatar = async (avatarUrl) => {
 };
 
 const sanitizeUsernameBase = (email) => {
-  const local = String(email || "").split("@")[0].toLowerCase();
-  const cleaned = local.replace(/[^a-z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+  const local = String(email || "")
+    .split("@")[0]
+    .toLowerCase();
+  const cleaned = local
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
   if (cleaned.length >= 3) return cleaned.slice(0, 24);
   return `${cleaned || "user"}_${Date.now().toString(36)}`.slice(0, 24);
 };
@@ -119,8 +114,7 @@ const generateUniqueUsername = async (email) => {
   const random = () => Math.random().toString(36).slice(2, 6);
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const candidate =
-      attempt === 0 ? base : `${base}_${random()}`.slice(0, 30);
+    const candidate = attempt === 0 ? base : `${base}_${random()}`.slice(0, 30);
     const taken = await userRepository.findByUsername(candidate);
     if (!taken) return candidate;
   }
@@ -230,10 +224,7 @@ const updateMyProfile = async (authCtx, input, avatarFile) => {
   }
 
   if (Object.keys(data).length === 0) {
-    throw ApiError.badRequest(
-      "At least one profile field must be provided",
-      "EMPTY_UPDATE"
-    );
+    throw ApiError.badRequest("At least one profile field must be provided", "EMPTY_UPDATE");
   }
 
   try {
@@ -244,10 +235,7 @@ const updateMyProfile = async (authCtx, input, avatarFile) => {
         await fs.unlink(avatarPath);
       } catch (cleanupError) {
         if (cleanupError.code !== "ENOENT") {
-          logger.warn(
-            { error: cleanupError.message },
-            "Unable to remove unassigned avatar"
-          );
+          logger.warn({ error: cleanupError.message }, "Unable to remove unassigned avatar");
         }
       }
     }
@@ -282,9 +270,7 @@ const changeMyPassword = async (authCtx, input, session) => {
     audit("PASSWORD_CHANGED", { userId: authCtx.id, via: "auth-service" });
 
     return {
-      message:
-        result.message ||
-        "Password has been changed. Other sessions were revoked.",
+      message: result.message || "Password has been changed. Other sessions were revoked.",
     };
   }
 
@@ -302,10 +288,7 @@ const changeMyPassword = async (authCtx, input, session) => {
 
   if (!isCurrentValid) {
     audit("PASSWORD_CHANGE_FAILED", { userId: user.id });
-    throw ApiError.unauthorized(
-      "Current password is incorrect",
-      "INVALID_CURRENT_PASSWORD"
-    );
+    throw ApiError.unauthorized("Current password is incorrect", "INVALID_CURRENT_PASSWORD");
   }
 
   if (input.currentPassword === input.newPassword) {
@@ -325,8 +308,7 @@ const changeMyPassword = async (authCtx, input, session) => {
   audit("PASSWORD_CHANGED", { userId: user.id, via: "dev" });
 
   return {
-    message:
-      "Password has been changed. Other development sessions were revoked.",
+    message: "Password has been changed. Other development sessions were revoked.",
   };
 };
 
@@ -350,27 +332,55 @@ const closeMyAccount = async (authCtx, input) => {
       reason: input.reason || "Closed by account holder",
     });
   } else {
-    const valid = await comparePassword(
-      input.password,
-      profile.passwordHash || DUMMY_HASH
-    );
+    const valid = await comparePassword(input.password, profile.passwordHash || DUMMY_HASH);
     if (!valid) {
       audit("ACCOUNT_CLOSE_FAILED", { userId: profile.id, reason: "PASSWORD" });
-      throw ApiError.unauthorized(
-        "Password is incorrect",
-        "INVALID_CURRENT_PASSWORD"
-      );
+      throw ApiError.unauthorized("Password is incorrect", "INVALID_CURRENT_PASSWORD");
     }
   }
 
-  await accountLifecycle.applyLocalStatus(profile.id, "CLOSED");
+  await accountLifecycle.applyLocalStatus(profile.id, "CLOSED", {
+    type: "account.status_changed",
+    aggregateType: "user",
+    aggregateId: profile.id,
+    payload: {
+      from: profile.accountStatus || "ACTIVE",
+      to: "CLOSED",
+      reason: input.reason || "Closed by account holder",
+      actorId: profile.id,
+      user: {
+        userId: profile.id,
+        email: profile.email || authCtx.email || null,
+        name: [profile.firstName, profile.lastName].filter(Boolean).join(" ") || null,
+      },
+    },
+  });
   audit("ACCOUNT_CLOSED", { userId: profile.id, via: authCtx.authMode });
 
   return {
-    message:
-      "Account closed. Remaining data is retained according to the bank's records policy.",
+    message: "Account closed. Remaining data is retained according to the bank's records policy.",
   };
 };
+
+// Contact fields are the only profile data another service needs to send a
+// customer message. Keeping this lookup narrow means the internal endpoint
+// cannot be used to read a full profile.
+async function getContact(userId) {
+  const profile = await prisma.userProfile.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, firstName: true, lastName: true, accountStatus: true },
+  });
+  if (!profile) {
+    throw ApiError.notFound("User profile not found", "USER_PROFILE_NOT_FOUND");
+  }
+
+  return {
+    userId: profile.id,
+    email: profile.email,
+    name: [profile.firstName, profile.lastName].filter(Boolean).join(" ") || null,
+    accountStatus: profile.accountStatus || "ACTIVE",
+  };
+}
 
 module.exports = {
   getResolvedUserId,
@@ -378,4 +388,5 @@ module.exports = {
   updateMyProfile,
   changeMyPassword,
   closeMyAccount,
+  getContact,
 };

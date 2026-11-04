@@ -5,7 +5,7 @@ groups:
   - name: availability
     rules:
       - alert: ServiceDown
-        expr: up{job=~"auth-service|user-service|kyc-service"} == 0
+        expr: up{job=~"auth-service|user-service|kyc-service|notification-service"} == 0
         for: 2m
         labels:
           severity: critical
@@ -117,6 +117,23 @@ groups:
             A revoked refresh token was presented. The family is revoked
             automatically; investigate whether a token was stolen.
 
+      # Rate limiters fall back to per-process counters whenever Redis is
+      # unreachable, so a quota no longer means one budget cluster-wide.
+      - alert: SharedRateLimitStoreUnavailable
+        expr: >-
+          increase(
+            banking_security_events_total{event="rate_limit_shared_store_unavailable"}[10m]
+          ) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Shared rate limit store unavailable on {{ $labels.service }}"
+          description: >-
+            A limiter could not reach Redis and is counting only this process.
+            While it lasts, the effective budget grows with the replica count.
+            Check Redis availability and the service's REDIS_URL.
+
   - name: kyc
     rules:
       - alert: KycProviderFailures
@@ -158,3 +175,148 @@ groups:
           description: >-
             A Chapa payment could not be reconciled automatically. Follow the
             reconciliation runbook before writing any ledger entry.
+
+  - name: ledger
+    rules:
+      - alert: LedgerIntegrityFindings
+        expr: banking_ledger_open_issues{severity=~"CRITICAL|HIGH"} > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} ledger issues are open at {{ $labels.severity }}"
+          description: >-
+            The verification job found books that do not agree. Open the run
+            history in the admin integrity view, confirm the finding and record
+            a reversal or adjustment. Never edit a historical entry, and do not
+            suppress the issue unless a compliance decision has been documented.
+
+      - alert: LedgerVerificationRunFailed
+        expr: >-
+          increase(banking_ledger_verification_runs_total{outcome=~"failed|error"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ledger verification run reported {{ $labels.outcome }}"
+          description: >-
+            A run with outcome=error means at least one check could not complete,
+            so the books are unproven rather than clean. Investigate before the
+            next scheduled cycle.
+
+      - alert: LedgerVerificationStale
+        expr: >-
+          time() - banking_ledger_verification_last_run_timestamp_seconds
+            > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} has not completed a ledger verification run in 24h"
+          description: >-
+            The job is disabled, the process restarted without
+            LEDGER_VERIFICATION_ENABLED, or every cycle has hung. Absence of
+            this metric is not evidence the ledger is consistent.
+
+      - alert: VerificationIssueBacklogGrowing
+        expr: >-
+          sum(banking_ledger_open_issues)
+            - sum(banking_ledger_open_issues offset 1h) > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Open ledger issue backlog grew by more than 10 in an hour"
+          description: >-
+            New findings are appearing faster than reviewers close them. Check
+            whether a deployment or provider incident introduced them.
+
+  - name: notifications
+    rules:
+      - alert: OutboxDeliveryStalled
+        expr: banking_outbox_pending > 50
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox backlog is growing ({{ $value }} events pending)"
+          description: >-
+            More than 50 events have waited fifteen minutes for delivery.
+            Check notification-service availability and OUTBOX_ENABLED.
+
+      - alert: OutboxDeadLetters
+        expr: increase(banking_outbox_events_total{outcome="dead_lettered"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox events reached the retry limit"
+          description: >-
+            At least one event exhausted OUTBOX_MAX_ATTEMPTS. Inspect the
+            stored lastError and replay the event after the consumer recovers.
+
+      - alert: NotificationEventDeliveryFailures
+        expr: increase(banking_notification_events_total{outcome="failed"}[10m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Notification event processing is failing ({{ $labels.event }})"
+          description: >-
+            More than three consumer failures in ten minutes. Check the
+            notification-service logs and database health.
+
+      - alert: NotificationEmailBacklog
+        expr: banking_notification_email_backlog > 25
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Notification email backlog is high ({{ $value }} pending)"
+          description: >-
+            Emails are not draining from the queue. Verify BREVO_API_KEY,
+            provider status, and EMAIL_RETRY_INTERVAL_MS.
+
+
+  - name: kyc-reverification
+    rules:
+      - alert: KYCReVerificationSweepStale
+        expr: >-
+          time() - banking_kyc_reverification_last_run_timestamp_seconds
+            > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KYC re-verification has not completed a sweep in 24h"
+          description: >-
+            The sweeper is disabled, the process restarted without
+            KYC_REVERIFICATION_ENABLED, or every cycle is failing. Customers
+            are not being reminded, and an expired approval will not be
+            noticed by an officer until the queue is opened.
+
+      - alert: KYCReVerificationSweepFailing
+        expr: increase(banking_kyc_reverification_runs_total{outcome="failed"}[30m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KYC re-verification sweep failed"
+          description: >-
+            A sweep raised an error, so tasks for expiring approvals and
+            documents may not have been created this cycle. Check the
+            kyc-service logs and database availability.
+
+      - alert: KYCReVerificationOverdueBacklog
+        expr: >-
+          sum(banking_kyc_reverification_open_tasks{reason=~"APPROVAL_EXPIRED|DOCUMENT_EXPIRED"}) > 25
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} customers hold an expired KYC approval or document"
+          description: >-
+            Expired evidence is still on file for more than twenty-five
+            customers. This is an operational backlog, not evidence of fraud:
+            review the queue and request new documents where the customer is
+            still eligible to transact.

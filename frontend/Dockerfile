@@ -12,14 +12,21 @@ COPY . .
 ARG VITE_AUTH_API=/api/auth
 ARG VITE_USER_API=/api/user
 ARG VITE_KYC_API=/api/kyc
+ARG VITE_NOTIFICATION_API=/api/notifications
 ENV VITE_AUTH_API=$VITE_AUTH_API
 ENV VITE_USER_API=$VITE_USER_API
 ENV VITE_KYC_API=$VITE_KYC_API
+ENV VITE_NOTIFICATION_API=$VITE_NOTIFICATION_API
 
 RUN npm run build
 
 # ---------- Stage 2: serve ----------
 FROM nginx:alpine AS runtime
+
+# The nginx tag ships whatever Alpine package versions existed when it was
+# built. Upgrading inside the image picks up the patched libcurl, libexpat and
+# brotli the scan requires, without waiting for an upstream rebuild.
+RUN apk upgrade --no-cache
 
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/banking/tls.conf

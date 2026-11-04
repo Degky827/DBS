@@ -156,8 +156,7 @@ const validateChapaUrl = (key, value, { allowLocalHttp = false } = {}) => {
     url.username ||
     url.password ||
     url.hash ||
-    (url.protocol !== "https:" &&
-      !(allowLocalHttp && isLocalhost && url.protocol === "http:"))
+    (url.protocol !== "https:" && !(allowLocalHttp && isLocalhost && url.protocol === "http:"))
   ) {
     fail(`${key} must use HTTPS${allowLocalHttp ? " (except localhost)" : ""}.`);
   }
@@ -171,7 +170,8 @@ if (!["HS256", "RS256"].includes(jwtAlgorithm)) {
 }
 
 const jwtSecret = readOptionalSecret("JWT_SECRET");
-const jwtPublicKey = decodeKey("JWT_PUBLIC_KEY", "JWT_PUBLIC_KEY_BASE64");const jwtIssuer = readOptional("JWT_ISSUER") || "auth-service";
+const jwtPublicKey = decodeKey("JWT_PUBLIC_KEY", "JWT_PUBLIC_KEY_BASE64");
+const jwtIssuer = readOptional("JWT_ISSUER") || "auth-service";
 const jwtAudience = readOptional("JWT_AUDIENCE") || "banking-system";
 
 if (authMode === "jwt") {
@@ -231,20 +231,71 @@ if (isProduction && enableApiDocs) {
 
 // --- Phase 3: reconciliation scheduler ---
 const reconciliationEnabled = readBoolean("RECONCILIATION_ENABLED", false);
-const reconciliationIntervalMs = readInteger(
-  "RECONCILIATION_INTERVAL_MS",
-  5 * 60 * 1000,
-  { min: 1000, max: 24 * 60 * 60 * 1000 }
+const reconciliationIntervalMs = readInteger("RECONCILIATION_INTERVAL_MS", 5 * 60 * 1000, {
+  min: 1000,
+  max: 24 * 60 * 60 * 1000,
+});
+const reconciliationStaleMinutes = readInteger("RECONCILIATION_STALE_MINUTES", 15, {
+  min: 1,
+  max: 7 * 24 * 60,
+});
+const reconciliationBatchSize = readInteger("RECONCILIATION_BATCH_SIZE", 25, { min: 1, max: 500 });
+
+// --- Phase 3: outbox, notifications, scheduled transfers ---
+const notificationServiceUrl = readOptional("NOTIFICATION_SERVICE_URL").replace(/\/+$/, "");
+const outboxEnabled = readBoolean(
+  "OUTBOX_ENABLED",
+  isProduction && Boolean(notificationServiceUrl)
 );
-const reconciliationStaleMinutes = readInteger(
-  "RECONCILIATION_STALE_MINUTES",
-  15,
-  { min: 1, max: 7 * 24 * 60 }
-);
-const reconciliationBatchSize = readInteger(
-  "RECONCILIATION_BATCH_SIZE",
-  25,
-  { min: 1, max: 500 }
+const outboxIntervalMs = readInteger("OUTBOX_INTERVAL_MS", 5000, {
+  min: 1000,
+  max: 5 * 60 * 1000,
+});
+const outboxBatchSize = readInteger("OUTBOX_BATCH_SIZE", 25, { min: 1, max: 200 });
+const outboxMaxAttempts = readInteger("OUTBOX_MAX_ATTEMPTS", 12, { min: 1, max: 100 });
+
+if (isProduction && outboxEnabled && !notificationServiceUrl) {
+  fail("OUTBOX_ENABLED requires NOTIFICATION_SERVICE_URL in production.");
+}
+if (notificationServiceUrl && !isStrongSecret(internalServiceKey)) {
+  if (isProduction) {
+    fail(
+      "NOTIFICATION_SERVICE_URL requires a strong INTERNAL_SERVICE_KEY so outbox events can be authenticated."
+    );
+  }
+}
+
+// Background work (outbox dispatch, scheduled transfers, ledger checks) is
+// meant to run in exactly one place. Scale API replicas with ENABLE_JOBS=false
+// and keep one container that owns the jobs.
+const jobsEnabled = readBoolean("ENABLE_JOBS", true);
+
+const scheduledTransfersEnabled = readBoolean("SCHEDULED_TRANSFERS_ENABLED", isProduction);
+const scheduledTransfersIntervalMs = readInteger("SCHEDULED_TRANSFERS_INTERVAL_MS", 30000, {
+  min: 5000,
+  max: 60 * 60 * 1000,
+});
+const scheduledTransfersBatchSize = readInteger("SCHEDULED_TRANSFERS_BATCH_SIZE", 10, {
+  min: 1,
+  max: 100,
+});
+const statementMaxRangeDays = readInteger("STATEMENT_MAX_RANGE_DAYS", 366, {
+  min: 31,
+  max: 366,
+});
+
+// --- Phase 4: ledger verification ---
+// The check itself is read-only SQL over the whole book, so the cadence is an
+// operator choice rather than a paging concern. Six hours is a compromise
+// between a same-day close and the cost of a full scan.
+const ledgerVerificationEnabled = readBoolean("LEDGER_VERIFICATION_ENABLED", isProduction);
+const ledgerVerificationIntervalMs = readInteger(
+  "LEDGER_VERIFICATION_INTERVAL_MS",
+  6 * 60 * 60 * 1000,
+  {
+    min: 15000,
+    max: 24 * 60 * 60 * 1000,
+  }
 );
 
 const enableHsts = readBoolean("ENABLE_HSTS", false);
@@ -349,6 +400,27 @@ const env = Object.freeze({
   RATE_LIMIT_MAX: readNumber("RATE_LIMIT_MAX", 300),
   AUTH_RATE_LIMIT_MAX: readNumber("AUTH_RATE_LIMIT_MAX", 20),
   WEBHOOK_RATE_LIMIT_MAX: readNumber("WEBHOOK_RATE_LIMIT_MAX", 120),
+  // Redis is optional: unset, every limiter counts this process alone.
+  REDIS_URL: readOptional("REDIS_URL"),
+  REDIS_KEY_PREFIX: readOptional("REDIS_KEY_PREFIX") || "user",
+  REDIS_COMMAND_TIMEOUT_MS: readInteger("REDIS_COMMAND_TIMEOUT_MS", 500, {
+    min: 50,
+    max: 5000,
+  }),
+  REDIS_CONNECT_TIMEOUT_MS: readInteger("REDIS_CONNECT_TIMEOUT_MS", 2000, {
+    min: 100,
+    max: 15000,
+  }),
+  REDIS_RECONNECT_PERIOD_MS: readInteger("REDIS_RECONNECT_PERIOD_MS", 5000, {
+    min: 100,
+    max: 60000,
+  }),
+  // A tier can change while a customer is working, so a cached KYC status is
+  // only allowed to lag this long before the money path re-reads it.
+  KYC_STATUS_CACHE_TTL_SECONDS: readInteger("KYC_STATUS_CACHE_TTL_SECONDS", 10, {
+    min: 1,
+    max: 3600,
+  }),
   ENABLE_API_DOCS: enableApiDocs,
   API_DOCS_USERNAME: apiDocsUsername,
   API_DOCS_PASSWORD: apiDocsPassword,
@@ -358,6 +430,20 @@ const env = Object.freeze({
   RECONCILIATION_INTERVAL_MS: reconciliationIntervalMs,
   RECONCILIATION_STALE_MINUTES: reconciliationStaleMinutes,
   RECONCILIATION_BATCH_SIZE: reconciliationBatchSize,
+
+  // --- Outbox, notifications and scheduled transfers ---
+  ENABLE_JOBS: jobsEnabled,
+  NOTIFICATION_SERVICE_URL: notificationServiceUrl,
+  OUTBOX_ENABLED: outboxEnabled,
+  OUTBOX_INTERVAL_MS: outboxIntervalMs,
+  OUTBOX_BATCH_SIZE: outboxBatchSize,
+  OUTBOX_MAX_ATTEMPTS: outboxMaxAttempts,
+  SCHEDULED_TRANSFERS_ENABLED: scheduledTransfersEnabled,
+  SCHEDULED_TRANSFERS_INTERVAL_MS: scheduledTransfersIntervalMs,
+  SCHEDULED_TRANSFERS_BATCH_SIZE: scheduledTransfersBatchSize,
+  LEDGER_VERIFICATION_ENABLED: ledgerVerificationEnabled,
+  LEDGER_VERIFICATION_INTERVAL_MS: ledgerVerificationIntervalMs,
+  STATEMENT_MAX_RANGE_DAYS: statementMaxRangeDays,
 
   // --- Payment Provider (Chapa Test-Mode) ---
   CHAPA_SECRET_KEY: chapaSecretKey,

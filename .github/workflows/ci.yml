@@ -11,8 +11,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Least privilege is the default; jobs that publish security data grant more
+# scope explicitly. Third-party actions are pinned to commit SHAs so a tagged
+# release cannot be swapped underneath a run.
+permissions:
+  contents: read
+
 env:
   NODE_VERSION: '22'
+  PRETTIER_VERSION: '3.4.2'
   # Test-only credentials
   POSTGRES_USER: meridian_test
   POSTGRES_PASSWORD: ci-test-only-password-not-for-production
@@ -21,15 +28,51 @@ env:
   STORAGE_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 jobs:
-  lint:
-    name: Lint and Format Check
+  changes:
+    name: Detect Base Revision
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      base: ${{ steps.range.outputs.base }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      # Both the format gate and the secret-scan gate compare HEAD against the
+      # revision the change started from. Force pushes and new branches report
+      # a SHA the runner does not have, so fall back to the previous commit and
+      # finally to the empty tree for the very first commit.
+      - name: Resolve comparison base
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'pull_request' ]; then
+            base="$PR_BASE"
+          else
+            base="$PUSH_BEFORE"
+          fi
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD^ 2>/dev/null || git hash-object -t tree /dev/null)"
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "Comparing HEAD against $base"
+
+  lint:
+    name: Lint Sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -37,6 +80,7 @@ jobs:
             backend/auth-service/package-lock.json
             backend/user-service/package-lock.json
             backend/kyc-service/package-lock.json
+            backend/notification-service/package-lock.json
             frontend/package-lock.json
 
       - name: Install frontend dependencies
@@ -47,13 +91,50 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
-      - name: Check frontend formatting
-        working-directory: frontend
-        run: npm run format:check || echo "Prettier check will be added"
+  format-check:
+    name: Format Changed Sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [changes]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install prettier
+        run: npm install --no-save --no-package-lock prettier@${{ env.PRETTIER_VERSION }}
+
+      # The repository predates Prettier, so a whole-tree check would fail on
+      # untouched files. New and modified sources must be formatted; legacy
+      # files are cleaned up opportunistically instead of blocking every PR.
+      - name: Check formatting of changed files
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(
+            git diff --name-only --diff-filter=ACMR "$BASE" HEAD \
+              -- '*.js' '*.jsx' '*.mjs' '*.cjs' '*.json' '*.css' \
+              | grep -vE 'package-lock\.json$' || true
+          )
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Prettier-managed files changed."
+            exit 0
+          fi
+          printf 'Checking %d file(s):\n' "${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+          npx prettier --check --log-level warn -- "${files[@]}"
 
   test-auth-service:
     name: Test Auth Service
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -68,13 +149,24 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      # Only the distributed rate limit spec uses this; the main test run
+      # leaves REDIS_URL unset so the limiters it exercises stay per-process.
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -114,9 +206,24 @@ jobs:
           COOKIE_SECURE: 'false'
         run: npm test
 
+      # The shared-window assertions need a second store instance counting the
+      # same key, so they run as their own spec against the Redis above.
+      - name: Run Redis-backed rate limit tests
+        working-directory: backend/auth-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/auth_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          BCRYPT_ROUNDS: '4'
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:rate-limit-store
+
   test-user-service:
     name: Test User Service
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16-alpine
@@ -131,13 +238,22 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -204,9 +320,32 @@ jobs:
           ENABLE_API_DOCS: 'true'
         run: npm run test:all
 
+      - name: Run Redis-backed rate limit tests
+        working-directory: backend/user-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/user_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:rate-limit-store
+
+      - name: Run Redis-backed KYC status cache tests
+        working-directory: backend/user-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/user_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:kyc-cache
+
   test-kyc-service:
     name: Test KYC Service
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -221,13 +360,22 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -266,15 +414,116 @@ jobs:
           ENABLE_API_DOCS: 'false'
         run: npm test
 
+      - name: Run Redis-backed rate limit tests
+        working-directory: backend/kyc-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          STORAGE_ENCRYPTION_KEY: ${{ env.STORAGE_ENCRYPTION_KEY }}
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:rate-limit-store
+
+  test-notification-service:
+    name: Test Notification Service
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_DB: notification_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      # The shared-window spec below asserts two store instances counting one
+      # Redis key, so this job needs the same service the other three have.
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/notification-service/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend/notification-service
+        run: npm ci
+
+      - name: Lint notification-service
+        working-directory: backend/notification-service
+        run: npm run lint
+
+      - name: Generate Prisma client
+        working-directory: backend/notification-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/notification_test?schema=public
+        run: npx prisma generate
+
+      - name: Run migrations
+        working-directory: backend/notification-service
+        env:
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/notification_test?schema=public
+        run: npx prisma migrate deploy
+
+      # Delivery assertions stub fetch, so no SMTP or provider credentials are
+      # needed; only the isolated test database has to exist.
+      - name: Run tests
+        working-directory: backend/notification-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/notification_test?schema=public
+          NOTIFICATION_TEST_DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/notification_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          EMAIL_ENABLED: 'false'
+          LOG_LEVEL: silent
+          ENABLE_API_DOCS: 'false'
+        run: npm test
+
+      - name: Run Redis-backed rate limit tests
+        working-directory: backend/notification-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/notification_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          EMAIL_ENABLED: 'false'
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:rate-limit-store
+
   test-frontend:
     name: Test Frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -291,13 +540,14 @@ jobs:
   build-frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [lint, test-frontend]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -313,10 +563,11 @@ jobs:
           VITE_AUTH_API: /api/auth
           VITE_USER_API: /api/user
           VITE_KYC_API: /api/kyc
+          VITE_NOTIFICATION_API: /api/notifications
         run: npm run build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: frontend-dist
           path: frontend/dist/
@@ -325,40 +576,43 @@ jobs:
   build-docker-images:
     name: Build Docker Images
     runs-on: ubuntu-latest
-    needs: [test-auth-service, test-user-service, test-kyc-service, build-frontend]
+    timeout-minutes: 30
+    needs: [test-auth-service, test-user-service, test-kyc-service, test-notification-service, build-frontend]
     strategy:
+      fail-fast: false
       matrix:
-        service: [auth-service, user-service, kyc-service]
+        service: [auth-service, user-service, kyc-service, notification-service]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build ${{ matrix.service }} image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./backend/${{ matrix.service }}
           target: runtime
           push: false
           tags: meridian/${{ matrix.service }}:ci-${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   build-frontend-docker:
     name: Build Frontend Docker Image
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [build-frontend]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build frontend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./frontend
           push: false
@@ -366,19 +620,21 @@ jobs:
             VITE_AUTH_API=/api/auth
             VITE_USER_API=/api/user
             VITE_KYC_API=/api/kyc
+            VITE_NOTIFICATION_API=/api/notifications
           tags: meridian/frontend:ci-${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
 
   validate-openapi:
     name: Validate OpenAPI Specs
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -415,38 +671,233 @@ jobs:
   security-audit:
     name: Dependency Security Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
-        service: [auth-service, user-service, kyc-service, frontend]
+        include:
+          - service: auth-service
+            dir: backend/auth-service
+          - service: user-service
+            dir: backend/user-service
+          - service: kyc-service
+            dir: backend/kyc-service
+          - service: notification-service
+            dir: backend/notification-service
+          - service: frontend
+            dir: frontend
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
 
-      - name: Run npm audit for ${{ matrix.service }}
-        working-directory: ${{ matrix.service == 'frontend' && 'frontend' || format('backend/{0}', matrix.service) }}
+      # Blocking gates: anything shipped to production must be clean at
+      # moderate, and high or critical advisories block even in dev tooling.
+      - name: Audit runtime dependencies (${{ matrix.service }})
+        working-directory: ${{ matrix.dir }}
         run: |
-          npm audit --audit-level=moderate || true
-        continue-on-error: true
+          set -euo pipefail
+          npm audit --omit=dev --audit-level=moderate | tee /tmp/runtime-audit.txt
+          {
+            echo "### ${{ matrix.service }} runtime audit"
+            echo '```'
+            cat /tmp/runtime-audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Audit all dependencies (${{ matrix.service }})
+        working-directory: ${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          npm audit --audit-level=high | tee /tmp/full-audit.txt
+          {
+            echo "### ${{ matrix.service }} full audit (dev dependencies included)"
+            echo '```'
+            cat /tmp/full-audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  secrets-hygiene:
+    name: No Committed Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [changes]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject tracked secret material
+        run: |
+          set -euo pipefail
+          tracked=$(git ls-files \
+            | grep -E '(^|/)\.env(\..*)?$|\.pem$|\.crt$|\.key$|\.p12$|\.pfx$|^certs/|^certbot/|^backups/|^monitoring/secrets/.+' \
+            | grep -vE '\.example$|\.gitkeep$' || true)
+          if [ -n "$tracked" ]; then
+            echo "::error::Secret material must stay out of git. Remove these tracked paths and load them from .env files or Docker secrets instead."
+            printf '  %s\n' $tracked
+            exit 1
+          fi
+          echo "No tracked secret files."
+
+      - name: Scan added lines for credential patterns
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: |
+          set -euo pipefail
+          git rev-parse --verify "${BASE}^{commit}" >/dev/null
+          added=$(git diff --no-color --unified=0 --diff-filter=ACMR "$BASE" HEAD \
+            | grep -E '^\+' | grep -vE '^\+\+\+' || true)
+          if [ -z "$added" ]; then
+            echo "Nothing added in this change."
+            exit 0
+          fi
+          # -e is required: the PEM markers start with dashes that grep would
+          # otherwise read as options.
+          matches=$(printf '%s\n' "$added" | grep -E \
+            -e '\-\-\-\-\-BEGIN [A-Z ]*PRIVATE KEY\-\-\-\-\-' \
+            -e '\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-' \
+            -e 'AKIA[0-9A-Z]{16}' \
+            -e 'ASIA[0-9A-Z]{16}' \
+            -e 'ghp_[A-Za-z0-9]{36}' \
+            -e 'github_pat_[A-Za-z0-9_]{22,}' \
+            -e 'xox[baprs]-[0-9A-Za-z-]{10,}' \
+            -e 'AIza[0-9A-Za-z_-]{35}' \
+            -e 'sk_live_[0-9A-Za-z]{16,}' \
+            | head -20 || true)
+          if [ -n "$matches" ]; then
+            echo "::error::Added lines match known credential formats. Rotate the secret, then remove it from the diff."
+            printf '%s\n' "$matches"
+            exit 1
+          fi
+          echo "No credential patterns in the added lines."
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Review new dependencies
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: always
+          retry-on-crash: true
+
+  scan-docker-images:
+    name: Scan Docker Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build-docker-images, build-frontend-docker]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: auth-service
+            context: ./backend/auth-service
+            target: runtime
+            build_args: ''
+          - service: user-service
+            context: ./backend/user-service
+            target: runtime
+            build_args: ''
+          - service: kyc-service
+            context: ./backend/kyc-service
+            target: runtime
+            build_args: ''
+          - service: notification-service
+            context: ./backend/notification-service
+            target: runtime
+            build_args: ''
+          - service: frontend
+            context: ./frontend
+            target: ''
+            build_args: 'VITE_AUTH_API=/api/auth,VITE_USER_API=/api/user,VITE_KYC_API=/api/kyc,VITE_NOTIFICATION_API=/api/notifications'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build ${{ matrix.service }} image for scanning
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          push: false
+          load: true
+          build-args: ${{ matrix.build_args }}
+          tags: meridian/${{ matrix.service }}:ci-${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+
+      # Unfixed advisories are reported in the job log but do not block; a
+      # fixable CRITICAL or HIGH vulnerability in the shipped image does.
+      - name: Scan ${{ matrix.service }} image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          scan-type: image
+          image-ref: meridian/${{ matrix.service }}:ci-${{ github.sha }}
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
 
   all-checks-complete:
     name: All Checks Complete
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs:
+      - changes
       - lint
+      - format-check
       - test-auth-service
       - test-user-service
       - test-kyc-service
+      - test-notification-service
       - test-frontend
       - build-frontend
       - build-docker-images
       - build-frontend-docker
       - validate-openapi
       - security-audit
+      - secrets-hygiene
+      - dependency-review
+      - scan-docker-images
+    # dependency-review only runs on pull requests, so a skipped job must not
+    # cancel the summary; the results are verified explicitly instead.
+    if: ${{ !cancelled() }}
     steps:
-      - name: Summary
-        run: echo "All CI checks passed successfully!"
+      - name: Verify every required check passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const needs = JSON.parse(process.env.NEEDS);
+            const blocked = Object.entries(needs).filter(
+              ([, job]) => !["success", "skipped"].includes(job.result)
+            );
+            for (const [name, job] of Object.entries(needs)) {
+              console.log(`${name}: ${job.result}`);
+            }
+            if (blocked.length > 0) {
+              console.error(`Blocked by: ${blocked.map(([name, job]) => `${name} (${job.result})`).join(", ")}`);
+              process.exit(1);
+            }
+            console.log("All CI checks passed successfully!");
+          '

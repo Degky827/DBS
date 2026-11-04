@@ -5,12 +5,19 @@ const healthRoutes = require("./health.routes");
 const docsRoutes = require("./docs.routes");
 const authRoutes = require("../../modules/auth/auth.routes");
 const usersRoutes = require("../../modules/users/users.routes");
+const usersInternalRoutes = require("../../modules/users/internal.routes");
 const walletsRoutes = require("../../modules/wallets/wallets.routes");
 const transactionsRoutes = require("../../modules/transactions/transactions.routes");
 const paymentsRoutes = require("../../modules/payments/payments.routes");
 const reconciliationRoutes = require("../../modules/payments/reconciliation.routes");
 const policiesRoutes = require("../../modules/policies/policies.routes");
 const adminRoutes = require("../../modules/admin/admin.routes");
+const outboxRoutes = require("../../modules/outbox/outbox.routes");
+const beneficiariesRoutes = require("../../modules/beneficiaries/beneficiaries.routes");
+const scheduledTransfersRoutes = require("../../modules/scheduledTransfers/scheduledTransfers.routes");
+const disputesRoutes = require("../../modules/disputes/disputes.routes");
+const statementsRoutes = require("../../modules/statements/statements.routes");
+const ledgerRoutes = require("../../modules/ledger/ledger.routes");
 
 router.use("/", healthRoutes);
 
@@ -20,11 +27,18 @@ if (env.ENABLE_API_DOCS) {
 
 router.use("/", authRoutes);
 router.use("/", usersRoutes);
+router.use("/", usersInternalRoutes);
 router.use("/", walletsRoutes);
 router.use("/", transactionsRoutes);
 router.use("/", paymentsRoutes);
 router.use("/", reconciliationRoutes);
 router.use("/", policiesRoutes);
+router.use("/", outboxRoutes);
+router.use("/", beneficiariesRoutes);
+router.use("/", scheduledTransfersRoutes);
+router.use("/", disputesRoutes);
+router.use("/", statementsRoutes);
+router.use("/", ledgerRoutes);
 router.use("/", adminRoutes);
 
 module.exports = router;

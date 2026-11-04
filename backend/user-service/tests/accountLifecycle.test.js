@@ -2,8 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 process.env.NODE_ENV = "test";
-process.env.DATABASE_URL =
-  "postgresql://test:test@localhost:5432/user_account_test?schema=public";
+process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/user_account_test?schema=public";
 process.env.AUTH_MODE = "jwt";
 process.env.JWT_SECRET = "user-account-test-secret-0123456789abcdef";
 process.env.AUTH_SERVICE_URL = "https://auth.test/api/v1";
@@ -11,17 +10,27 @@ process.env.INTERNAL_SERVICE_KEY =
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 process.env.STEP_UP_TTL_MS = "60000";
 process.env.LOG_LEVEL = "silent";
+process.env.OUTBOX_ENABLED = "true";
 
 const { Prisma } = require("@prisma/client");
 
 const profiles = new Map();
 const wallets = new Map();
-const calls = { auth: [], devSessions: [], walletUpdates: [] };
+const calls = { auth: [], devSessions: [], walletUpdates: [], outbox: [] };
 const pendingWithdrawals = 0;
 let pendingDeposits = 0;
 
 const fakePrisma = {
-  $transaction: async (operations) => Promise.all(operations),
+  // Status changes run inside an interactive transaction so the outbox row can
+  // be written with the same connection as the status update.
+  $transaction: async (operations) =>
+    typeof operations === "function" ? operations(fakePrisma) : Promise.all(operations),
+  outboxEvent: {
+    create: async ({ data }) => {
+      calls.outbox.push(data);
+      return { id: `outbox-${calls.outbox.length}`, eventId: data.eventId };
+    },
+  },
   userProfile: {
     findUnique: async ({ where }) => profiles.get(where.id) || null,
     update: async ({ where, data }) => {
@@ -142,6 +151,13 @@ test("freezing an account requires a reason and revokes sessions everywhere", as
   assert.equal(authCall.body.actorId, "admin-1");
 
   assert.equal(calls.devSessions.length > 0, true);
+
+  const frozenEvent = calls.outbox.find((event) => event.aggregateId === "freeze-user");
+  assert.equal(frozenEvent.type, "account.status_changed");
+  assert.equal(frozenEvent.aggregateType, "user");
+  assert.equal(frozenEvent.payload.from, "ACTIVE");
+  assert.equal(frozenEvent.payload.to, "FROZEN");
+  assert.equal(frozenEvent.payload.reason, "Suspicious activity");
 });
 
 test("closed accounts cannot be reopened", async () => {

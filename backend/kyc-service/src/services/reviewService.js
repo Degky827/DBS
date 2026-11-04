@@ -1,9 +1,18 @@
 const prisma = require("../config/database");
 const env = require("../config/env");
 const ApiError = require("../utils/ApiError");
+const tierService = require("./tierService");
 const { SUBMISSION_STATUS, canTransition } = require("../constants/kycStatus");
+const { TASK_STATUS, OPEN_TASK_STATUSES } = require("../constants/kycTier");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Recorded on the assignment so a later reviewer can see exactly which tier
+// requirements rested on an officer's word rather than on compared evidence.
+const attestationNote = (evaluation) =>
+  evaluation && evaluation.unverifiedFields.length
+    ? `Officer attestation for unverifiable requirements: ${evaluation.unverifiedFields.join(", ")}`
+    : null;
 
 const APPROVAL_REQUIREMENTS = {
   providerStatus: "Approved",
@@ -49,8 +58,7 @@ async function getQueue(options = {}) {
     }
   }
 
-  const sort =
-    options.sort || (status === SUBMISSION_STATUS.PENDING_REVIEW ? "oldest" : "newest");
+  const sort = options.sort || (status === SUBMISSION_STATUS.PENDING_REVIEW ? "oldest" : "newest");
   const orderBy =
     sort === "oldest"
       ? [{ updatedAt: "asc" }, { id: "asc" }]
@@ -119,15 +127,11 @@ async function getStats() {
     }),
   ]);
 
-  const byStatus = Object.fromEntries(
-    Object.values(SUBMISSION_STATUS).map((value) => [value, 0])
-  );
+  const byStatus = Object.fromEntries(Object.values(SUBMISSION_STATUS).map((value) => [value, 0]));
   for (const row of statusRows) {
     byStatus[row.status] = row._count._all;
   }
-  const reviews = Object.fromEntries(
-    reviewRows.map((row) => [row.decision, row._count._all])
-  );
+  const reviews = Object.fromEntries(reviewRows.map((row) => [row.decision, row._count._all]));
 
   return {
     byStatus,
@@ -159,6 +163,9 @@ async function getSubmission(submissionId) {
       dataComparisonStatus: true,
       faceMatchStatus: true,
       livenessStatus: true,
+      tierAssignedAt: true,
+      tierAssignedBy: true,
+      tier: { select: { id: true, code: true, name: true, version: true } },
       documents: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -200,7 +207,7 @@ async function getSubmission(submissionId) {
   return { submission };
 }
 
-async function decide({ submissionId, reviewerId, decision, reason }) {
+async function decide({ submissionId, reviewerId, decision, reason, tierId }) {
   const submission = await prisma.kycSubmission.findUnique({
     where: { id: submissionId },
     select: {
@@ -243,9 +250,8 @@ async function decide({ submissionId, reviewerId, decision, reason }) {
     }
   }
 
-  const finalStatus = decision === "APPROVE"
-    ? SUBMISSION_STATUS.APPROVED
-    : SUBMISSION_STATUS.REJECTED;
+  const finalStatus =
+    decision === "APPROVE" ? SUBMISSION_STATUS.APPROVED : SUBMISSION_STATUS.REJECTED;
   if (!canTransition(submission.status, finalStatus)) {
     throw ApiError.conflict(
       "Submission cannot be decided from its current status",
@@ -253,9 +259,53 @@ async function decide({ submissionId, reviewerId, decision, reason }) {
     );
   }
   const decidedAt = new Date();
+
+  // The tier is resolved before the transaction so an evidence problem is a
+  // clean conflict rather than a rolled-back write. An officer who names a tier
+  // overrides the suggestion, but only over requirements this service cannot
+  // check at all (fields that never appear in a document comparison); missing
+  // documents, a missing document type or failed liveness stay hard blockers.
+  let tier = null;
+  let evaluation = null;
+  let previousAssignment = null;
+  if (finalStatus === SUBMISSION_STATUS.APPROVED) {
+    const evidence = await tierService.loadEvidence(submissionId);
+    previousAssignment = await tierService.findHeldAssignment(evidence.userId);
+
+    if (tierId) {
+      const chosen = await tierService.getDefinitionById(tierId);
+      if (!chosen) {
+        throw ApiError.badRequest("Tier is not an active tier definition", "TIER_NOT_FOUND");
+      }
+      evaluation = tierService.evaluateQualification(chosen, evidence);
+      if (evaluation.blockers.length > 0) {
+        throw ApiError.conflict(
+          "The stored evidence does not support the requested tier",
+          "TIER_EVIDENCE_INSUFFICIENT",
+          { blockers: evaluation.blockers }
+        );
+      }
+      tier = chosen;
+    } else {
+      const qualification = await tierService.qualificationFor(submissionId);
+      // No hard blockers with fields left to attest is the officer's call, not
+      // a machine one, so only a outright-qualifying tier is auto-suggested. If
+      // nothing qualifies the approval still stands and the customer is served
+      // the lowest active tier until an officer grants better evidence.
+      tier = qualification.suggested
+        ? await tierService.getDefinitionById(qualification.suggested.tierId)
+        : null;
+      evaluation = tier ? tierService.evaluateQualification(tier, evidence) : null;
+    }
+  }
+
+  // The tier owns the validity window when one was assigned; the global TTL
+  // stays as the default so a deployment without tier policy behaves as before.
   const approvalExpiresAt =
     finalStatus === SUBMISSION_STATUS.APPROVED
-      ? new Date(decidedAt.getTime() + env.KYC_APPROVAL_TTL_DAYS * DAY_MS)
+      ? tier
+        ? tierService.approvalExpiresAtFor(tier, decidedAt)
+        : new Date(decidedAt.getTime() + env.KYC_APPROVAL_TTL_DAYS * DAY_MS)
       : null;
 
   return prisma.$transaction(async (tx) => {
@@ -278,6 +328,34 @@ async function decide({ submissionId, reviewerId, decision, reason }) {
     if (transition.count !== 1) {
       throw ApiError.conflict("Submission is not awaiting review", "SUBMISSION_NOT_REVIEWABLE");
     }
+    let assignment = null;
+    if (tier) {
+      const result = await tierService.assignOnApproval(tx, {
+        submissionId,
+        userId: submission.userId,
+        tier,
+        previous: previousAssignment,
+        actorId: reviewerId,
+        expiresAt: approvalExpiresAt,
+        reason,
+        decisionReason: attestationNote(evaluation) || reason,
+      });
+      assignment = { ...result.assignment, direction: result.direction };
+    }
+
+    if (finalStatus === SUBMISSION_STATUS.APPROVED) {
+      // Fresh approval is the evidence the outstanding re-verification requests
+      // were asking for, so they close in the same transaction as the decision.
+      await tx.kycReVerificationTask.updateMany({
+        where: {
+          userId: submission.userId,
+          submissionId: { not: submissionId },
+          status: { in: OPEN_TASK_STATUSES },
+        },
+        data: { status: TASK_STATUS.COMPLETED, completedAt: decidedAt },
+      });
+    }
+
     const updated = await tx.kycSubmission.findUnique({
       where: { id: submissionId },
       select: {
@@ -287,6 +365,8 @@ async function decide({ submissionId, reviewerId, decision, reason }) {
         approvedAt: true,
         approvalExpiresAt: true,
         decisionReason: true,
+        tierAssignedAt: true,
+        tier: { select: { id: true, code: true, name: true, version: true } },
       },
     });
     await tx.kycReview.create({
@@ -302,10 +382,15 @@ async function decide({ submissionId, reviewerId, decision, reason }) {
         submissionId,
         eventType: "OFFICER_DECISION_RECORDED",
         actorId: reviewerId,
-        payload: { decision, finalStatus },
+        payload: {
+          decision,
+          finalStatus,
+          tierCode: tier?.code ?? null,
+          attestedFields: evaluation?.unverifiedFields ?? [],
+        },
       },
     });
-    return updated;
+    return { ...updated, assignment };
   });
 }
 
@@ -318,10 +403,7 @@ async function revokeApproval({ submissionId, actorId, reason }) {
     throw ApiError.notFound("KYC submission not found", "KYC_SUBMISSION_NOT_FOUND");
   }
   if (submission.userId === actorId) {
-    throw ApiError.forbidden(
-      "You cannot revoke your own KYC approval",
-      "SELF_REVIEW_FORBIDDEN"
-    );
+    throw ApiError.forbidden("You cannot revoke your own KYC approval", "SELF_REVIEW_FORBIDDEN");
   }
   if (submission.status !== SUBMISSION_STATUS.APPROVED) {
     throw ApiError.conflict(
@@ -330,10 +412,7 @@ async function revokeApproval({ submissionId, actorId, reason }) {
     );
   }
   if (submission.revokedAt) {
-    throw ApiError.conflict(
-      "Approval has already been revoked",
-      "APPROVAL_ALREADY_REVOKED"
-    );
+    throw ApiError.conflict("Approval has already been revoked", "APPROVAL_ALREADY_REVOKED");
   }
 
   const revokedAt = new Date();
@@ -372,6 +451,16 @@ async function revokeApproval({ submissionId, actorId, reason }) {
       },
     });
 
+    // The tier grant ends with the approval it was derived from. The assignment
+    // row is cancelled rather than deleted so the history still shows which
+    // tier the customer held while the approval was live.
+    const cancelledAssignments = await tierService.cancelHeldAssignment(tx, {
+      userId: submission.userId,
+      actorId,
+      reason: `KYC approval revoked: ${reason}`,
+      at: revokedAt,
+    });
+
     await tx.kycReview.create({
       data: {
         submissionId,
@@ -385,7 +474,11 @@ async function revokeApproval({ submissionId, actorId, reason }) {
         submissionId,
         eventType: "OFFICER_APPROVAL_REVOKED",
         actorId,
-        payload: { reason, previousStatus: submission.status },
+        payload: {
+          reason,
+          previousStatus: submission.status,
+          tierAssignmentsCancelled: cancelledAssignments,
+        },
       },
     });
 

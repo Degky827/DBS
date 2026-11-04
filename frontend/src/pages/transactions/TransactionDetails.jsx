@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ArrowLeftRight,
   ArrowUpRight,
+  Gavel,
   Printer,
   RefreshCw,
 } from "lucide-react";
@@ -113,6 +114,12 @@ export default function TransactionDetails() {
           >
             <Printer size={15} /> Print receipt
           </button>
+          <Link
+            to={transaction ? `/disputes?transaction=${transaction.reference}` : "/disputes"}
+            className="btn-ghost"
+          >
+            <Gavel size={15} /> Dispute
+          </Link>
         </div>
       </div>
 

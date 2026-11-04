@@ -170,6 +170,54 @@ const spec = {
         },
       },
     },
+    "/reverification/tasks": {
+      get: {
+        summary: "List the signed-in customer's KYC re-verification tasks",
+        description:
+          "A task is a request to submit updated details. It never changes the customer's tier or approval on its own; whether an approval is still usable is evaluated when the status is read.",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "The customer's re-verification tasks" },
+          400: { description: "Invalid status filter" },
+        },
+      },
+    },
+    "/officer/reverification/tasks": {
+      get: {
+        summary: "List the re-verification queue for authorized officers",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Tasks ordered by due date" },
+          400: { description: "Invalid status, reason or overdue filter" },
+          403: { description: "Officer role required" },
+        },
+      },
+    },
+    "/officer/reverification/stats": {
+      get: {
+        summary: "Count re-verification tasks by status and open reason",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Task counts and overdue total" },
+          403: { description: "Officer role required" },
+        },
+      },
+    },
+    "/officer/reverification/tasks/{taskId}/waive": {
+      post: {
+        summary: "Waive an open re-verification task with a documented reason",
+        description:
+          "Waiving drops the request; it does not extend or reactivate an approval that has already expired.",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Task waived" },
+          400: { description: "Missing or invalid waiver reason" },
+          403: { description: "Officer role required" },
+          404: { description: "Task not found" },
+          409: { description: "Task is not open" },
+        },
+      },
+    },
     "/webhooks/didit": {
       post: {
         summary: "Receive signed Didit session, entity, activity, and transaction events",

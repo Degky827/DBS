@@ -9,18 +9,31 @@ const documentTypeSchema = z.enum([
 
 const sideSchema = z.enum(["front", "back"]).optional();
 
-const uploadDocumentSchema = z.object({
-  documentType: documentTypeSchema,
-  side: sideSchema,
-}).strict();
+const uploadDocumentSchema = z
+  .object({
+    documentType: documentTypeSchema,
+    side: sideSchema,
+  })
+  .strict();
 
-const correctionSchema = z.object({
-  fields: z.array(
-    z.object({
-      key: z.string().min(1).max(80),
-      value: z.string().max(500),
-    }).strict()
-  ).min(1).max(100),
-}).strict();
+const correctionSchema = z
+  .object({
+    fields: z
+      .array(
+        z
+          .object({
+            key: z.string().min(1).max(80),
+            value: z.string().max(500),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
 
-module.exports = { uploadDocumentSchema, correctionSchema };
+module.exports = {
+  documentTypeSchema,
+  uploadDocumentSchema,
+  correctionSchema,
+};

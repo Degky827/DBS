@@ -7,6 +7,8 @@ const submissionRoutes = require("./submission.routes");
 const documentRoutes = require("./document.routes");
 const officerDocumentRoutes = require("./officerDocument.routes");
 const internalRoutes = require("./internal.routes");
+const tierRoutes = require("./tier.routes");
+const reVerificationRoutes = require("./reverification.routes");
 const reviewController = require("../../controllers/reviewController");
 const authenticate = require("../../middlewares/authenticate");
 const requireOfficer = require("../../middlewares/requireOfficer");
@@ -30,12 +32,9 @@ router.use("/", submissionRoutes);
 router.use("/", documentRoutes);
 router.use("/", officerDocumentRoutes);
 router.use("/", internalRoutes);
-router.get(
-  "/officer/reviews/stats",
-  authenticate,
-  requireOfficer,
-  reviewController.stats
-);
+router.use("/", tierRoutes);
+router.use("/", reVerificationRoutes);
+router.get("/officer/reviews/stats", authenticate, requireOfficer, reviewController.stats);
 router.get(
   "/officer/reviews",
   authenticate,

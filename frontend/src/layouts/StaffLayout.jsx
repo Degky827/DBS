@@ -8,6 +8,8 @@ import {
   ChevronDown,
   FileBarChart,
   FileSearch,
+  Gavel,
+  Inbox,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -33,14 +35,21 @@ const PAGE_META = [
     title: "Transaction detail",
     parent: "Finance",
   },
+  {
+    pattern: /^\/finance\/disputes\/[^/]+$/,
+    title: "Dispute case",
+    parent: "Finance",
+  },
   { prefix: "/admin/users", title: "User management", parent: "Administration" },
   { prefix: "/admin/policies", title: "Financial policies", parent: "Administration" },
   { prefix: "/admin/audit-logs", title: "Audit records", parent: "Administration" },
+  { prefix: "/admin/outbox", title: "Event outbox", parent: "Administration" },
   { prefix: "/admin/reports", title: "Reports", parent: "Administration" },
   { prefix: "/admin/dashboard", title: "Platform overview", parent: "Administration" },
   { prefix: "/officer/verifications", title: "Verification queue", parent: "Verification" },
   { prefix: "/officer/dashboard", title: "Review overview", parent: "Verification" },
   { prefix: "/finance/transactions", title: "Transaction monitoring", parent: "Finance" },
+  { prefix: "/finance/disputes", title: "Dispute queue", parent: "Finance" },
   { prefix: "/finance/reports", title: "Financial reports", parent: "Finance" },
   { prefix: "/finance/dashboard", title: "Financial operations", parent: "Finance" },
   { prefix: "/health", title: "System health", parent: "Operations" },
@@ -60,6 +69,7 @@ const adminSection = {
     { to: "/admin/users", label: "Users", icon: Users },
     { to: "/admin/policies", label: "Financial policies", icon: SlidersHorizontal },
     { to: "/admin/audit-logs", label: "Audit records", icon: ScrollText },
+    { to: "/admin/outbox", label: "Event outbox", icon: Inbox },
     { to: "/admin/reports", label: "Reports", icon: FileBarChart },
   ],
 };
@@ -77,6 +87,7 @@ const financeSection = {
   items: [
     { to: "/finance/dashboard", label: "Overview", icon: LayoutDashboard },
     { to: "/finance/transactions", label: "Transactions", icon: ArrowLeftRight },
+    { to: "/finance/disputes", label: "Disputes", icon: Gavel },
     { to: "/finance/reports", label: "Reports", icon: FileBarChart },
   ],
 };
@@ -215,9 +226,7 @@ export default function StaffLayout() {
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-brand-200">
             Signed in as
           </p>
-          <p className="mt-1.5 truncate text-[13px] font-bold text-white">
-            {user?.email || "—"}
-          </p>
+          <p className="mt-1.5 truncate text-[13px] font-bold text-white">{user?.email || "—"}</p>
           <p className="mt-0.5 text-xs text-white/45">{roleLabel(user?.role)}</p>
         </div>
         <button
@@ -297,9 +306,7 @@ export default function StaffLayout() {
               <p className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
                 {meta.parent}
               </p>
-              <h1 className="truncate text-[15px] font-extrabold text-midnight">
-                {meta.title}
-              </h1>
+              <h1 className="truncate text-[15px] font-extrabold text-midnight">{meta.title}</h1>
             </div>
 
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
@@ -317,11 +324,7 @@ export default function StaffLayout() {
                   className="flex items-center gap-2.5 rounded-lg py-1 pl-1 pr-1.5 transition hover:bg-ink-50"
                 >
                   {user?.avatarUrl ? (
-                    <img
-                      src={user.avatarUrl}
-                      alt=""
-                      className="h-8 w-8 rounded-lg object-cover"
-                    />
+                    <img src={user.avatarUrl} alt="" className="h-8 w-8 rounded-lg object-cover" />
                   ) : (
                     <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-midnight text-[11px] font-bold text-white">
                       {initials}
@@ -331,9 +334,7 @@ export default function StaffLayout() {
                     <span className="block max-w-[12rem] truncate text-[13px] font-bold text-midnight">
                       {fullName || "Staff account"}
                     </span>
-                    <span className="block text-[11px] text-muted">
-                      {user?.email}
-                    </span>
+                    <span className="block text-[11px] text-muted">{user?.email}</span>
                   </span>
                   <ChevronDown size={15} className="text-muted" />
                 </button>

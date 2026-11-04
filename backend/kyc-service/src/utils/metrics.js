@@ -64,11 +64,12 @@ const createHistogram = (name, help, labelNames, buckets = DEFAULT_BUCKETS) => {
   };
 };
 
-const httpRequests = createCounter(
-  "banking_http_requests_total",
-  "Completed HTTP requests",
-  ["service", "method", "route", "status"]
-);
+const httpRequests = createCounter("banking_http_requests_total", "Completed HTTP requests", [
+  "service",
+  "method",
+  "route",
+  "status",
+]);
 const httpDuration = createHistogram(
   "banking_http_request_duration_seconds",
   "HTTP request duration in seconds",
@@ -88,22 +89,78 @@ const kycProviderFailures = createCounter(
   "KYC provider call failures",
   ["service", "operation"]
 );
-const kycWebhookEvents = createCounter(
-  "banking_kyc_webhook_events_total",
-  "KYC webhook outcomes",
-  ["service", "result"]
+const kycWebhookEvents = createCounter("banking_kyc_webhook_events_total", "KYC webhook outcomes", [
+  "service",
+  "result",
+]);
+const outboxEvents = createCounter("banking_outbox_events_total", "KYC outbox delivery outcomes", [
+  "service",
+  "outcome",
+]);
+const outboxPending = createGauge(
+  "banking_outbox_pending",
+  "KYC outbox events waiting to be delivered"
+);
+const tierAssignments = createCounter(
+  "banking_kyc_tier_assignments_total",
+  "KYC tier assignments and requests by outcome",
+  ["service", "direction", "outcome"]
+);
+const reVerificationRuns = createCounter(
+  "banking_kyc_reverification_runs_total",
+  "KYC re-verification sweep outcomes",
+  ["service", "outcome"]
+);
+const reVerificationLastRun = createGauge(
+  "banking_kyc_reverification_last_run_timestamp_seconds",
+  "Unix time of the last completed KYC re-verification sweep"
+);
+const reVerificationTasks = createGauge(
+  "banking_kyc_reverification_open_tasks",
+  "KYC re-verification tasks that are still owed by an customer or an officer",
+  ["service", "reason"]
 );
 
 const markReady = (ready) => readiness.set(ready ? 1 : 0, { service: SERVICE_NAME });
 
-const recordSecurityEvent = (event) =>
-  securityEvents.inc({ service: SERVICE_NAME, event });
+const recordSecurityEvent = (event) => securityEvents.inc({ service: SERVICE_NAME, event });
 
 const recordKycProviderFailure = (operation) =>
   kycProviderFailures.inc({ service: SERVICE_NAME, operation });
 
-const recordKycWebhook = (result) =>
-  kycWebhookEvents.inc({ service: SERVICE_NAME, result });
+const recordKycWebhook = (result) => kycWebhookEvents.inc({ service: SERVICE_NAME, result });
+
+const recordOutboxEvent = (outcome) => outboxEvents.inc({ service: SERVICE_NAME, outcome });
+
+const setOutboxPending = (count) => outboxPending.set(count, { service: SERVICE_NAME });
+
+const recordTierAssignment = (direction, outcome) =>
+  tierAssignments.inc({ service: SERVICE_NAME, direction, outcome });
+
+const recordReVerificationRun = (outcome) =>
+  reVerificationRuns.inc({ service: SERVICE_NAME, outcome });
+
+const setReVerificationLastRun = (when = new Date()) =>
+  reVerificationLastRun.set(Math.floor(when.getTime() / 1000), {
+    service: SERVICE_NAME,
+  });
+
+// Every reason is exported on each refresh, including the zeroes: a series that
+// disappears from the scrape is indistinguishable from a drop to zero, and an
+// alert on "backlog growing" needs both endpoints of the comparison to exist.
+const knownReVerificationReasons = new Set();
+
+const setReVerificationOpenTasks = (countsByReason = {}) => {
+  for (const reason of Object.keys(countsByReason)) {
+    knownReVerificationReasons.add(reason);
+  }
+  for (const reason of knownReVerificationReasons) {
+    reVerificationTasks.set(countsByReason[reason] || 0, {
+      service: SERVICE_NAME,
+      reason,
+    });
+  }
+};
 
 const httpMiddleware = () => (req, res, next) => {
   if (req.path === "/metrics") return next();
@@ -131,9 +188,7 @@ const escaped = (value) =>
 
 const labelText = (labelNames, labels = {}) => {
   if (!labelNames.length) return "";
-  const parts = labelNames.map(
-    (name) => `${name}="${escaped(labels[name] ?? "")}"`
-  );
+  const parts = labelNames.map((name) => `${name}="${escaped(labels[name] ?? "")}"`);
   return `{${parts.join(",")}}`;
 };
 
@@ -165,18 +220,14 @@ const renderMetric = (metric, lines) => {
           le: "+Inf",
         })} ${entry.count}`
       );
-      lines.push(
-        `${metric.name}_sum${labelText(metric.labelNames, entry.labels)} ${entry.sum}`
-      );
+      lines.push(`${metric.name}_sum${labelText(metric.labelNames, entry.labels)} ${entry.sum}`);
       lines.push(
         `${metric.name}_count${labelText(metric.labelNames, entry.labels)} ${entry.count}`
       );
       continue;
     }
 
-    lines.push(
-      `${metric.name}${labelText(metric.labelNames, entry.labels)} ${entry.value}`
-    );
+    lines.push(`${metric.name}${labelText(metric.labelNames, entry.labels)} ${entry.value}`);
   }
 };
 
@@ -192,15 +243,63 @@ const renderProcessMetrics = (lines) => {
     1,
     { service: SERVICE_NAME }
   );
-  appendValueLines(lines, "process_cpu_user_seconds_total", "CPU time spent in user mode", "counter", cpu.user / 1e6);
-  appendValueLines(lines, "process_cpu_system_seconds_total", "CPU time spent in system mode", "counter", cpu.system / 1e6);
-  appendValueLines(lines, "process_resident_memory_bytes", "Resident memory size", "gauge", memory.rss);
-  appendValueLines(lines, "process_start_time_seconds", "Start time of the process since the Unix epoch", "gauge", Math.floor(Date.now() / 1000 - process.uptime()));
+  appendValueLines(
+    lines,
+    "process_cpu_user_seconds_total",
+    "CPU time spent in user mode",
+    "counter",
+    cpu.user / 1e6
+  );
+  appendValueLines(
+    lines,
+    "process_cpu_system_seconds_total",
+    "CPU time spent in system mode",
+    "counter",
+    cpu.system / 1e6
+  );
+  appendValueLines(
+    lines,
+    "process_resident_memory_bytes",
+    "Resident memory size",
+    "gauge",
+    memory.rss
+  );
+  appendValueLines(
+    lines,
+    "process_start_time_seconds",
+    "Start time of the process since the Unix epoch",
+    "gauge",
+    Math.floor(Date.now() / 1000 - process.uptime())
+  );
   appendValueLines(lines, "nodejs_heap_size_used_bytes", "V8 heap used", "gauge", memory.heapUsed);
-  appendValueLines(lines, "nodejs_heap_size_total_bytes", "V8 heap allocated", "gauge", memory.heapTotal);
-  appendValueLines(lines, "nodejs_external_memory_bytes", "Memory used by C++ objects bound to JavaScript objects", "gauge", memory.external);
-  appendValueLines(lines, "nodejs_eventloop_lag_seconds", "Mean event loop delay since start", "gauge", eventLoopDelay.mean / 1e9);
-  appendValueLines(lines, "nodejs_eventloop_lag_p99_seconds", "99th percentile event loop delay since start", "gauge", eventLoopDelay.percentile(99) / 1e9);
+  appendValueLines(
+    lines,
+    "nodejs_heap_size_total_bytes",
+    "V8 heap allocated",
+    "gauge",
+    memory.heapTotal
+  );
+  appendValueLines(
+    lines,
+    "nodejs_external_memory_bytes",
+    "Memory used by C++ objects bound to JavaScript objects",
+    "gauge",
+    memory.external
+  );
+  appendValueLines(
+    lines,
+    "nodejs_eventloop_lag_seconds",
+    "Mean event loop delay since start",
+    "gauge",
+    eventLoopDelay.mean / 1e9
+  );
+  appendValueLines(
+    lines,
+    "nodejs_eventloop_lag_p99_seconds",
+    "99th percentile event loop delay since start",
+    "gauge",
+    eventLoopDelay.percentile(99) / 1e9
+  );
 };
 
 const render = () => {
@@ -240,5 +339,11 @@ module.exports = {
   recordSecurityEvent,
   recordKycProviderFailure,
   recordKycWebhook,
+  recordOutboxEvent,
+  setOutboxPending,
+  recordTierAssignment,
+  recordReVerificationRun,
+  setReVerificationLastRun,
+  setReVerificationOpenTasks,
   render,
 };

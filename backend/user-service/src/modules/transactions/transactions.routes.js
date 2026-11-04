@@ -22,8 +22,7 @@ const requireIdempotencyKey = (req, res, next) => {
   if (!key || !/^[A-Za-z0-9._:-]{8,128}$/.test(key)) {
     return next(
       ApiError.validation({
-        idempotencyKey:
-          "Idempotency-Key is required and must be 8-128 permitted characters",
+        idempotencyKey: "Idempotency-Key is required and must be 8-128 permitted characters",
       })
     );
   }
@@ -38,6 +37,7 @@ const createTransfer = async (req, res) => {
     destinationWalletId: req.body.destinationWalletId,
     amount: req.body.amount,
     idempotencyKey: req.idempotencyKey,
+    kyc: req.kyc,
   });
   return ApiResponse.success(
     res,
@@ -49,10 +49,7 @@ const createTransfer = async (req, res) => {
 
 const listTransactions = async (req, res) => {
   const userId = await usersService.getResolvedUserId(req.user);
-  const result = await walletsService.listTransactions(
-    userId,
-    req.transactionHistoryQuery
-  );
+  const result = await walletsService.listTransactions(userId, req.transactionHistoryQuery);
   return ApiResponse.success(res, result, "Transactions fetched");
 };
 

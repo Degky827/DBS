@@ -181,7 +181,9 @@ const corsOrigins = parseOrigins(process.env.CORS_ORIGIN, { production: isProduc
 
 const cookieSecure = readBoolean("COOKIE_SECURE", isProduction);
 if (isProduction && !cookieSecure && !readBoolean("ALLOW_INSECURE_COOKIES", false)) {
-  fail("COOKIE_SECURE must be true in production (set ALLOW_INSECURE_COOKIES=true only for isolated HTTP testing).");
+  fail(
+    "COOKIE_SECURE must be true in production (set ALLOW_INSECURE_COOKIES=true only for isolated HTTP testing)."
+  );
 }
 
 const cookieSameSite = (process.env.REFRESH_COOKIE_SAME_SITE || "lax").toLowerCase();
@@ -221,18 +223,10 @@ const emailTransport = (process.env.EMAIL_TRANSPORT || "").toLowerCase();
 if (emailTransport && !["api", "smtp"].includes(emailTransport)) {
   fail('EMAIL_TRANSPORT must be "api" or "smtp" when set.');
 }
-if (
-  isProduction &&
-  emailTransport === "api" &&
-  !brevoApiKey.startsWith("xkeysib-")
-) {
+if (isProduction && emailTransport === "api" && !brevoApiKey.startsWith("xkeysib-")) {
   fail("EMAIL_TRANSPORT=api requires a Brevo REST key (xkeysib-).");
 }
-if (
-  isProduction &&
-  emailTransport === "smtp" &&
-  !brevoApiKey.startsWith("xsmtpsib-")
-) {
+if (isProduction && emailTransport === "smtp" && !brevoApiKey.startsWith("xsmtpsib-")) {
   fail("EMAIL_TRANSPORT=smtp requires a Brevo SMTP key (xsmtpsib-).");
 }
 
@@ -263,9 +257,7 @@ const refreshTokenAbsoluteTtlMs = readNumber(
   30 * 24 * 60 * 60 * 1000
 );
 if (refreshTokenAbsoluteTtlMs < refreshTokenTtlMs) {
-  fail(
-    "REFRESH_TOKEN_ABSOLUTE_TTL_MS must be greater than or equal to REFRESH_TOKEN_TTL_MS."
-  );
+  fail("REFRESH_TOKEN_ABSOLUTE_TTL_MS must be greater than or equal to REFRESH_TOKEN_TTL_MS.");
 }
 
 const env = Object.freeze({
@@ -324,6 +316,21 @@ const env = Object.freeze({
   LOGIN_RATE_LIMIT_MAX: readNumber("LOGIN_RATE_LIMIT_MAX", 10),
   SENSITIVE_AUTH_RATE_LIMIT_MAX: readNumber("SENSITIVE_AUTH_RATE_LIMIT_MAX", 20),
   REFRESH_RATE_LIMIT_MAX: readNumber("REFRESH_RATE_LIMIT_MAX", 60),
+  // Redis is optional: unset, every limiter counts this process alone.
+  REDIS_URL: readOptional("REDIS_URL"),
+  REDIS_KEY_PREFIX: readOptional("REDIS_KEY_PREFIX") || "auth",
+  REDIS_COMMAND_TIMEOUT_MS: readInteger("REDIS_COMMAND_TIMEOUT_MS", 500, {
+    min: 50,
+    max: 5000,
+  }),
+  REDIS_CONNECT_TIMEOUT_MS: readInteger("REDIS_CONNECT_TIMEOUT_MS", 2000, {
+    min: 100,
+    max: 15000,
+  }),
+  REDIS_RECONNECT_PERIOD_MS: readInteger("REDIS_RECONNECT_PERIOD_MS", 5000, {
+    min: 100,
+    max: 60000,
+  }),
   ENABLE_API_DOCS: enableApiDocs,
   API_DOCS_USERNAME: apiDocsUsername,
   API_DOCS_PASSWORD: apiDocsPassword,

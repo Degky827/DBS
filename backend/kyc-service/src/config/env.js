@@ -165,9 +165,7 @@ if (isProduction && !isStrongSecret(internalServiceKey)) {
 
 const authServiceUrl = readOptional("AUTH_SERVICE_URL").replace(/\/+$/, "");
 if (isProduction && !authServiceUrl) {
-  fail(
-    "AUTH_SERVICE_URL is required in production so revoked access tokens can be rejected."
-  );
+  fail("AUTH_SERVICE_URL is required in production so revoked access tokens can be rejected.");
 }
 
 const corsOrigins = parseOrigins(process.env.CORS_ORIGIN, { production: isProduction });
@@ -197,6 +195,47 @@ const metricsToken = readOptionalSecret("METRICS_TOKEN");
 const kycApprovalTtlDays = readInteger("KYC_APPROVAL_TTL_DAYS", 365, {
   min: 1,
   max: 3650,
+});
+
+// --- Phase 4: event delivery and periodic re-verification ---
+// Background work should run in one place: scale API replicas with
+// ENABLE_JOBS=false and keep a single container that owns the jobs.
+const jobsEnabled = readBoolean("ENABLE_JOBS", true);
+// Tier re-verification notices reach customers through notification-service, so
+// kyc-service keeps its own outbox table and dispatcher: a task and the
+// notification asking the customer to act on it must commit together.
+const notificationServiceUrl = readOptional("NOTIFICATION_SERVICE_URL").replace(/\/+$/, "");
+const outboxEnabled = readBoolean(
+  "OUTBOX_ENABLED",
+  isProduction && Boolean(notificationServiceUrl)
+);
+const outboxIntervalMs = readInteger("OUTBOX_INTERVAL_MS", 5000, {
+  min: 1000,
+  max: 5 * 60 * 1000,
+});
+const outboxBatchSize = readInteger("OUTBOX_BATCH_SIZE", 25, { min: 1, max: 200 });
+const outboxMaxAttempts = readInteger("OUTBOX_MAX_ATTEMPTS", 12, { min: 1, max: 100 });
+if (outboxEnabled && !notificationServiceUrl) {
+  fail("OUTBOX_ENABLED requires NOTIFICATION_SERVICE_URL.");
+}
+if (notificationServiceUrl && !isStrongSecret(internalServiceKey)) {
+  if (isProduction) {
+    fail(
+      "NOTIFICATION_SERVICE_URL requires a strong INTERNAL_SERVICE_KEY so outbox events can be authenticated."
+    );
+  }
+}
+
+// The sweep only reads approvals and writes tasks, so it is safe to run on a
+// six-hour cadence; officers see the queue, customers get a heads-up.
+const reVerificationEnabled = readBoolean("KYC_REVERIFICATION_ENABLED", isProduction);
+const reVerificationIntervalMs = readInteger("KYC_REVERIFICATION_INTERVAL_MS", 6 * 60 * 60 * 1000, {
+  min: 15 * 60 * 1000,
+  max: 24 * 60 * 60 * 1000,
+});
+const reVerificationBatchSize = readInteger("KYC_REVERIFICATION_BATCH_SIZE", 200, {
+  min: 1,
+  max: 2000,
 });
 
 const storageEncryptionKey = readOptionalSecret("STORAGE_ENCRYPTION_KEY");
@@ -263,7 +302,10 @@ const env = Object.freeze({
   JWT_ISSUER: process.env.JWT_ISSUER || "auth-service",
   JWT_AUDIENCE: process.env.JWT_AUDIENCE || "banking-system",
   INTERNAL_SERVICE_KEY: internalServiceKey,
-  USER_SERVICE_URL: (process.env.USER_SERVICE_URL || "http://localhost:5002/api/v1").replace(/\/+$/, ""),
+  USER_SERVICE_URL: (process.env.USER_SERVICE_URL || "http://localhost:5002/api/v1").replace(
+    /\/+$/,
+    ""
+  ),
   AUTH_SERVICE_URL: authServiceUrl || "http://localhost:5001/api/v1",
   CORS_ORIGINS: corsOrigins,
   TRUST_PROXY: trustProxy,
@@ -275,10 +317,34 @@ const env = Object.freeze({
   UPLOAD_RATE_LIMIT_MAX: readNumber("UPLOAD_RATE_LIMIT_MAX", 10),
   WEBHOOK_RATE_LIMIT_MAX: readNumber("WEBHOOK_RATE_LIMIT_MAX", 120),
   AUTH_RATE_LIMIT_MAX: readNumber("AUTH_RATE_LIMIT_MAX", 20),
+  // Redis is optional: unset, every limiter counts this process alone.
+  REDIS_URL: readOptional("REDIS_URL"),
+  REDIS_KEY_PREFIX: readOptional("REDIS_KEY_PREFIX") || "kyc",
+  REDIS_COMMAND_TIMEOUT_MS: readInteger("REDIS_COMMAND_TIMEOUT_MS", 500, {
+    min: 50,
+    max: 5000,
+  }),
+  REDIS_CONNECT_TIMEOUT_MS: readInteger("REDIS_CONNECT_TIMEOUT_MS", 2000, {
+    min: 100,
+    max: 15000,
+  }),
+  REDIS_RECONNECT_PERIOD_MS: readInteger("REDIS_RECONNECT_PERIOD_MS", 5000, {
+    min: 100,
+    max: 60000,
+  }),
   ENABLE_API_DOCS: enableApiDocs,
   API_DOCS_USERNAME: apiDocsUsername,
   API_DOCS_PASSWORD: apiDocsPassword,
   KYC_APPROVAL_TTL_DAYS: kycApprovalTtlDays,
+  ENABLE_JOBS: jobsEnabled,
+  NOTIFICATION_SERVICE_URL: notificationServiceUrl,
+  OUTBOX_ENABLED: outboxEnabled,
+  OUTBOX_INTERVAL_MS: outboxIntervalMs,
+  OUTBOX_BATCH_SIZE: outboxBatchSize,
+  OUTBOX_MAX_ATTEMPTS: outboxMaxAttempts,
+  KYC_REVERIFICATION_ENABLED: reVerificationEnabled,
+  KYC_REVERIFICATION_INTERVAL_MS: reVerificationIntervalMs,
+  KYC_REVERIFICATION_BATCH_SIZE: reVerificationBatchSize,
   STORAGE_DIR: process.env.STORAGE_DIR || path.resolve(__dirname, "../../storage"),
   MAX_FILE_SIZE_BYTES: readNumber("MAX_FILE_SIZE_BYTES", 10 * 1024 * 1024),
   STORAGE_ENCRYPTION_KEY: storageEncryptionKey,

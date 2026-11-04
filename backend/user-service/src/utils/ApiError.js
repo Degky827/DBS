@@ -21,8 +21,8 @@ class ApiError extends Error {
     return new ApiError(401, message, code);
   }
 
-  static forbidden(message = "Forbidden", code = "FORBIDDEN") {
-    return new ApiError(403, message, code);
+  static forbidden(message = "Forbidden", code = "FORBIDDEN", details = null) {
+    return new ApiError(403, message, code, details);
   }
 
   static notFound(message = "Resource not found", code = "NOT_FOUND") {
@@ -33,10 +33,7 @@ class ApiError extends Error {
     return new ApiError(409, message, code, details);
   }
 
-  static notImplemented(
-    message = "This operation is not implemented",
-    code = "NOT_IMPLEMENTED"
-  ) {
+  static notImplemented(message = "This operation is not implemented", code = "NOT_IMPLEMENTED") {
     return new ApiError(501, message, code);
   }
 

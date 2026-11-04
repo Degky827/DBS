@@ -83,10 +83,17 @@ response header. Health and readiness probes are exempt.
 sits behind a trusted shared NAT. Do not raise login limits as a workaround for
 shared IPs — use the per-IP+email key instead.
 
-**Limitation:** the counters are in-process. Multiple replicas each keep their
-own budget, and a restart clears them. Distributing limits requires a shared
-store (Redis), which is not currently an application dependency (see
-[environment-setup.md](./environment-setup.md), section 10).
+**Shared counters (optional Redis):** with `REDIS_URL` set, every limiter above
+keeps its window in Redis, so replicas share one budget and a restart no longer
+clears it. When Redis is unreachable, slow, or not configured, the request is
+counted in this process instead — a degraded deployment tightens limits rather
+than removing them, and never returns 500 for a store error. Each fallback counts
+only its own replica, so during an outage the effective budget grows with the replica count;
+`banking_security_events_total{event="rate_limit_shared_store_unavailable"}` in
+`/metrics` (auth, user and KYC services) is the signal to page on. Sessions are
+still issued by auth-service and stored in PostgreSQL — Redis holds no session,
+credential, or financial state. See
+[environment-setup.md](./environment-setup.md), section 11.
 
 ## 5. Secrets and configuration
 
@@ -256,6 +263,67 @@ application code:
 `ledger:verify` is the operational integrity check. Run it after any incident,
 migration, or restore.
 
+### Verification runs and issues
+
+The same 33 read-only checks are available as a scheduled job, a CLI command and
+an admin API, so a failure means the same thing whichever door you came in
+through. They are aggregate SQL queries against the ledger tables — no
+application-side scan of every posting — and money is compared in exact decimal,
+never floating point.
+
+- **Run verdicts.** `PASSED` means every check completed and the current open
+  finding set has no `CRITICAL` or `HIGH`. `FAILED` means it does. `ERROR` means
+  at least one check could not execute — the books are *unproven*, which is why
+  an `ERROR` run also pages. `LOW` findings (for example development
+  `TEST_FUNDING` entries) are reported and never fail a run.
+- **Issue lifecycle.** A finding is `OPEN` until a reviewer `acknowledge`s it,
+  `resolve`s it with a note, or `suppress`es it with a note. Reopening is
+  ADMIN-only, as is suppression: those two actions change what the bank is
+  willing to ignore. Suppressing does not make the books consistent — the run
+  that recorded it still reports `FAILED`. Corrections are always reversal or
+  adjustment entries; a historical journal entry is never edited, and the
+  database triggers reject the attempt.
+- **Deduplication.** A rerun does not re-record a finding that is already
+  `OPEN`, `ACKNOWLEDGED` or `SUPPRESSED`; the partial unique index on
+  (classification, aggregate type, aggregate id) is the arbiter, so concurrent
+  runs cannot open the same finding twice. Only newly detected CRITICAL/HIGH
+  findings, or check errors, raise an alert — so a finding nobody resolves
+  surfaces once, not every cycle.
+- **Alerting.** A failing run enqueues a `ledger.integrity_failed` event in the
+  same transaction that records the run and its issues, then the outbox
+  dispatcher delivers it to notification-service, which emails every active
+  ADMIN (§14). The email and the database state therefore agree: a rolled-back
+  run cannot leave an alert behind.
+- **History.** `LedgerVerificationRun` rows keep the trigger (`SCHEDULED`,
+  `MANUAL`, `CI`), duration, counts, per-severity summary and totals;
+  `LedgerVerificationIssue` rows keep expected/actual/difference and status.
+  Nothing in the admin view is estimated or mocked — it reads these tables.
+  Runs left `RUNNING` by a crashed process are reaped to `ERROR` at the start of
+  the next cycle.
+
+Endpoints (ADMIN or FINANCIAL_OFFICER; suppression/reopening ADMIN-only):
+
+| Method | Path |
+| --- | --- |
+| GET | `/api/v1/admin/ledger/integrity` |
+| GET | `/api/v1/admin/ledger/verification/runs` |
+| POST | `/api/v1/admin/ledger/verification/runs` |
+| GET | `/api/v1/admin/ledger/verification/runs/{reference}` |
+| GET | `/api/v1/admin/ledger/verification/issues` |
+| POST | `/api/v1/admin/ledger/verification/issues/{id}/acknowledge` |
+| POST | `/api/v1/admin/ledger/verification/issues/{id}/resolve` |
+| POST | `/api/v1/admin/ledger/verification/issues/{id}/suppress` |
+| POST | `/api/v1/admin/ledger/verification/issues/{id}/reopen` |
+
+The job is enabled by default in production (`LEDGER_VERIFICATION_ENABLED`,
+`LEDGER_VERIFICATION_INTERVAL_MS`, default six hours) and can be triggered by an
+operator at any time. `npm run ledger:verify -- --json`, `--group
+<entries|accounts|transactions|withdrawals|payouts>` and `--record` cover
+read-only triage and an officially recorded run from the command line.
+
+These checks detect internal inconsistency. They are not an AML or sanctions
+screen, and passing them is not evidence of regulatory compliance.
+
 ## 8. Provider security
 
 - **Chapa**: base URL pinned to `https://api.chapa.global`; only
@@ -307,6 +375,14 @@ Exported series:
   `duplicate`, `accepted`, `rejected` (signature/timestamp), or `error`.
 - `banking_payment_reconciliation_total{outcome}` — `MATCHED`, `PENDING`,
   `MISMATCH`, `MANUAL_REVIEW`, or `ERROR`.
+- `banking_ledger_verification_runs_total{outcome}` — `passed`, `failed`, or
+  `error` per completed verification run (§7).
+- `banking_ledger_open_issues{severity}` — actionable OPEN/ACKNOWLEDGED ledger
+  findings. Every severity is exported on each refresh, including zeroes, so an
+  alert clears when the backlog drains instead of vanishing with the series.
+  Suppressed findings are excluded here while their run still reports `FAILED`.
+- `banking_ledger_verification_last_run_timestamp_seconds` — unix time of the
+  last completed run; used to prove the job is still running at all.
 - Process metrics: CPU, RSS, heap, event-loop lag, and service info.
 
 The opt-in monitoring profile runs Prometheus, Alertmanager, and an alert relay:
@@ -318,11 +394,16 @@ docker compose --profile monitoring up -d
 - `monitoring/prometheus/prometheus.yml` scrapes auth-service:5001,
   user-service:5002, and kyc-service:5003 every 15 seconds.
 - `monitoring/prometheus/alerts.yml` defines availability, HTTP, security, KYC,
-  and payment alerts: `ServiceDown`, `ServiceNotReady`,
+  payment, ledger, and notification alerts: `ServiceDown`, `ServiceNotReady`,
   `HighServerErrorRate`, `HighRequestLatency`, `RateLimitSpike`,
   `LoginFailureBurst`, `MfaFailureBurst`, `RefreshTokenReuseDetected`,
-  `KycProviderFailures`, `KycWebhookRejected`, and
-  `ReconciliationNeedsReview`.
+  `SharedRateLimitStoreUnavailable`, `KycProviderFailures`, `KycWebhookRejected`,
+  `ReconciliationNeedsReview`, `LedgerIntegrityFindings`,
+  `LedgerVerificationRunFailed`, `LedgerVerificationStale`, and
+  `VerificationIssueBacklogGrowing`. `LedgerVerificationStale` exists because a
+  silent job is indistinguishable from a healthy ledger: the absence of runs is
+  itself an alert, not evidence of cleanliness. Validate rule changes with
+  `promtool check rules monitoring/prometheus/alerts.yml`.
 - `monitoring/alertmanager/alertmanager.yml` groups by alert and service and
   repeats critical alerts hourly. Every notification is delivered to
   `alert-relay`, which records it in `docker compose logs alert-relay`.
@@ -371,7 +452,9 @@ intended manual procedure.
    secret (§5) and revoke refresh sessions for affected users. Revoking a
    family forces re-authentication.
 2. **Assess** — pull logs by `X-Request-Id`; run `ledger:verify`; check
-   reconciliation records for Chapa and the KYC decision log.
+   `GET /api/v1/admin/ledger/integrity` and the run history for the findings
+   already known to reviewers (§7); check reconciliation records for Chapa and
+   the KYC decision log.
 3. **Preserve** — take a database snapshot before any remediation that writes
    data (see [backup-and-recovery.md](./backup-and-recovery.md)).
 4. **Remediate** — fix forward with a new commit; never edit posted ledger rows
@@ -396,7 +479,7 @@ These are known and **not** resolved by this audit:
 | `STORAGE_ENCRYPTION_KEY` rotation lacks re-key tooling | Key compromise requires manual migration | Documented only |
 | `INTERNAL_SERVICE_KEY` has no dual-key window | Rotation causes brief internal failures | Maintenance window |
 | Profile IDs not unified with auth `sub` | Identity mapping complexity | Documented limitation |
-| Pre-existing formatting debt | `format:check` fails (see readiness report) | Not auto-formatted |
+| Pre-existing formatting debt | Untouched files are still unformatted | `format-check` gates changed sources only |
 | Provider integrations only tested with mocks | Real sandbox behavior unverified | See [provider-integration-testing.md](./provider-integration-testing.md) |
 | No browser end-to-end test suite | UI regressions may escape unit tests | Manual smoke only |
 
@@ -411,5 +494,91 @@ production startup validation (including the Brevo requirement), KYC gating
 self-review prevention, webhook signature verification (Chapa and Didit),
 document encryption, ledger concurrency/precision/atomicity, deposit daily
 limits, reversal-aware history, reconciliation ambiguity handling, and reversal
-invariants.
+invariants. Phase 3 adds outbox delivery and dead-letter replay, consumer
+deduplication, inbox scoping by token subject, the email queue, beneficiaries,
+scheduled transfers, statement balances and PDF export, and the dispute
+transition matrix. Phase 4 adds the ledger verification suite: run verdicts
+against injected inconsistencies, one-open-per-target deduplication, the
+reviewer transition matrix including ADMIN-only suppression and reopening, alert
+fan-out through the outbox, job single-flight, and abandoned-run reaping.
 See [testing-guide.md](./testing-guide.md) for commands and counts.
+
+## 14. Event outbox and notification delivery
+
+### Delivery path
+
+- user-service writes the business change and its `OutboxEvent` in the same
+  Prisma transaction. An event exists only if the change committed, and a
+  rolled-back change leaves no event behind. `outbox.enqueue()` is a no-op when
+  `OUTBOX_ENABLED=false`, which is the default outside production.
+- The dispatcher polls every `OUTBOX_INTERVAL_MS` (default 5 s) for unpublished
+  events whose `nextAttemptAt` has passed and whose `attempts` are below
+  `OUTBOX_MAX_ATTEMPTS` (default 12), delivers at most `OUTBOX_BATCH_SIZE`
+  (default 25) per cycle with a 5-second request timeout, and doubles the retry
+  delay on failure up to one hour. A single in-process run is guarded so cycles
+  never overlap.
+- `409` from the consumer means the `eventId` was already recorded and is treated
+  as success, so a lost acknowledgement cannot produce a duplicate notification.
+  Any other non-2xx response is a retryable failure.
+- Events that exhaust `OUTBOX_MAX_ATTEMPTS` stop being polled and are counted as
+  `dead_lettered`. They remain in the table with `lastError` and are replayed by
+  an administrator from `/admin/outbox` (`POST /api/v1/admin/outbox/:eventId/replay`,
+  `ADMIN` role only) after the consumer is healthy again.
+
+### Consumer authentication and exposure
+
+- `POST /api/v1/internal/notifications/events` requires `X-Internal-Service-Key`.
+  The comparison is length-checked and `crypto.timingSafeEqual`; when
+  `INTERNAL_SERVICE_KEY` is unset the route returns `403 INTERNAL_ENDPOINTS_DISABLED`
+  rather than accepting unauthenticated writes. The route has its own limiter
+  (`INTERNAL_RATE_LIMIT_MAX`).
+- Nginx rejects any browser request that reaches an `/internal/` segment under
+  `/api/auth`, `/api/user`, `/api/kyc`, or `/api/notifications`, so internal
+  routes are reachable only from the container network.
+- In-app reads use the same access-token material as the other services and,
+  because `AUTH_SERVICE_URL` is required in production, introspect the token so a
+  revoked session cannot read an inbox. Ownership is the lower-cased token email;
+  queries are filtered by `recipientEmail`, so a valid token never returns another
+  customer's notifications.
+
+### Storage and email
+
+- `ProcessedEvent.eventId` is the primary key and `Notification` has
+  `@@unique([eventId, recipientEmail])`, so redelivery is idempotent per recipient.
+- Email is optional: `EMAIL_ENABLED` defaults to true only when `BREVO_API_KEY`
+  is present, `EMAIL_TRANSPORT` supports the Brevo API only, and
+  `BREVO_API_BASE_URL` must be HTTPS. Notification bodies are HTML-escaped before
+  they reach the provider, and the email worker gives up after
+  `EMAIL_MAX_ATTEMPTS`.
+
+### Related alerts
+
+| Alert | Expression | Severity |
+|---|---|---|
+| OutboxDeliveryStalled | `banking_outbox_pending > 50` for 15m | warning |
+| OutboxDeadLetters | `increase(banking_outbox_events_total{outcome="dead_lettered"}[15m]) > 0` | critical |
+| NotificationEventDeliveryFailures | `increase(banking_notification_events_total{outcome="failed"}[10m]) > 3` for 5m | warning |
+| NotificationEmailBacklog | `banking_notification_email_backlog > 25` for 15m | warning |
+
+## 15. CI security gates
+
+`.github/workflows/ci.yml` fails closed. Every third-party action is pinned to a
+commit SHA, the workflow runs with `permissions: contents: read` by default, and
+each job has a `timeout-minutes` budget.
+
+| Gate | Behavior |
+|---|---|
+| `security-audit` | `npm audit --omit=dev --audit-level=moderate` and `npm audit --audit-level=high` per package (all four services plus the frontend). Both are blocking; there is no `continue-on-error`. |
+| `format-check` | Prettier over the files changed between the run's base revision and `HEAD`. Legacy files are not reformatted retroactively. |
+| `secrets-hygiene` | Fails when git tracks `.env` files, PEM/key/certificate material, `certs/`, `certbot/`, `backups/`, or `monitoring/secrets/*`, and when added lines match known credential formats (AWS access keys, GitHub tokens, Slack tokens, Google API keys, Stripe live keys, PEM private-key and certificate blocks). |
+| `dependency-review` | Pull requests only; fails on newly added dependencies with high or critical advisories. |
+| `scan-docker-images` | Builds each image and runs Trivy with `exit-code: 1` on CRITICAL and HIGH findings that have a fix available. |
+| `codeql.yml` | CodeQL (`security-extended`) for JavaScript/TypeScript and GitHub Actions. Findings are uploaded to code scanning; a CRITICAL-scoring result fails the job. |
+| `test-notification-service` | Lints, migrates, and runs the notification suite against a throw-away `notification_test` database. |
+
+`all-checks-complete` aggregates every job and reports the result of each, so a
+required check cannot be bypassed by a skipped dependency.
+
+When a gate fails, fix the finding rather than relaxing the gate. If a
+dependency advisory genuinely cannot be remediated yet, record it as a known
+issue with an owner and a review date in §12.

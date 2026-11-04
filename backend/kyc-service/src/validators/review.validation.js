@@ -1,12 +1,20 @@
 const { z } = require("zod");
 const { SUBMISSION_STATUS } = require("../constants/kycStatus");
+const { tierIdSchema } = require("./tier.validation");
 
 const reviewDecisionSchema = z
   .object({
     decision: z.enum(["APPROVE", "REJECT"]),
     reason: z.string().trim().min(5).max(1000),
+    // Optional officer override. Naming a tier replaces the one the stored
+    // evidence would suggest; it does not waive missing documents or liveness.
+    tierId: tierIdSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(({ decision, tierId }) => decision === "APPROVE" || !tierId, {
+    path: ["tierId"],
+    message: "A tier can only be named with an approval",
+  });
 
 const approvalRevocationSchema = z
   .object({
@@ -27,10 +35,10 @@ const reviewQueueSchema = z
     cursor: z.uuid().optional(),
   })
   .strict()
-  .refine(
-    ({ from, to }) => !from || !to || new Date(from) <= new Date(to),
-    { path: ["to"], message: "to must be later than or equal to from" }
-  );
+  .refine(({ from, to }) => !from || !to || new Date(from) <= new Date(to), {
+    path: ["to"],
+    message: "to must be later than or equal to from",
+  });
 
 module.exports = {
   reviewDecisionSchema,

@@ -14,6 +14,9 @@ const ROUTES = Object.freeze({
     ME: "/users/me",
     ME_PASSWORD: "/users/me/password",
   }),
+  INTERNAL: Object.freeze({
+    USER_CONTACT: "/internal/users/:userId/contact",
+  }),
   WALLETS: Object.freeze({
     ROOT: "/wallets",
     ME: "/wallets/me",
@@ -24,6 +27,25 @@ const ROUTES = Object.freeze({
     TRANSFERS: "/transactions/transfers",
     BY_REFERENCE: "/transactions/:reference",
     REVERSALS: "/transactions/:reference/reversals",
+  }),
+  BENEFICIARIES: Object.freeze({
+    ROOT: "/beneficiaries",
+    BY_ID: "/beneficiaries/:beneficiaryId",
+  }),
+  SCHEDULED_TRANSFERS: Object.freeze({
+    ROOT: "/scheduled-transfers",
+    BY_ID: "/scheduled-transfers/:scheduleId",
+    PAUSE: "/scheduled-transfers/:scheduleId/pause",
+    RESUME: "/scheduled-transfers/:scheduleId/resume",
+    CANCEL: "/scheduled-transfers/:scheduleId/cancel",
+  }),
+  STATEMENTS: Object.freeze({
+    ROOT: "/statements",
+    EXPORT_PDF: "/statements/export.pdf",
+  }),
+  DISPUTES: Object.freeze({
+    ROOT: "/disputes",
+    BY_REFERENCE: "/disputes/:reference",
   }),
   ADMIN: Object.freeze({
     OVERVIEW: "/admin/overview",
@@ -36,6 +58,20 @@ const ROUTES = Object.freeze({
     FINANCIAL_POLICIES: "/admin/financial-policies",
     FINANCIAL_POLICY: "/admin/financial-policies/:type",
     PAYMENT_RECONCILIATION: "/admin/payments/reconciliation",
+    DISPUTES: "/admin/disputes",
+    DISPUTE_BY_REFERENCE: "/admin/disputes/:reference",
+    OUTBOX: "/admin/outbox",
+    OUTBOX_REPLAY: "/admin/outbox/:eventId/replay",
+  }),
+  LEDGER: Object.freeze({
+    INTEGRITY: "/admin/ledger/integrity",
+    VERIFICATION_RUNS: "/admin/ledger/verification/runs",
+    VERIFICATION_RUN: "/admin/ledger/verification/runs/:reference",
+    VERIFICATION_ISSUES: "/admin/ledger/verification/issues",
+    ISSUE_ACKNOWLEDGE: "/admin/ledger/verification/issues/:issueId/acknowledge",
+    ISSUE_RESOLVE: "/admin/ledger/verification/issues/:issueId/resolve",
+    ISSUE_SUPPRESS: "/admin/ledger/verification/issues/:issueId/suppress",
+    ISSUE_REOPEN: "/admin/ledger/verification/issues/:issueId/reopen",
   }),
   OPERATIONS: Object.freeze({
     ANALYTICS: "/operations/analytics",

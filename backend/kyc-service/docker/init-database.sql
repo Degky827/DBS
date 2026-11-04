@@ -2,3 +2,4 @@
 -- auth_db is created by the POSTGRES_DB environment variable.
 CREATE DATABASE user_db;
 CREATE DATABASE kyc_db;
+CREATE DATABASE notification_db;

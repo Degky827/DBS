@@ -17,19 +17,14 @@ const {
 } = require("./payments.factory");
 const withdrawalsService = require("./withdrawals.service");
 const paymentsHistoryService = require("./paymentsHistory.service");
-const {
-  depositSchema,
-  withdrawalSchema,
-  paymentHistorySchema,
-} = require("./payments.validation");
+const { depositSchema, withdrawalSchema, paymentHistorySchema } = require("./payments.validation");
 
 const requireIdempotencyKey = (req, res, next) => {
   const key = req.get("Idempotency-Key");
   if (!key || !/^[A-Za-z0-9._:-]{8,128}$/.test(key)) {
     return next(
       ApiError.validation({
-        idempotencyKey:
-          "Idempotency-Key is required and must be 8-128 permitted characters",
+        idempotencyKey: "Idempotency-Key is required and must be 8-128 permitted characters",
       })
     );
   }
@@ -48,10 +43,7 @@ const requireConfiguredProvider = (req, res, next) => {
 
 const listPayments = async (req, res) => {
   const userId = await usersService.getResolvedUserId(req.user);
-  const result = await paymentsHistoryService.listPayments(
-    userId,
-    req.paymentHistoryQuery
-  );
+  const result = await paymentsHistoryService.listPayments(userId, req.paymentHistoryQuery);
   return ApiResponse.success(res, result, "Payments fetched");
 };
 
@@ -79,6 +71,7 @@ const createDeposit = async (req, res) => {
     userProfile: profile.user,
     amount: req.body.amount,
     idempotencyKey: req.idempotencyKey,
+    kyc: req.kyc,
   });
 
   return ApiResponse.success(
@@ -108,11 +101,7 @@ const handleWebhook = async (req, res) => {
   const service = getPaymentsService();
   const result = await service.handleWebhook(req);
 
-  return ApiResponse.success(
-    res,
-    { payment: result.payment },
-    "Webhook processed successfully"
-  );
+  return ApiResponse.success(res, { payment: result.payment }, "Webhook processed successfully");
 };
 
 const createDepositRefundUnsupported = (req, res, next) => {
@@ -130,24 +119,20 @@ const createWithdrawal = async (req, res) => {
     userId,
     amount: req.body.amount,
     idempotencyKey: req.idempotencyKey,
+    kyc: req.kyc,
   });
 
   return ApiResponse.success(
     res,
     { withdrawal: result.withdrawal },
-    result.replayed
-      ? "Withdrawal request replayed"
-      : "Withdrawal reserved for payout",
+    result.replayed ? "Withdrawal request replayed" : "Withdrawal reserved for payout",
     result.replayed ? 200 : 201
   );
 };
 
 const getWithdrawal = async (req, res) => {
   const userId = await usersService.getResolvedUserId(req.user);
-  const result = await withdrawalsService.getWithdrawal(
-    userId,
-    req.params.reference
-  );
+  const result = await withdrawalsService.getWithdrawal(userId, req.params.reference);
   return ApiResponse.success(res, result, "Withdrawal fetched");
 };
 
@@ -167,12 +152,7 @@ const cancelWithdrawal = async (req, res) => {
 };
 
 // Authenticated payment history
-router.get(
-  ROUTES.PAYMENTS.ROOT,
-  authenticate,
-  validatePaymentHistoryQuery,
-  listPayments
-);
+router.get(ROUTES.PAYMENTS.ROOT, authenticate, validatePaymentHistoryQuery, listPayments);
 
 // Authenticated deposit initiation
 router.post(
@@ -222,11 +202,7 @@ router.post(
   requireIdempotencyKey,
   createWithdrawal
 );
-router.get(
-  ROUTES.PAYMENTS.WITHDRAWAL_BY_REFERENCE,
-  authenticate,
-  getWithdrawal
-);
+router.get(ROUTES.PAYMENTS.WITHDRAWAL_BY_REFERENCE, authenticate, getWithdrawal);
 router.post(
   ROUTES.PAYMENTS.WITHDRAWAL_CANCEL,
   authenticate,

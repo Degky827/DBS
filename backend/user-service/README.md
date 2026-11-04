@@ -170,6 +170,26 @@ Financial limits and fees are stored in `FinancialPolicy`, enforced server-side,
 
 `npm run ledger:verify` runs read-only checks for entry balance, account/wallet projection, transaction/reversal/withdrawal consistency, payment completion, and legacy provenance.
 
+### KYC verification tiers as per-customer limits
+
+A verification tier describes what **this customer** may move; `FinancialPolicy` describes what the product allows. The tier clamp runs after the policy checks, so raising a policy never lifts a customer's ceiling, and it is evaluated inside the same transaction that spends the money, so a replay or a concurrent request cannot slip past a ceiling. Tier limits are configuration in kyc-service (`KycTierLimit`), not code: the example tiers shipped with the migration are placeholders and must be replaced with values approved for the jurisdiction the service operates in.
+
+The tier is the one kyc-service resolved for the authenticated subject. `requireKycApproval` hands the resolved status to the handler as `req.kyc`, and the money paths clamp against that object; they never re-resolve KYC from the local profile id, which is a different identifier from the auth-service subject kyc-service keys approvals by. A tier that has no row for the operation, or only rows in another currency, denies the operation instead of treating the gap as unlimited, and a tier payload the client cannot parse (a non-decimal amount, a negative count, limits without a tier) is reported as `503 KYC_STATUS_UNAVAILABLE` rather than as an unclamped approval.
+
+| Code | Status | Raised when |
+|---|---|---|
+| `TIER_OPERATION_NOT_ALLOWED` | 403 | The tier does not allow this operation in this currency |
+| `TIER_AMOUNT_LIMIT_EXCEEDED` | 409 | One operation is below the tier minimum or above its maximum |
+| `TIER_DAILY_LIMIT_EXCEEDED` | 409 | Amount plus fee passes the tier's daily total |
+| `TIER_DAILY_COUNT_EXCEEDED` | 409 | The operation would exceed the tier's daily count |
+| `TIER_MONTHLY_LIMIT_EXCEEDED` | 409 | Amount plus fee passes the tier's monthly total |
+| `TIER_MAX_BALANCE_EXCEEDED` | 409 | A deposit would take balance plus pending credits over the tier ceiling |
+| `TIER_SCHEDULED_VOLUME_EXCEEDED` | 409 | The whole recurrence of a schedule cannot fit the tier |
+
+Every rejected response carries the tier code, version and source plus the limit and the usage already consumed, and an accepted one stores the same decision in `Transaction.policySnapshot.kycTier` so an officer can see which level authorized the movement. Three boundaries are recorded rather than hidden: a deposit is clamped when the checkout is created, so the ledger transaction posted at credit time carries `reason: "DEPOSIT_AUTHORIZED_AT_INITIATION"`; the schedule worker has no session to resolve a tier against, so each run it posts carries `reason: "NO_KYC_CONTEXT"` and the recurrence was projected when the schedule was created or resumed; and a transfer is clamped against the **sender's** maximum balance only, because the recipient's tier is not part of this request. `PAYOUT` and `SCHEDULED_TRANSFER` are gated per transaction only: no provider-side payout table exists yet to sum their period usage.
+
+`npm run test:tier-limits` runs the suite against the isolated `_test` database.
+
 
 ### Phase 4 migration and test setup
 

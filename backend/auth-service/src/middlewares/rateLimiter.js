@@ -2,6 +2,7 @@ const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 
 const env = require("../config/env");
 const ApiResponse = require("../utils/ApiResponse");
+const { createRateLimitStore } = require("./rateLimitStore");
 
 const buildHandler = (message) => (req, res) => {
   const retryAfter = Math.ceil(
@@ -20,12 +21,12 @@ const commonOptions = {
   legacyHeaders: false,
 };
 
-const skipHealthChecks = (req) =>
-  req.path === "/api/v1/health" || req.path === "/api/v1/ready";
+const skipHealthChecks = (req) => req.path === "/api/v1/health" || req.path === "/api/v1/ready";
 
 const globalLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
+  store: createRateLimitStore("global"),
   limit: env.RATE_LIMIT_MAX,
   skip: skipHealthChecks,
   handler: buildHandler("Too many requests, please try again later"),
@@ -39,6 +40,7 @@ const normalizeEmail = (req) =>
 const loginLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
+  store: createRateLimitStore("login"),
   limit: env.LOGIN_RATE_LIMIT_MAX,
   skipSuccessfulRequests: true,
   keyGenerator: (req) => `${ipKeyGenerator(req.ip)}:${normalizeEmail(req)}`,
@@ -50,6 +52,7 @@ const loginLimiter = rateLimit({
 const sensitiveAuthLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
+  store: createRateLimitStore("sensitive-auth"),
   limit: env.SENSITIVE_AUTH_RATE_LIMIT_MAX,
   handler: buildHandler("Too many authentication attempts, please try again later"),
 });
@@ -59,6 +62,7 @@ const sensitiveAuthLimiter = rateLimit({
 const refreshLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
+  store: createRateLimitStore("refresh"),
   limit: env.REFRESH_RATE_LIMIT_MAX,
   handler: buildHandler("Too many session refresh attempts, please try again later"),
 });

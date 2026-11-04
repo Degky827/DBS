@@ -33,12 +33,19 @@ model UserProfile {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  devSessions  DevSession[]
-  wallet       Wallet?
+  devSessions        DevSession[]
+  wallet             Wallet?
+  transactions       Transaction[]
+  payments           Payment[]
+  withdrawals        Withdrawal[]
+  beneficiaries      Beneficiary[]
+  scheduledTransfers ScheduledTransfer[]
+  disputes           Dispute[]
+  payouts            Payout[]
+  fraudAlerts        FraudAlert[]
+  fraudSignals       FraudSignal[]
+
   @@index([accountStatus])
-  transactions Transaction[]
-  payments     Payment[]
-  withdrawals  Withdrawal[]
 }
 
 model DevSession {
@@ -63,36 +70,42 @@ model Wallet {
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
-  outgoingTransactions Transaction[]  @relation("TransactionSource")
-  incomingTransactions Transaction[]  @relation("TransactionDestination")
+  outgoingTransactions Transaction[]       @relation("TransactionSource")
+  incomingTransactions Transaction[]       @relation("TransactionDestination")
   payments             Payment[]
   ledgerAccount        LedgerAccount?
   withdrawals          Withdrawal[]
+  scheduledTransfers   ScheduledTransfer[]
+  payouts              Payout[]
+  fraudAlerts          FraudAlert[]
 }
 
 model Transaction {
-  id                  String                @id @default(uuid())
-  reference           String                @unique @default(uuid())
+  id                  String                     @id @default(uuid())
+  reference           String                     @unique @default(uuid())
   initiatedByUserId   String
-  initiatedBy         UserProfile           @relation(fields: [initiatedByUserId], references: [id], onDelete: Restrict)
-  type                String                @default("TRANSFER")
+  initiatedBy         UserProfile                @relation(fields: [initiatedByUserId], references: [id], onDelete: Restrict)
+  type                String                     @default("TRANSFER")
   sourceWalletId      String?
-  sourceWallet        Wallet?               @relation("TransactionSource", fields: [sourceWalletId], references: [id], onDelete: Restrict)
+  sourceWallet        Wallet?                    @relation("TransactionSource", fields: [sourceWalletId], references: [id], onDelete: Restrict)
   destinationWalletId String
-  destinationWallet   Wallet                @relation("TransactionDestination", fields: [destinationWalletId], references: [id], onDelete: Restrict)
-  amount              Decimal               @db.Decimal(19, 2)
-  feeAmount           Decimal               @default(0) @db.Decimal(19, 2)
-  reversedAmount      Decimal               @default(0) @db.Decimal(19, 2)
-  status              String                @default("POSTED")
-  currency            String                @default("ETB") @db.VarChar(3)
-  businessDate        DateTime              @default(now()) @db.Date
+  destinationWallet   Wallet                     @relation("TransactionDestination", fields: [destinationWalletId], references: [id], onDelete: Restrict)
+  amount              Decimal                    @db.Decimal(19, 2)
+  feeAmount           Decimal                    @default(0) @db.Decimal(19, 2)
+  reversedAmount      Decimal                    @default(0) @db.Decimal(19, 2)
+  status              String                     @default("POSTED")
+  currency            String                     @default("ETB") @db.VarChar(3)
+  businessDate        DateTime                   @default(now()) @db.Date
   policySnapshot      Json?
   idempotencyKey      String
-  paymentId           String?               @unique
-  payment             Payment?              @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  paymentId           String?                    @unique
+  payment             Payment?                   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   journalEntry        JournalEntry?
   reversals           TransactionReversal[]
-  createdAt           DateTime              @default(now())
+  disputes            Dispute[]
+  riskAssessment      TransactionRiskAssessment?
+  fraudAlerts         FraudAlert[]
+  createdAt           DateTime                   @default(now())
 
   @@unique([initiatedByUserId, idempotencyKey])
   @@index([sourceWalletId, createdAt])
@@ -167,26 +180,27 @@ model LedgerAccount {
 }
 
 model JournalEntry {
-  id              String               @id @default(uuid())
-  reference       String               @unique
-  eventType       String
-  eventRef        String
-  status          String               @default("POSTED")
-  currency        String               @db.VarChar(3)
-  description     String?
-  metadata        Json?
-  createdByUserId String?
-  transactionId   String?              @unique
-  transaction     Transaction?         @relation(fields: [transactionId], references: [id], onDelete: Restrict)
-  withdrawalId    String?              @unique
-  withdrawal      Withdrawal?          @relation(fields: [withdrawalId], references: [id], onDelete: Restrict)
-  reversalOfId    String?
-  reversalOf      JournalEntry?        @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversedBy      JournalEntry[]       @relation("JournalReversal")
-  reversalRecord  TransactionReversal?
-  postings        LedgerPosting[]
-  postedAt        DateTime             @default(now())
-  createdAt       DateTime             @default(now())
+  id               String               @id @default(uuid())
+  reference        String               @unique
+  eventType        String
+  eventRef         String
+  status           String               @default("POSTED")
+  currency         String               @db.VarChar(3)
+  description      String?
+  metadata         Json?
+  createdByUserId  String?
+  transactionId    String?              @unique
+  transaction      Transaction?         @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  withdrawalId     String?              @unique
+  withdrawal       Withdrawal?          @relation(fields: [withdrawalId], references: [id], onDelete: Restrict)
+  payoutSettlement Payout?              @relation("PayoutSettlementEntry")
+  reversalOfId     String?
+  reversalOf       JournalEntry?        @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy       JournalEntry[]       @relation("JournalReversal")
+  reversalRecord   TransactionReversal?
+  postings         LedgerPosting[]
+  postedAt         DateTime             @default(now())
+  createdAt        DateTime             @default(now())
 
   @@unique([eventType, eventRef])
   @@index([eventRef])
@@ -242,6 +256,7 @@ model Withdrawal {
   idempotencyKey String
   failureReason  String?
   journalEntry   JournalEntry?
+  payout         Payout?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -302,5 +317,476 @@ model PaymentReconciliationRecord {
   createdAt        DateTime @default(now())
 
   @@index([paymentId, createdAt])
+  @@index([outcome])
+}
+
+// --- Transactional outbox ------------------------------------------------
+
+// Written in the same transaction as the business change, then relayed to
+// downstream consumers by the outbox dispatcher. The unique eventId makes
+// relay deliveries idempotent.
+model OutboxEvent {
+  id            String    @id @default(uuid())
+  eventId       String    @unique @default(uuid())
+  type          String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  occurredAt    DateTime  @default(now())
+  publishedAt   DateTime?
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([publishedAt, nextAttemptAt])
+  @@index([aggregateType, aggregateId])
+  @@index([type, occurredAt])
+}
+
+// --- Saved beneficiaries -------------------------------------------------
+
+model Beneficiary {
+  id                  String      @id @default(uuid())
+  userId              String
+  user                UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  nickname            String?
+  accountNumber       String
+  bankName            String      @default("Meridian Bank")
+  bankCode            String?
+  destinationWalletId String?
+  isFavorite          Boolean     @default(false)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  payouts             Payout[]
+
+  @@unique([userId, accountNumber])
+  @@index([userId, createdAt])
+}
+
+// --- Scheduled transfers -------------------------------------------------
+
+model ScheduledTransfer {
+  id                  String      @id @default(uuid())
+  userId              String
+  user                UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  destinationWalletId String
+  destinationWallet   Wallet      @relation(fields: [destinationWalletId], references: [id], onDelete: Restrict)
+  amount              Decimal     @db.Decimal(19, 2)
+  currency            String      @default("ETB") @db.VarChar(3)
+  frequency           String      @default("ONCE")
+  nextRunAt           DateTime
+  timezone            String      @default("Africa/Addis_Ababa")
+  status              String      @default("ACTIVE")
+  lastRunAt           DateTime?
+  lastTransactionId   String?
+  failureReason       String?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status, nextRunAt])
+}
+
+// --- Dispute management --------------------------------------------------
+
+model Dispute {
+  id             String         @id @default(uuid())
+  reference      String         @unique @default(uuid())
+  userId         String
+  user           UserProfile    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  transactionId  String
+  transaction    Transaction    @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  reason         String
+  description    String
+  status         String         @default("OPEN")
+  resolution     String?
+  resolvedAmount Decimal?       @db.Decimal(19, 2)
+  assignedTo     String?
+  openedAt       DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  events         DisputeEvent[]
+
+  @@index([userId, openedAt])
+  @@index([status, openedAt])
+  @@index([transactionId])
+}
+
+model DisputeEvent {
+  id          String   @id @default(uuid())
+  disputeId   String
+  dispute     Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  type        String
+  note        String?
+  actorUserId String?
+  createdAt   DateTime @default(now())
+
+  @@index([disputeId, createdAt])
+}
+
+// --- Phase 4: ledger verification jobs -----------------------------------
+//
+// prisma/verifyLedger.js has always been able to prove the ledger is intact;
+// what it could not do is run on a schedule, remember what it found, or tell
+// anybody. These two tables turn the manual check into an audited job.
+
+model LedgerVerificationRun {
+  id              String                    @id @default(uuid())
+  reference       String                    @unique @default(uuid())
+  trigger         String                    @default("SCHEDULED")
+  status          String                    @default("RUNNING")
+  businessDate    DateTime                  @db.Date
+  startedAt       DateTime                  @default(now())
+  finishedAt      DateTime?
+  durationMs      Int?
+  checksRun       Int                       @default(0)
+  entriesChecked  Int                       @default(0)
+  accountsChecked Int                       @default(0)
+  issuesFound     Int                       @default(0)
+  totals          Json?
+  summary         Json?
+  errorMessage    String?
+  actorUserId     String?
+  issues          LedgerVerificationIssue[]
+  createdAt       DateTime                  @default(now())
+
+  @@index([status, startedAt])
+  @@index([startedAt])
+}
+
+model LedgerVerificationIssue {
+  id             String                @id @default(uuid())
+  runId          String
+  run            LedgerVerificationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  classification String
+  severity       String
+  aggregateType  String
+  aggregateId    String
+  accountCode    String?
+  expected       Decimal?              @db.Decimal(19, 2)
+  actual         Decimal?              @db.Decimal(19, 2)
+  difference     Decimal?              @db.Decimal(19, 2)
+  details        Json?
+  status         String                @default("OPEN")
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  resolvedBy     String?
+  resolvedAt     DateTime?
+  resolutionNote String?
+  detectedAt     DateTime              @default(now())
+
+  @@index([runId])
+  @@index([status, severity])
+  @@index([classification, aggregateId])
+}
+
+// --- Phase 4: fraud detection --------------------------------------------
+//
+// Rules and thresholds are data. The engine reads them, scores a signal and
+// raises an alert; it never decides guilt. Every alert is a hypothesis for a
+// human investigator to confirm or dismiss.
+
+model FraudRule {
+  id              String              @id @default(uuid())
+  code            String              @unique
+  name            String
+  description     String?
+  signal          String
+  params          Json                @default("{}")
+  points          Int                 @default(10)
+  riskWeight      Int                 @default(1)
+  windowMinutes   Int?
+  cooldownMinutes Int                 @default(60)
+  generatesAlert  Boolean             @default(true)
+  recommendsHold  Boolean             @default(false)
+  version         Int                 @default(1)
+  isActive        Boolean             @default(true)
+  effectiveFrom   DateTime            @default(now())
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  revisions       FraudRuleRevision[]
+
+  @@index([isActive, signal])
+}
+
+model FraudRuleRevision {
+  id        String    @id @default(uuid())
+  ruleId    String
+  rule      FraudRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  changedBy String
+  reason    String
+  snapshot  Json
+  createdAt DateTime  @default(now())
+
+  @@index([ruleId, createdAt])
+}
+
+// Authentication lives in auth_db, so login signals arrive over the internal
+// API and are mirrored here in the reduced form the rules need. subjectHash and
+// ipHash stay digests — this table must not become a copy of the auth log.
+model FraudSignal {
+  id                    String       @id @default(uuid())
+  dedupeKey             String       @unique
+  userId                String?
+  user                  UserProfile? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type                  String
+  subjectHash           String?
+  ipHash                String?
+  deviceFingerprintHash String?
+  occurredAt            DateTime     @default(now())
+  payload               Json?
+  processedAt           DateTime?
+  createdAt             DateTime     @default(now())
+
+  @@index([userId, occurredAt])
+  @@index([type, occurredAt])
+  @@index([deviceFingerprintHash, occurredAt])
+}
+
+model TransactionRiskAssessment {
+  id              String      @id @default(uuid())
+  transactionId   String      @unique
+  transaction     Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  userId          String
+  score           Int
+  riskLevel       String
+  factors         Json        @default("[]")
+  thresholds      Json?
+  engineVersion   String      @default("v1")
+  alertsGenerated Int         @default(0)
+  createdAt       DateTime    @default(now())
+
+  @@index([riskLevel, createdAt])
+  @@index([userId, createdAt])
+}
+
+model FraudAlert {
+  id               String            @id @default(uuid())
+  reference        String            @unique @default(uuid())
+  dedupeKey        String            @unique
+  userId           String?
+  user             UserProfile?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  walletId         String?
+  wallet           Wallet?           @relation(fields: [walletId], references: [id], onDelete: SetNull)
+  transactionId    String?
+  transaction      Transaction?      @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  ruleCode         String
+  source           String            @default("RULE_ENGINE")
+  riskLevel        String
+  score            Int
+  status           String            @default("NEW")
+  title            String
+  summary          String?
+  evidence         Json?
+  amount           Decimal?          @db.Decimal(19, 2)
+  currency         String?           @db.VarChar(3)
+  openedAt         DateTime          @default(now())
+  assignedToUserId String?
+  acknowledgedAt   DateTime?
+  resolvedAt       DateTime?
+  resolvedBy       String?
+  resolution       String?
+  events           FraudAlertEvent[]
+  caseLinks        FraudCaseAlert[]
+
+  @@index([status, openedAt])
+  @@index([userId, openedAt])
+  @@index([riskLevel, openedAt])
+  @@index([ruleCode, openedAt])
+  @@index([transactionId])
+}
+
+// Append-only investigation trail: an alert's history is never rewritten.
+model FraudAlertEvent {
+  id          String     @id @default(uuid())
+  alertId     String
+  alert       FraudAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  type        String
+  note        String?
+  actorUserId String?
+  payload     Json?
+  createdAt   DateTime   @default(now())
+
+  @@index([alertId, createdAt])
+}
+
+model FraudCase {
+  id               String           @id @default(uuid())
+  reference        String           @unique @default(uuid())
+  title            String
+  description      String?
+  riskLevel        String           @default("MEDIUM")
+  status           String           @default("OPEN")
+  openedBy         String
+  assignedToUserId String?
+  openedAt         DateTime         @default(now())
+  dueAt            DateTime?
+  closedAt         DateTime?
+  closureReason    String?
+  outcome          String?
+  alerts           FraudCaseAlert[]
+  notes            FraudCaseNote[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([status, openedAt])
+  @@index([assignedToUserId, status])
+}
+
+model FraudCaseAlert {
+  id       String     @id @default(uuid())
+  caseId   String
+  case     FraudCase  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  alertId  String
+  alert    FraudAlert @relation(fields: [alertId], references: [id], onDelete: Restrict)
+  linkedBy String
+  linkedAt DateTime   @default(now())
+
+  @@unique([caseId, alertId])
+  @@index([alertId])
+}
+
+model FraudCaseNote {
+  id        String    @id @default(uuid())
+  caseId    String
+  case      FraudCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  authorId  String
+  body      String
+  createdAt DateTime  @default(now())
+
+  @@index([caseId, createdAt])
+}
+
+// Accounts the platform has reason to watch. A watchlist hit raises an alert;
+// it does not, on its own, accuse anyone.
+model FraudWatchlistEntry {
+  id         String    @id @default(uuid())
+  targetType String
+  targetRef  String
+  label      String?
+  reason     String
+  addedBy    String
+  addedAt    DateTime  @default(now())
+  expiresAt  DateTime?
+  isActive   Boolean   @default(true)
+  removedBy  String?
+  removedAt  DateTime?
+
+  @@index([targetType, targetRef])
+  @@index([isActive, expiresAt])
+}
+
+// --- Phase 4: external payouts -------------------------------------------
+//
+// A payout is funded by the existing withdrawal reservation, so the money is
+// always accounted for before the provider is called and the wallet can never
+// go negative. SUCCESS is only ever written from a verified provider response
+// or webhook, never from a request that was merely accepted.
+
+model Payout {
+  id                 String                       @id @default(uuid())
+  reference          String                       @unique @default(uuid())
+  userId             String
+  user               UserProfile                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  walletId           String
+  wallet             Wallet                       @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  withdrawalId       String                       @unique
+  withdrawal         Withdrawal                   @relation(fields: [withdrawalId], references: [id], onDelete: Restrict)
+  beneficiaryId      String?
+  beneficiary        Beneficiary?                 @relation(fields: [beneficiaryId], references: [id], onDelete: SetNull)
+  provider           String                       @default("MOCK")
+  providerPayoutId   String?                      @unique
+  destinationAccount String
+  destinationName    String?
+  destinationCode    String?
+  amount             Decimal                      @db.Decimal(19, 2)
+  feeAmount          Decimal                      @default(0) @db.Decimal(19, 2)
+  currency           String                       @default("ETB") @db.VarChar(3)
+  status             String                       @default("PENDING")
+  idempotencyKey     String
+  tierCode           String?
+  policySnapshot     Json?
+  riskScore          Int?
+  screeningRef       String?
+  requestedAt        DateTime                     @default(now())
+  sentAt             DateTime?
+  completedAt        DateTime?
+  reversedAt         DateTime?
+  failureReason      String?
+  reversalReason     String?
+  settlementEntryId  String?                      @unique
+  settlementEntry    JournalEntry?                @relation("PayoutSettlementEntry", fields: [settlementEntryId], references: [id], onDelete: Restrict)
+  attempts           PayoutAttempt[]
+  webhookEvents      PayoutWebhookEvent[]
+  reconciliation     PayoutReconciliationRecord[]
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+
+  @@unique([userId, idempotencyKey])
+  @@index([status, requestedAt])
+  @@index([userId, requestedAt])
+  @@index([provider, status])
+  @@index([walletId, createdAt])
+}
+
+model PayoutAttempt {
+  id             String    @id @default(uuid())
+  payoutId       String
+  payout         Payout    @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  attempt        Int
+  trigger        String    @default("INITIAL")
+  provider       String
+  providerStatus String?
+  providerRef    String?
+  outcome        String
+  httpStatus     Int?
+  errorCode      String?
+  errorMessage   String?
+  latencyMs      Int?
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  details        Json?
+
+  @@unique([payoutId, attempt])
+  @@index([payoutId, startedAt])
+  @@index([outcome, startedAt])
+}
+
+// Unsigned or unmatched deliveries are still recorded, with payoutId null, so
+// an attacker's forged webhook attempt leaves evidence instead of a 500.
+model PayoutWebhookEvent {
+  id                String    @id @default(uuid())
+  bodyHash          String    @unique
+  payoutId          String?
+  payout            Payout?   @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  payoutReference   String?
+  provider          String
+  event             String
+  signatureValid    Boolean   @default(false)
+  remoteAddressHash String?
+  payload           Json?
+  receivedAt        DateTime  @default(now())
+  processedAt       DateTime?
+
+  @@index([payoutReference, receivedAt])
+  @@index([payoutId, receivedAt])
+}
+
+model PayoutReconciliationRecord {
+  id               String   @id @default(uuid())
+  payoutId         String
+  payout           Payout   @relation(fields: [payoutId], references: [id], onDelete: Restrict)
+  attempt          Int
+  trigger          String   @default("SCHEDULED")
+  providerStatus   String?
+  providerRef      String?
+  providerAmount   Decimal? @db.Decimal(19, 2)
+  providerCurrency String?  @db.VarChar(3)
+  outcome          String
+  details          String?
+  createdAt        DateTime @default(now())
+
+  @@index([payoutId, createdAt])
   @@index([outcome])
 }

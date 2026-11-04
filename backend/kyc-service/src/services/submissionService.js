@@ -1,6 +1,7 @@
 const prisma = require("../config/database");
 const ApiError = require("../utils/ApiError");
 const userServiceClient = require("./userServiceClient");
+const tierService = require("./tierService");
 const { SUBMISSION_STATUS } = require("../constants/kycStatus");
 const { evaluateApproval } = require("../utils/approval");
 
@@ -119,7 +120,26 @@ async function getCurrentStatus(userId) {
   }
 
   const approval = evaluateApproval(submission);
-  return { ...submission, ...approval };
+  // The limits reported here are the tier the platform currently applies, which
+  // can be lower than what this submission would qualify for until an officer
+  // records the decision.
+  const tier = await tierService.effectiveTier(userId);
+  return {
+    ...submission,
+    ...approval,
+    tier: tier.tier
+      ? {
+          id: tier.tier.id,
+          code: tier.tier.code,
+          name: tier.tier.name,
+          version: tier.tier.version,
+          source: tier.source,
+        }
+      : null,
+    limits: tier.limits,
+    allowedOperations: tier.allowedOperations,
+    requiresReVerification: tier.requiresReVerification,
+  };
 }
 
 async function getInternalStatus(userId) {
@@ -140,6 +160,11 @@ async function getInternalStatus(userId) {
   // The newest application is authoritative: an approval stops counting once
   // a later application exists, expires, or is revoked.
   const approval = evaluateApproval(latestSubmission);
+  // Additive tier payload: user-service keeps reading isApproved exactly as
+  // before, and clamps each operation with these limits on top of its own
+  // policy. A caller that ignores them is unchanged, so no existing integration
+  // breaks while tiers are being rolled out.
+  const tier = await tierService.effectiveTier(userId);
   return {
     userId,
     isApproved: approval.isApproved,
@@ -152,6 +177,13 @@ async function getInternalStatus(userId) {
     approvalExpiresAt: latestSubmission?.approvalExpiresAt || null,
     revokedAt: latestSubmission?.revokedAt || null,
     updatedAt: latestSubmission?.updatedAt || null,
+    tierCode: tier.tier?.code ?? null,
+    tierId: tier.tier?.id ?? null,
+    tierVersion: tier.tier?.version ?? null,
+    tierSource: tier.source,
+    allowedOperations: tier.allowedOperations,
+    limits: tier.limits,
+    reVerificationDueAt: tier.expiresAt ?? null,
   };
 }
 
