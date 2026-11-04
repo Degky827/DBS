@@ -205,6 +205,13 @@ All APIs use the envelope `{ success, message, data | errors }`. Login and refre
 
 ### Running Tests
 
+The integration suites expect disposable PostgreSQL databases. Create and
+migrate them once with:
+
+```bash
+./scripts/create-test-databases.sh
+```
+
 #### Backend Unit Tests
 
 ```bash
@@ -263,7 +270,7 @@ dependency review, and Trivy scans of every built image (CRITICAL/HIGH block). C
 scanning runs separately in `.github/workflows/codeql.yml`.
 
 **Test Coverage:**
-- 335 automated tests across five suites (75 auth, 174 user, 64 KYC, 11 notification, 11 frontend)
+- 422 automated tests across five suites (79 auth, 218 user, 95 KYC, 19 notification, 11 frontend); Redis-backed and optional-database specs skip with an explicit reason when their dependency is absent
 - Financial integrity (concurrency, precision, atomicity, ledger immutability)
 - Security (JWT, refresh tokens, rate limiting, CORS/CSRF)
 - Authentication flows (registration, login, password reset)
@@ -352,6 +359,7 @@ delivery resumes automatically once notification-service is healthy again.
 | `docs/deployment-guide.md` | Production deployment procedures |
 | `docs/backup-and-recovery.md` | Data protection, restore rehearsal, and disaster recovery |
 | `docs/testing-guide.md` | Testing infrastructure and procedures |
+| `docs/security-audit-2026-11-04.md` | Full-platform audit: architecture, credential exposure, fixes, residual risks |
 | `docs/phase4-final-report.md` | Phase 4 summary and production readiness |
 | `docs/phase4-audit-and-plan.md` | Repository audit and implementation plan |
 

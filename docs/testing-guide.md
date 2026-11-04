@@ -67,32 +67,41 @@
 
 ### Backend Test Databases
 
-Tests require isolated PostgreSQL databases:
+Tests require isolated PostgreSQL databases. The repeatable path is a single
+script, which creates the four databases if missing and applies each service's
+migrations:
+
+```bash
+# Development PostgreSQL (via Docker)
+docker compose -f docker-compose.dev.yml up -d postgres
+
+# Create auth_test, user_test, kyc_test, notification_test and migrate them
+./scripts/create-test-databases.sh
+```
+
+The script targets the local Compose project (`COMPOSE_PROJECT_NAME`, default
+`banking-system`) and the `postgres` service; override `COMPOSE_FILE`,
+`POSTGRES_USER` or `POSTGRES_PASSWORD` if the dev stack uses different values.
+It refuses to run anywhere that is not the Compose-internal PostgreSQL host.
+
+The equivalent manual commands are:
 
 ```bash
 # Development PostgreSQL (via Docker)
 docker compose -f docker-compose.dev.yml up -d postgres
 
 # Create test databases
-docker exec -it meridian-dev-postgres-1 psql -U meridian -d postgres <<EOF
+docker compose -f docker-compose.dev.yml exec -T postgres psql -U meridian -d postgres <<EOF
 CREATE DATABASE auth_test;
 CREATE DATABASE user_test;
 CREATE DATABASE kyc_test;
 CREATE DATABASE notification_test;
 EOF
 
-# Grant permissions
-docker exec -it meridian-dev-postgres-1 psql -U meridian -d postgres <<EOF
-GRANT ALL PRIVILEGES ON DATABASE auth_test TO meridian;
-GRANT ALL PRIVILEGES ON DATABASE user_test TO meridian;
-GRANT ALL PRIVILEGES ON DATABASE kyc_test TO meridian;
-GRANT ALL PRIVILEGES ON DATABASE notification_test TO meridian;
-EOF
-
 # Migrate each test database before running the suites that use it
-(cd backend/user-service && DATABASE_URL='postgresql://meridian:password@localhost:5432/user_test?schema=public' npx prisma migrate deploy)
-(cd backend/kyc-service && DATABASE_URL='postgresql://meridian:password@localhost:5432/kyc_test?schema=public' npx prisma migrate deploy)
-(cd backend/notification-service && DATABASE_URL='postgresql://meridian:password@localhost:5432/notification_test?schema=public' npx prisma migrate deploy)
+(cd backend/user-service && DATABASE_URL='postgresql://meridian:dev-only-postgres-password@localhost:5432/user_test?schema=public' npx prisma migrate deploy)
+(cd backend/kyc-service && DATABASE_URL='postgresql://meridian:dev-only-postgres-password@localhost:5432/kyc_test?schema=public' npx prisma migrate deploy)
+(cd backend/notification-service && DATABASE_URL='postgresql://meridian:dev-only-postgres-password@localhost:5432/notification_test?schema=public' npx prisma migrate deploy)
 ```
 
 Migrations are not applied automatically by the test scripts. A test database that

@@ -361,6 +361,25 @@ curl -f https://bank.yourdomain.com/healthz || echo "Frontend not ready"
 curl -sI http://bank.yourdomain.com/ | grep -q "301" && echo "HTTP redirects to HTTPS"
 ```
 
+#### Recreating a backend container
+
+Nginx resolves `auth-service`, `user-service`, `kyc-service` and
+`notification-service` through Docker's embedded DNS with a 10-second cache and
+proxies to a variable upstream (`frontend/nginx/snippets/locations.conf`). A
+recreated container therefore gets a new IP and traffic resumes without
+restarting Nginx; only requests in flight during the swap can fail. If a
+recreated service is unreachable through Nginx, check name resolution inside
+the frontend container before restarting anything:
+
+```bash
+docker compose exec frontend getent hosts auth-service
+docker compose exec frontend wget -qO- http://auth-service:5001/api/v1/health
+```
+
+Upload and KYC volumes are named volumes. Their directory is repaired to the
+non-root `node` user by each service's entrypoint on every start, so a volume
+created by an older image stays writable after an upgrade.
+
 ### Step 6: Create Initial Admin Account (Optional)
 
 ```bash
