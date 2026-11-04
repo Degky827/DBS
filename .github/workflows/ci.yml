@@ -149,6 +149,17 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      # Only the distributed rate limit spec uses this; the main test run
+      # leaves REDIS_URL unset so the limiters it exercises stay per-process.
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
 
     steps:
       - name: Checkout code
@@ -195,6 +206,20 @@ jobs:
           COOKIE_SECURE: 'false'
         run: npm test
 
+      # The shared-window assertions need a second store instance counting the
+      # same key, so they run as their own spec against the Redis above.
+      - name: Run Redis-backed rate limit tests
+        working-directory: backend/auth-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/auth_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          BCRYPT_ROUNDS: '4'
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:rate-limit-store
+
   test-user-service:
     name: Test User Service
     runs-on: ubuntu-latest
@@ -213,6 +238,15 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
 
     steps:
       - name: Checkout code
@@ -286,6 +320,28 @@ jobs:
           ENABLE_API_DOCS: 'true'
         run: npm run test:all
 
+      - name: Run Redis-backed rate limit tests
+        working-directory: backend/user-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/user_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:rate-limit-store
+
+      - name: Run Redis-backed KYC status cache tests
+        working-directory: backend/user-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/user_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:kyc-cache
+
   test-kyc-service:
     name: Test KYC Service
     runs-on: ubuntu-latest
@@ -304,6 +360,15 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
 
     steps:
       - name: Checkout code
@@ -348,6 +413,18 @@ jobs:
           LOG_LEVEL: silent
           ENABLE_API_DOCS: 'false'
         run: npm test
+
+      - name: Run Redis-backed rate limit tests
+        working-directory: backend/kyc-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/kyc_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          STORAGE_ENCRYPTION_KEY: ${{ env.STORAGE_ENCRYPTION_KEY }}
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:rate-limit-store
 
   test-notification-service:
     name: Test Notification Service
@@ -413,6 +490,18 @@ jobs:
           LOG_LEVEL: silent
           ENABLE_API_DOCS: 'false'
         run: npm test
+
+      - name: Run Redis-backed rate limit tests
+        working-directory: backend/notification-service
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@localhost:5432/notification_test?schema=public
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          INTERNAL_SERVICE_KEY: ${{ env.INTERNAL_SERVICE_KEY }}
+          EMAIL_ENABLED: 'false'
+          LOG_LEVEL: silent
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run test:rate-limit-store
 
   test-frontend:
     name: Test Frontend
