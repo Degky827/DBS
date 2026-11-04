@@ -2,6 +2,7 @@ const { rateLimit } = require("express-rate-limit");
 
 const env = require("../config/env");
 const ApiResponse = require("../utils/ApiResponse");
+const { createRateLimitStore } = require("./rateLimitStore");
 
 const buildHandler = (message) => (req, res) => {
   const retryAfter = Math.ceil(
@@ -26,6 +27,7 @@ const globalLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.RATE_LIMIT_MAX,
+  store: createRateLimitStore("global"),
   skip: skipHealthChecks,
   handler: buildHandler("Too many requests, please try again later"),
 });
@@ -36,6 +38,7 @@ const internalLimiter = rateLimit({
   ...commonOptions,
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   limit: env.INTERNAL_RATE_LIMIT_MAX,
+  store: createRateLimitStore("internal"),
   handler: buildHandler("Too many internal notification requests, please try again later"),
 });
 

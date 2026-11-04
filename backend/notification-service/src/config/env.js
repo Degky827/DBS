@@ -239,6 +239,21 @@ const env = Object.freeze({
   RATE_LIMIT_WINDOW_MS: readNumber("RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
   RATE_LIMIT_MAX: readNumber("RATE_LIMIT_MAX", 300),
   INTERNAL_RATE_LIMIT_MAX: readNumber("INTERNAL_RATE_LIMIT_MAX", 300),
+  // Redis is optional: unset, every limiter counts this process alone.
+  REDIS_URL: readOptional("REDIS_URL"),
+  REDIS_KEY_PREFIX: readOptional("REDIS_KEY_PREFIX") || "notification",
+  REDIS_COMMAND_TIMEOUT_MS: readInteger("REDIS_COMMAND_TIMEOUT_MS", 500, {
+    min: 50,
+    max: 5000,
+  }),
+  REDIS_CONNECT_TIMEOUT_MS: readInteger("REDIS_CONNECT_TIMEOUT_MS", 2000, {
+    min: 100,
+    max: 15000,
+  }),
+  REDIS_RECONNECT_PERIOD_MS: readInteger("REDIS_RECONNECT_PERIOD_MS", 5000, {
+    min: 100,
+    max: 60000,
+  }),
   NOTIFICATION_PAGE_SIZE: readInteger("NOTIFICATION_PAGE_SIZE", 20, { min: 1, max: 100 }),
   EMAIL_ENABLED: emailEnabled,
   EMAIL_TRANSPORT: emailTransport || "api",
