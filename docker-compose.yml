@@ -39,6 +39,39 @@ services:
     networks:
       - backend
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Ephemeral by design: rate limit windows and read caches rebuild
+    # themselves, so nothing here has to survive a restart. Keys are written
+    # with a TTL, so volatile-lru can evict without dropping anything the
+    # ledger depends on.
+    command:
+      [
+        "redis-server",
+        "--requirepass",
+        "${REDIS_PASSWORD:?REDIS_PASSWORD is required}",
+        "--maxmemory",
+        "${REDIS_MAXMEMORY:-128mb}",
+        "--maxmemory-policy",
+        "volatile-lru",
+        "--appendonly",
+        "no",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli --no-auth-warning -a '${REDIS_PASSWORD}' ping | grep -q PONG",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
   auth-migrate:
     build:
       context: ./backend/auth-service
@@ -89,6 +122,10 @@ services:
       MFA_CHALLENGE_TTL_MS: ${MFA_CHALLENGE_TTL_MS:-300000}
       STEP_UP_TTL_MS: ${STEP_UP_TTL_MS:-600000}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
+      # Shared rate limit windows and short-lived read caches. Redis is a
+      # replica-safety and performance layer, not a source of truth: while it is
+      # unreachable, each process falls back to counting its own requests.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
       CORS_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
       TRUST_PROXY: 1
       ENABLE_HSTS: "true"
@@ -167,6 +204,10 @@ services:
       KYC_SERVICE_URL: http://kyc-service:5003/api/v1/kyc
       STEP_UP_TTL_MS: ${STEP_UP_TTL_MS:-600000}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
+      # Shared rate limit windows and short-lived read caches. Redis is a
+      # replica-safety and performance layer, not a source of truth: while it is
+      # unreachable, each process falls back to counting its own requests.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
       CORS_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
       TRUST_PROXY: 1
       ENABLE_HSTS: "true"
@@ -264,6 +305,10 @@ services:
       JWT_ISSUER: ${JWT_ISSUER:-auth-service}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-banking-system}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
+      # Shared rate limit windows and short-lived read caches. Redis is a
+      # replica-safety and performance layer, not a source of truth: while it is
+      # unreachable, each process falls back to counting its own requests.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
       USER_SERVICE_URL: http://user-service:5002/api/v1
       AUTH_SERVICE_URL: http://auth-service:5001/api/v1
       CORS_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
@@ -353,6 +398,10 @@ services:
       JWT_ISSUER: ${JWT_ISSUER:-auth-service}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-banking-system}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:?INTERNAL_SERVICE_KEY is required}
+      # Shared rate limit windows and short-lived read caches. Redis is a
+      # replica-safety and performance layer, not a source of truth: while it is
+      # unreachable, each process falls back to counting its own requests.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
       AUTH_SERVICE_URL: http://auth-service:5001/api/v1
       CORS_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
       TRUST_PROXY: 1
