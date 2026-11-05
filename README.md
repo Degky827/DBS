@@ -170,6 +170,16 @@ Because the browser sees a single origin, no CORS is involved and the refresh co
 
 `APP_ORIGIN` must be the public HTTPS origin. It drives CORS, the trusted-origin check on cookie endpoints, and (via Nginx) HSTS. By default the Nginx container terminates TLS with `certs/tls.crt` and `certs/tls.key`; alternatively set `TLS_ENABLED=false` and terminate TLS at an upstream load balancer that forwards `X-Forwarded-Proto: https`. `TRUST_PROXY=1` is set for the services.
 
+### Free-tier Render demonstration
+
+For the university demonstration there is a Render Blueprint at
+[`deploy/render/`](deploy/render/README.md). It runs the four services and the
+Nginx gateway as processes in one free Docker web service, uses a free Neon
+PostgreSQL project, stores encrypted KYC documents and avatars in PostgreSQL
+(no persistent disk), and sends email through Brevo's HTTPS API because Render
+blocks outbound SMTP. The Compose topology above and `deploy/oracle/` are
+unchanged.
+
 ### Secret generation
 
 ```bash
