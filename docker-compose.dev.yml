@@ -12,7 +12,7 @@
 #   docker compose -f docker-compose.dev.yml --profile spa up --build
 # Otherwise run `npm run dev` in frontend/ against the published APIs.
 
-name: meridian-dev
+name: banking-system
 
 services:
   postgres:

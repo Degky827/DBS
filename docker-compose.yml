@@ -16,7 +16,7 @@
 # certs/tls.crt and certs/tls.key, or set TLS_ENABLED=false and terminate TLS at
 # an upstream load balancer. See docs/deployment/deployment-guide.md.
 
-name: meridian
+name: banking-system
 
 services:
   postgres:
@@ -458,6 +458,9 @@ services:
       # TLS_ENABLED=true fails startup when certs/tls.crt or certs/tls.key is
       # missing. Set false only when a trusted proxy terminates TLS.
       TLS_ENABLED: "${TLS_ENABLED:-true}"
+      # Published HTTPS port; the HTTP listener redirects to this port when it
+      # is not 443.
+      FRONTEND_HTTPS_PORT: "${FRONTEND_HTTPS_PORT:-443}"
     depends_on:
       auth-service:
         condition: service_healthy

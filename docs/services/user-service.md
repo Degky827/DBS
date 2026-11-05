@@ -53,7 +53,7 @@ Using the development Compose Postgres (adjust the container and user if customi
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d postgres
-docker exec -it meridian-dev-postgres-1 psql -U meridian -d postgres -c "CREATE DATABASE user_db;"
+docker exec -it banking-system-postgres-1 psql -U auth -d postgres -c "CREATE DATABASE user_db;"
 ```
 
 Or with a local `psql`:

@@ -737,7 +737,7 @@ curl http://localhost:5004/api/v1/openapi.json > notification-api.json
 
 ```bash
 # Connect to PostgreSQL
-docker exec -it meridian-dev-postgres-1 psql -U meridian
+docker exec -it banking-system-postgres-1 psql -U auth
 
 # View tables
 \c auth_db
@@ -830,7 +830,7 @@ docker compose -f docker-compose.dev.yml ps postgres
 docker compose -f docker-compose.dev.yml logs postgres
 
 # Recreate test databases
-docker exec -it meridian-dev-postgres-1 psql -U meridian -d postgres -c "DROP DATABASE IF EXISTS auth_test; CREATE DATABASE auth_test;"
+docker exec -it banking-system-postgres-1 psql -U auth -d postgres -c "DROP DATABASE IF EXISTS auth_test; CREATE DATABASE auth_test;"
 ```
 
 ### Tests Fail With a Prisma P2022
@@ -869,7 +869,7 @@ npx prisma generate
 ### Permission Denied on Test Database
 
 ```bash
-docker exec -it meridian-dev-postgres-1 psql -U meridian -d postgres <<EOF
+docker exec -it banking-system-postgres-1 psql -U auth -d postgres <<EOF
 GRANT ALL PRIVILEGES ON DATABASE auth_test TO meridian;
 GRANT ALL PRIVILEGES ON DATABASE user_test TO meridian;
 GRANT ALL PRIVILEGES ON DATABASE kyc_test TO meridian;

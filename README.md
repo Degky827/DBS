@@ -112,7 +112,7 @@ npm run dev                       # http://localhost:5173
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d postgres
-docker exec -it meridian-dev-postgres-1 psql -U meridian -d postgres \
+docker exec -it banking-system-postgres-1 psql -U auth -d postgres \
   -c "CREATE DATABASE user_db;" -c "CREATE DATABASE kyc_db;" -c "CREATE DATABASE notification_db;"
 ```
 

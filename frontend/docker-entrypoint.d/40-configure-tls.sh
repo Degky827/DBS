@@ -21,8 +21,20 @@ case "$TLS_MODE" in
             echo "[entrypoint] TLS_ENABLED requires $CERT_DIR/tls.crt and $CERT_DIR/tls.key." >&2
             exit 1
         fi
-        cp /etc/nginx/banking/tls.conf "$CONF_DIR/default.conf"
-        echo "[entrypoint] TLS enabled (certificate: $CERT_DIR/tls.crt)"
+        # The HTTP listener redirects to the published HTTPS port. When that
+        # port is not 443 the browser needs the explicit port in the Location.
+        REDIRECT_SUFFIX=""
+        case "${FRONTEND_HTTPS_PORT:-443}" in
+            443|"") ;;
+            *[!0-9]*)
+                echo "[entrypoint] Invalid FRONTEND_HTTPS_PORT: $FRONTEND_HTTPS_PORT" >&2
+                exit 1
+                ;;
+            *) REDIRECT_SUFFIX=":${FRONTEND_HTTPS_PORT}" ;;
+        esac
+        sed "s|__HTTPS_REDIRECT_PORT__|$REDIRECT_SUFFIX|g" \
+            /etc/nginx/banking/tls.conf > "$CONF_DIR/default.conf"
+        echo "[entrypoint] TLS enabled (certificate: $CERT_DIR/tls.crt, https port ${FRONTEND_HTTPS_PORT:-443})"
         ;;
     false|0|no|off)
         cp /etc/nginx/banking/http.conf "$CONF_DIR/default.conf"
