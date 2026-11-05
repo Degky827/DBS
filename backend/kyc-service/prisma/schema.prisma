@@ -355,3 +355,15 @@ model KycOutboxEvent {
   @@index([aggregateType, aggregateId])
   @@index([type, occurredAt])
 }
+
+// ---------------------------------------------------------------------------
+// Encrypted document bodies for hosts without a persistent filesystem.
+// STORAGE_BACKEND=postgres reads and writes this table instead of STORAGE_DIR.
+// ---------------------------------------------------------------------------
+
+model StoredDocumentBlob {
+  storageKey String   @id
+  data       Bytes
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
