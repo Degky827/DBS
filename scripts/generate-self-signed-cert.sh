@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Generates a self-signed certificate for local or staging TLS testing.
 # Production deployments should use a CA-issued certificate (see
-# docs/deployment-guide.md). The frontend container reads certs/tls.crt and
+# docs/deployment/deployment-guide.md). The frontend container reads certs/tls.crt and
 # certs/tls.key.
 set -euo pipefail
 

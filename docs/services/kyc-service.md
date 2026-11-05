@@ -42,7 +42,7 @@ docker compose -f docker-compose.dev.yml up --build kyc-service
 The SQL initialization script runs only when PostgreSQL initializes a new data directory. If an existing volume predates the KYC service, create the database once (adjust the user if it is not `meridian`):
 
 ```bash
-docker exec meridian-dev-postgres-1 psql -U meridian -d postgres -c "CREATE DATABASE kyc_db;"
+docker exec banking-system-postgres-1 psql -U auth -d postgres -c "CREATE DATABASE kyc_db;"
 ```
 
 The production stack (`docker-compose.yml`) runs `prisma migrate deploy` in a one-shot `kyc-migrate` service, keeps the KYC service off the host network, and requires `STORAGE_ENCRYPTION_KEY`.

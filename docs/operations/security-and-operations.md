@@ -5,9 +5,9 @@ they are configured, how to operate and rotate them, and which controls are
 **not** implemented. It is intentionally descriptive, not aspirational: every
 item below can be traced to a file or command in this repository.
 
-Related documents: [environment-setup.md](./environment-setup.md) (every
-environment variable), [deployment-guide.md](./deployment-guide.md),
-[backup-and-recovery.md](./backup-and-recovery.md),
+Related documents: [environment-setup.md](../deployment/environment-setup.md) (every
+environment variable), [deployment-guide.md](../deployment/deployment-guide.md),
+[backup-and-recovery.md](../deployment/backup-and-recovery.md),
 [testing-guide.md](./testing-guide.md).
 
 ---
@@ -52,15 +52,15 @@ routes install a narrowly scoped relaxed policy in `apiDocsSecurity.js`.
 Additional headers: `X-Content-Type-Options: nosniff`,
 `Referrer-Policy: no-referrer`, frame denial, and conditional HSTS
 (`ENABLE_HSTS`). The SPA is served by Nginx in
-[frontend/nginx.conf](../frontend/nginx.conf) with its own CSP
+[frontend/nginx.conf](../../frontend/nginx.conf) with its own CSP
 (`script-src 'self'`), HSTS, COOP/CORP, and `Permissions-Policy`.
 
 The production image terminates TLS itself when `certs/tls.crt` and
 `certs/tls.key` are mounted; the entrypoint selects
-[frontend/nginx.http.conf](../frontend/nginx.http.conf) otherwise. TLS 1.2 and
+[frontend/nginx.http.conf](../../frontend/nginx.http.conf) otherwise. TLS 1.2 and
 1.3 are enabled, session tickets are disabled, and HTTP redirects to HTTPS
 except for `/healthz` and ACME challenges. See
-[deployment-guide.md](deployment-guide.md#6-tls-certificates).
+[deployment-guide.md](../deployment/deployment-guide.md#6-tls-certificates).
 
 HSTS is emitted by Nginx when either the direct connection or
 `X-Forwarded-Proto` is HTTPS. Behind a TLS-terminating load balancer, set
@@ -93,7 +93,7 @@ only its own replica, so during an outage the effective budget grows with the re
 `/metrics` (auth, user and KYC services) is the signal to page on. Sessions are
 still issued by auth-service and stored in PostgreSQL — Redis holds no session,
 credential, or financial state. See
-[environment-setup.md](./environment-setup.md), section 11.
+[environment-setup.md](../deployment/environment-setup.md), section 11.
 
 ## 5. Secrets and configuration
 
@@ -115,7 +115,7 @@ Secrets are read from the process environment or, when `<NAME>_FILE` is set,
 from the file it points to. The file value takes precedence over the plain
 variable, so Compose secrets and Kubernetes secret volumes work without
 exposing values in `docker inspect`. A missing or unreadable file aborts
-startup. `docs/environment-setup.md` lists each variable, its format, whether
+startup. `docs/deployment/environment-setup.md` lists each variable, its format, whether
 it is secret, and which services must share the same value
 (`INTERNAL_SERVICE_KEY`, `JWT_PUBLIC_KEY_BASE64`).
 
@@ -456,7 +456,7 @@ intended manual procedure.
    already known to reviewers (§7); check reconciliation records for Chapa and
    the KYC decision log.
 3. **Preserve** — take a database snapshot before any remediation that writes
-   data (see [backup-and-recovery.md](./backup-and-recovery.md)).
+   data (see [backup-and-recovery.md](../deployment/backup-and-recovery.md)).
 4. **Remediate** — fix forward with a new commit; never edit posted ledger rows
    (triggers forbid it). Use the reversal flow for financial corrections.
 5. **Recover** — restore from backup only after confirming the backup's

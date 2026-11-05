@@ -597,7 +597,7 @@ docker compose down
 # 2. Restore from the last verified backup set (destructive).
 #    The script stops services, writes a safety backup, restores databases
 #    and document volumes, restarts the stack, and verifies the ledger.
-#    See docs/backup-and-recovery.md for the approval checklist.
+#    See docs/deployment/backup-and-recovery.md for the approval checklist.
 ./scripts/restore.sh --backup backups/sets/<timestamp> --in-place
 
 # Or rehearse first against throw-away databases:
@@ -828,7 +828,7 @@ Check that all three service targets report `UP` in the Prometheus targets page
 the `alert-relay` container, which logs it under
 `docker compose logs alert-relay`; set `ALERT_SLACK_WEBHOOK_URL` or
 `ALERT_WEBHOOK_URL` to forward alerts to Slack or a generic webhook. See
-[docs/security-and-operations.md §10](./security-and-operations.md#10-monitoring-and-alerting).
+[docs/operations/security-and-operations.md §10](../operations/security-and-operations.md#10-monitoring-and-alerting).
 
 ### Smoke Tests
 

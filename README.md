@@ -24,7 +24,7 @@ backend/
 frontend/          # React SPA (Vite dev server, Nginx in production)
 docker-compose.yml      # Production-oriented stack (frontend only is published)
 docker-compose.dev.yml  # Development stack with localhost ports and pgAdmin
-docs/              # Project brief, operations guides, and audit reports
+docs/              # Project brief, guides, service docs, and reports (see docs/README.md)
 ```
 
 ## Security model (Phase 2)
@@ -112,7 +112,7 @@ npm run dev                       # http://localhost:5173
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d postgres
-docker exec -it meridian-dev-postgres-1 psql -U meridian -d postgres \
+docker exec -it banking-system-postgres-1 psql -U auth -d postgres \
   -c "CREATE DATABASE user_db;" -c "CREATE DATABASE kyc_db;" -c "CREATE DATABASE notification_db;"
 ```
 
@@ -197,7 +197,7 @@ All APIs use the envelope `{ success, message, data | errors }`. Login and refre
 | 1 | Registration, login, JWT | Done |
 | 2 (security) | Cookie refresh sessions, headers, rate limits, secret and deployment hardening | Done |
 | 3 | KYC submissions, identity checks, officer review | Done |
-| 4 (operations) | Testing, CI/CD, deployment, backup & recovery | **Done for development/testing**; see the [production readiness report](docs/production-readiness-report.md) |
+| 4 (operations) | Testing, CI/CD, deployment, backup & recovery | **Done for development/testing**; see the [production readiness report](docs/reports/production-readiness-report.md) |
 | 5 | Wallets and transactions | Double-entry ledger, atomic transfers, Chapa Test Mode deposits, admin reversals, configurable limits/fees, and stale-payment reconciliation implemented; withdrawal payouts require a payout-capable provider |
 | 6 | Banking features and eventing | Done — transactional outbox with dispatcher and replay, notification service (in-app inbox plus Brevo email), statements and PDF export, saved beneficiaries, scheduled transfers, dispute management, and fail-closing CI security gates |
 
@@ -278,13 +278,13 @@ scanning runs separately in `.github/workflows/codeql.yml`.
 - Eventing and banking features (outbox delivery and dedupe, notification inbox,
   email queueing, beneficiaries, scheduled transfers, statements, disputes)
 
-See `docs/testing-guide.md` for comprehensive testing documentation.
+See [`docs/operations/testing-guide.md`](docs/operations/testing-guide.md) for comprehensive testing documentation.
 
 ## Operations
 
 ### Deployment
 
-See `docs/deployment-guide.md` for:
+See [`docs/deployment/deployment-guide.md`](docs/deployment/deployment-guide.md) for:
 - Environment configuration
 - Initial deployment steps
 - Zero-downtime blue-green deployment
@@ -293,7 +293,7 @@ See `docs/deployment-guide.md` for:
 
 ### Backup & Recovery
 
-See `docs/backup-and-recovery.md` for:
+See [`docs/deployment/backup-and-recovery.md`](docs/deployment/backup-and-recovery.md) for:
 - `scripts/backup.sh` (database dumps, document volumes, SHA-256 manifest)
 - GPG encryption and off-host retention
 - `scripts/restore.sh` drills against throw-away databases
@@ -316,7 +316,7 @@ latency, security, KYC, and reconciliation alert rules:
 docker compose --profile monitoring up -d
 ```
 
-See `docs/security-and-operations.md` §10 for the exported series, alert list,
+See [`docs/operations/security-and-operations.md` §10](docs/operations/security-and-operations.md#10-monitoring-and-alerting) for the exported series, alert list,
 optional `METRICS_TOKEN` hardening, and alert forwarding configuration.
 
 ### Event delivery
@@ -349,19 +349,25 @@ delivery resumes automatically once notification-service is healthy again.
 
 ## Documentation
 
+All documentation lives under [`docs/`](docs/README.md), which indexes every
+document by topic.
+
 | Document | Purpose |
 |----------|---------|
-| `README.md` | Project overview and quick start |
-| `docs/production-readiness-report.md` | Evidence-based release status, defects fixed, and remaining blockers |
-| `docs/environment-setup.md` | Complete environment-variable inventory and per-service setup |
-| `docs/security-and-operations.md` | Security controls, monitoring, incident response, and secret rotation |
-| `docs/provider-integration-testing.md` | Brevo, Chapa, and Didit configuration and verification status |
-| `docs/deployment-guide.md` | Production deployment procedures |
-| `docs/backup-and-recovery.md` | Data protection, restore rehearsal, and disaster recovery |
-| `docs/testing-guide.md` | Testing infrastructure and procedures |
-| `docs/security-audit-2026-11-04.md` | Full-platform audit: architecture, credential exposure, fixes, residual risks |
-| `docs/phase4-final-report.md` | Phase 4 summary and production readiness |
-| `docs/phase4-audit-and-plan.md` | Repository audit and implementation plan |
+| [`docs/README.md`](docs/README.md) | Documentation index |
+| [`docs/project-brief.md`](docs/project-brief.md) | Project brief, scope, and requirements |
+| [`docs/deployment/environment-setup.md`](docs/deployment/environment-setup.md) | Complete environment-variable inventory and per-service setup |
+| [`docs/deployment/deployment-guide.md`](docs/deployment/deployment-guide.md) | Production deployment procedures |
+| [`docs/deployment/backup-and-recovery.md`](docs/deployment/backup-and-recovery.md) | Data protection, restore rehearsal, and disaster recovery |
+| [`docs/operations/security-and-operations.md`](docs/operations/security-and-operations.md) | Security controls, monitoring, incident response, and secret rotation |
+| [`docs/operations/provider-integration-testing.md`](docs/operations/provider-integration-testing.md) | Brevo, Chapa, and Didit configuration and verification status |
+| [`docs/operations/testing-guide.md`](docs/operations/testing-guide.md) | Testing infrastructure and procedures |
+| [`docs/architecture/ledger-design.md`](docs/architecture/ledger-design.md) | Double-entry ledger, money flow, and integrity guarantees |
+| [`docs/architecture/user-auth-integration.md`](docs/architecture/user-auth-integration.md) | User-service ↔ auth-service identity integration contract |
+| [`docs/services/user-service.md`](docs/services/user-service.md) | User-service setup, API surface, and operations |
+| [`docs/services/kyc-service.md`](docs/services/kyc-service.md) | KYC-service setup, workflows, and operations |
+| [`docs/reports/production-readiness-report.md`](docs/reports/production-readiness-report.md) | Evidence-based release status, defects fixed, and remaining blockers |
+| [`docs/reports/security-audit-2026-11-04.md`](docs/reports/security-audit-2026-11-04.md) | Full-platform audit: architecture, credential exposure, fixes, residual risks |
 
 ## License
 

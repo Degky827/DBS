@@ -3,7 +3,7 @@
   "info": {
     "title": "Digital Banking - User Service (Phase 3, standalone)",
     "version": "1.1.0",
-    "description": "Standalone user profile and wallet API for development. Uses opaque development sessions (AUTH_MODE=dev) so profile endpoints can be tested without auth-service. This authentication mode is NOT production-ready. See docs/INTEGRATION.md for the JWT integration plan. Phase 3 posts every wallet change through a double-entry ledger; balances are liabilities and are never treated as revenue. All responses use the envelope `{ success, message, data | errors }`. Password hashes are never returned.",
+    "description": "Standalone user profile and wallet API for development. Uses opaque development sessions (AUTH_MODE=dev) so profile endpoints can be tested without auth-service. This authentication mode is NOT production-ready. See docs/architecture/user-auth-integration.md for the JWT integration plan. Phase 3 posts every wallet change through a double-entry ledger; balances are liabilities and are never treated as revenue. All responses use the envelope `{ success, message, data | errors }`. Password hashes are never returned.",
     "contact": {
       "name": "User Service Team"
     },
@@ -91,9 +91,7 @@
         "summary": "Create a development session",
         "description": "Authenticates a standalone UserProfile with email and password and returns an opaque Bearer token stored (hashed) in DevSession. Development only — not production-ready.",
         "operationId": "devLogin",
-        "security": [
-          { "devApiKey": [] }
-        ],
+        "security": [{ "devApiKey": [] }],
         "requestBody": {
           "required": true,
           "content": {
@@ -252,7 +250,11 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "avatar": { "type": "string", "format": "binary", "description": "Optional PNG, JPEG, or WebP image up to 5 MB." },
+                  "avatar": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Optional PNG, JPEG, or WebP image up to 5 MB."
+                  },
                   "firstName": { "type": "string" },
                   "middleName": { "type": "string" },
                   "lastName": { "type": "string" },
@@ -297,7 +299,7 @@
             }
           },
           "400": {
-                        "description": "Validation failed: empty body, invalid profile fields, protected fields, or an invalid, unsupported, or oversized avatar image.",
+            "description": "Validation failed: empty body, invalid profile fields, protected fields, or an invalid, unsupported, or oversized avatar image.",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
@@ -305,7 +307,10 @@
                   "success": false,
                   "message": "Validation failed",
                   "errors": [
-                    { "field": "dateOfBirth", "message": "dateOfBirth must be a valid date in the past" }
+                    {
+                      "field": "dateOfBirth",
+                      "message": "dateOfBirth must be a valid date in the past"
+                    }
                   ]
                 }
               }
@@ -518,7 +523,11 @@
           {
             "name": "direction",
             "in": "query",
-            "schema": { "type": "string", "enum": ["all", "incoming", "outgoing"], "default": "all" }
+            "schema": {
+              "type": "string",
+              "enum": ["all", "incoming", "outgoing"],
+              "default": "all"
+            }
           },
           {
             "name": "type",
@@ -1490,7 +1499,19 @@
       },
       "Transaction": {
         "type": "object",
-        "required": ["id", "reference", "type", "status", "currency", "sourceWalletId", "destinationWalletId", "amount", "feeAmount", "reversedAmount", "createdAt"],
+        "required": [
+          "id",
+          "reference",
+          "type",
+          "status",
+          "currency",
+          "sourceWalletId",
+          "destinationWalletId",
+          "amount",
+          "feeAmount",
+          "reversedAmount",
+          "createdAt"
+        ],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "reference": { "type": "string", "format": "uuid" },
@@ -1530,7 +1551,16 @@
       },
       "Reversal": {
         "type": "object",
-        "required": ["id", "reference", "transactionId", "amount", "currency", "reason", "actorUserId", "createdAt"],
+        "required": [
+          "id",
+          "reference",
+          "transactionId",
+          "amount",
+          "currency",
+          "reason",
+          "actorUserId",
+          "createdAt"
+        ],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "reference": { "type": "string", "format": "uuid" },
@@ -1575,7 +1605,17 @@
       },
       "Withdrawal": {
         "type": "object",
-        "required": ["id", "reference", "status", "amount", "currency", "walletId", "businessDate", "createdAt", "updatedAt"],
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "amount",
+          "currency",
+          "walletId",
+          "businessDate",
+          "createdAt",
+          "updatedAt"
+        ],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "reference": { "type": "string" },
@@ -1612,7 +1652,21 @@
       },
       "FinancialPolicy": {
         "type": "object",
-        "required": ["id", "type", "currency", "minAmount", "maxAmount", "dailyOutgoingAmount", "dailyOutgoingCount", "feeType", "feeFlat", "feeBps", "feeMin", "timezone", "isActive"],
+        "required": [
+          "id",
+          "type",
+          "currency",
+          "minAmount",
+          "maxAmount",
+          "dailyOutgoingAmount",
+          "dailyOutgoingCount",
+          "feeType",
+          "feeFlat",
+          "feeBps",
+          "feeMin",
+          "timezone",
+          "isActive"
+        ],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "type": { "type": "string", "enum": ["TRANSFER", "DEPOSIT", "WITHDRAWAL"] },
@@ -1621,7 +1675,10 @@
           "maxAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
           "dailyOutgoingAmount": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
           "dailyOutgoingCount": { "type": "integer", "minimum": 0 },
-          "feeType": { "type": "string", "enum": ["NONE", "FLAT", "PERCENTAGE", "FLAT_PLUS_PERCENTAGE"] },
+          "feeType": {
+            "type": "string",
+            "enum": ["NONE", "FLAT", "PERCENTAGE", "FLAT_PLUS_PERCENTAGE"]
+          },
           "feeFlat": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
           "feeBps": { "type": "integer", "minimum": 0, "maximum": 10000 },
           "feeMin": { "type": "string", "pattern": "^\\d+\\.\\d{2}$" },
@@ -1677,12 +1734,22 @@
           "currency": { "type": "string", "pattern": "^[A-Z]{3}$", "default": "ETB" },
           "minAmount": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
           "maxAmount": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
-          "dailyOutgoingAmount": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
+          "dailyOutgoingAmount": {
+            "type": "string",
+            "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$"
+          },
           "dailyOutgoingCount": { "type": "integer", "minimum": 0, "maximum": 100000 },
-          "feeType": { "type": "string", "enum": ["NONE", "FLAT", "PERCENTAGE", "FLAT_PLUS_PERCENTAGE"] },
+          "feeType": {
+            "type": "string",
+            "enum": ["NONE", "FLAT", "PERCENTAGE", "FLAT_PLUS_PERCENTAGE"]
+          },
           "feeFlat": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
           "feeMin": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$" },
-          "feeMax": { "type": "string", "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$", "nullable": true },
+          "feeMax": {
+            "type": "string",
+            "pattern": "^(?:0|[1-9]\\d{0,16})(?:\\.\\d{1,2})?$",
+            "nullable": true
+          },
           "feeBps": { "type": "integer", "minimum": 0, "maximum": 10000 },
           "timezone": { "type": "string", "minLength": 1, "maxLength": 64 },
           "reason": { "type": "string", "minLength": 10, "maxLength": 500 }
@@ -1808,7 +1875,17 @@
       },
       "Payment": {
         "type": "object",
-        "required": ["id", "reference", "provider", "type", "status", "amount", "currency", "createdAt", "updatedAt"],
+        "required": [
+          "id",
+          "reference",
+          "provider",
+          "type",
+          "status",
+          "amount",
+          "currency",
+          "createdAt",
+          "updatedAt"
+        ],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "reference": { "type": "string", "maxLength": 20 },

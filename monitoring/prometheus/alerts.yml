@@ -1,4 +1,4 @@
-# Alert rules for the banking stack. See docs/security-and-operations.md
+# Alert rules for the banking stack. See docs/operations/security-and-operations.md
 # section 10 for the response expectations behind each alert.
 
 groups:
