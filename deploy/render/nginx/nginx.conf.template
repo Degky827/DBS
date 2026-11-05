@@ -1,0 +1,63 @@
+# Nginx gateway for the consolidated Render image.
+#
+# Render terminates TLS and forwards X-Forwarded-Proto. The gateway serves the
+# built SPA and rewrites the browser-facing /api/* paths to each service's
+# /api/v1/* route, exactly like frontend/nginx/snippets/locations.conf does in
+# Docker Compose.
+
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 256;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    access_log /dev/stdout;
+
+    client_body_temp_path /tmp/nginx/client_body;
+    proxy_temp_path /tmp/nginx/proxy;
+    fastcgi_temp_path /tmp/nginx/fastcgi;
+    uwsgi_temp_path /tmp/nginx/uwsgi;
+    scgi_temp_path /tmp/nginx/scgi;
+
+    sendfile on;
+    tcp_nopush on;
+    keepalive_timeout 65;
+    server_tokens off;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript image/svg+xml;
+    gzip_min_length 256;
+
+    map $http_x_forwarded_proto $client_proto {
+        default $scheme;
+        http    http;
+        https   https;
+    }
+
+    server {
+        listen __PORT__;
+        server_name _;
+
+        root /var/www/spa;
+        index index.html;
+
+        client_max_body_size 12m;
+
+        # Render terminates TLS; force HSTS only when the request arrived over
+        # HTTPS (directly or through the platform proxy).
+        set $hsts "";
+        if ($client_proto = "https") {
+            set $hsts "max-age=31536000; includeSubDomains";
+        }
+        add_header Strict-Transport-Security $hsts always;
+
+        include /etc/nginx/banking/snippets/security-headers.conf;
+        include /etc/nginx/banking/snippets/locations.conf;
+    }
+}
