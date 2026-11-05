@@ -81,6 +81,8 @@ const IMAGE_TYPES = [
 const getAvatarType = (file) =>
   IMAGE_TYPES.find((type) => type.mimeType === file.mimetype && type.matches(file.buffer));
 
+const USE_DATABASE_AVATARS = env.AVATAR_STORAGE_BACKEND === "postgres";
+
 const removePreviousAvatar = async (avatarUrl) => {
   const prefix = "/uploads/avatars/";
   if (!avatarUrl?.startsWith(prefix)) return;
@@ -89,7 +91,11 @@ const removePreviousAvatar = async (avatarUrl) => {
   if (!/^[a-f0-9-]+\.(jpg|png|webp)$/.test(filename)) return;
 
   try {
-    await fs.unlink(path.join(env.AVATAR_UPLOAD_DIR, filename));
+    if (USE_DATABASE_AVATARS) {
+      await prisma.avatarBlob.deleteMany({ where: { filename } });
+    } else {
+      await fs.unlink(path.join(env.AVATAR_UPLOAD_DIR, filename));
+    }
   } catch (error) {
     if (error.code !== "ENOENT") {
       logger.warn({ error: error.message }, "Unable to remove previous avatar");
@@ -206,7 +212,7 @@ const updateMyProfile = async (authCtx, input, avatarFile) => {
     }
   }
 
-  let avatarPath;
+  let avatarFilename;
   if (avatarFile) {
     const imageType = getAvatarType(avatarFile);
     if (!imageType) {
@@ -216,11 +222,23 @@ const updateMyProfile = async (authCtx, input, avatarFile) => {
       );
     }
 
-    const filename = `${randomUUID()}.${imageType.extension}`;
-    avatarPath = path.join(env.AVATAR_UPLOAD_DIR, filename);
-    data.avatarUrl = `/uploads/avatars/${filename}`;
-    await fs.mkdir(env.AVATAR_UPLOAD_DIR, { recursive: true });
-    await fs.writeFile(avatarPath, avatarFile.buffer, { flag: "wx" });
+    avatarFilename = `${randomUUID()}.${imageType.extension}`;
+    data.avatarUrl = `/uploads/avatars/${avatarFilename}`;
+
+    if (USE_DATABASE_AVATARS) {
+      await prisma.avatarBlob.create({
+        data: {
+          filename: avatarFilename,
+          contentType: imageType.mimeType,
+          data: avatarFile.buffer,
+        },
+      });
+    } else {
+      await fs.mkdir(env.AVATAR_UPLOAD_DIR, { recursive: true });
+      await fs.writeFile(path.join(env.AVATAR_UPLOAD_DIR, avatarFilename), avatarFile.buffer, {
+        flag: "wx",
+      });
+    }
   }
 
   if (Object.keys(data).length === 0) {
@@ -230,9 +248,13 @@ const updateMyProfile = async (authCtx, input, avatarFile) => {
   try {
     await userRepository.updateProfile(profile.id, data);
   } catch (error) {
-    if (avatarPath) {
+    if (avatarFilename) {
       try {
-        await fs.unlink(avatarPath);
+        if (USE_DATABASE_AVATARS) {
+          await prisma.avatarBlob.deleteMany({ where: { filename: avatarFilename } });
+        } else {
+          await fs.unlink(path.join(env.AVATAR_UPLOAD_DIR, avatarFilename));
+        }
       } catch (cleanupError) {
         if (cleanupError.code !== "ENOENT") {
           logger.warn({ error: cleanupError.message }, "Unable to remove unassigned avatar");

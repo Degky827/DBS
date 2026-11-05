@@ -790,3 +790,16 @@ model PayoutReconciliationRecord {
   @@index([payoutId, createdAt])
   @@index([outcome])
 }
+
+// ---------------------------------------------------------------------------
+// Avatar bodies for hosts without a persistent filesystem.
+// AVATAR_STORAGE_BACKEND=postgres reads and writes this table instead of
+// AVATAR_UPLOAD_DIR.
+// ---------------------------------------------------------------------------
+
+model AvatarBlob {
+  filename    String   @id
+  contentType String
+  data        Bytes
+  createdAt   DateTime @default(now())
+}
