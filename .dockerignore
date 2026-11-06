@@ -1,0 +1,27 @@
+# Build context for deploy/render/Dockerfile (repository root).
+# Keep secrets and heavyweight local artifacts out of the builder.
+
+.git
+.github
+.vscode
+.kilo
+
+**/node_modules
+**/dist
+**/coverage
+**/*.log
+
+# Never bake environment files or local runtime data into images.
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+backups
+certs
+certbot
+storage
+uploads
+monitoring/secrets
+
+# Oracle deployment bundle is not part of the Render image.
+deploy/oracle

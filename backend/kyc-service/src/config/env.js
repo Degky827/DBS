@@ -272,6 +272,13 @@ if (
   fail("STORAGE_ENCRYPTION_KEYS_PREVIOUS must not contain the current STORAGE_ENCRYPTION_KEY.");
 }
 
+// Hosts with an ephemeral filesystem (Render free, containers without a
+// volume) keep encrypted documents in PostgreSQL instead of STORAGE_DIR.
+const storageBackend = (process.env.STORAGE_BACKEND || "local").toLowerCase();
+if (!["local", "postgres"].includes(storageBackend)) {
+  fail('STORAGE_BACKEND must be "local" or "postgres".');
+}
+
 const diditApiBaseUrl = process.env.DIDIT_API_BASE_URL || "https://verification.didit.me";
 try {
   const providerUrl = new URL(diditApiBaseUrl);
@@ -345,6 +352,7 @@ const env = Object.freeze({
   KYC_REVERIFICATION_ENABLED: reVerificationEnabled,
   KYC_REVERIFICATION_INTERVAL_MS: reVerificationIntervalMs,
   KYC_REVERIFICATION_BATCH_SIZE: reVerificationBatchSize,
+  STORAGE_BACKEND: storageBackend,
   STORAGE_DIR: process.env.STORAGE_DIR || path.resolve(__dirname, "../../storage"),
   MAX_FILE_SIZE_BYTES: readNumber("MAX_FILE_SIZE_BYTES", 10 * 1024 * 1024),
   STORAGE_ENCRYPTION_KEY: storageEncryptionKey,

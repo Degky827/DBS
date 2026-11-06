@@ -1,0 +1,10 @@
+{
+  "name": "dbs-render-migrator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Prisma CLI used by the Render image entrypoint to apply service migrations",
+  "dependencies": {
+    "dotenv": "18.0.5",
+    "prisma": "7.10.1"
+  }
+}

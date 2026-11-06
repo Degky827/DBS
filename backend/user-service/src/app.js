@@ -1,5 +1,6 @@
 const express = require("express");
 const env = require("./config/env");
+const prisma = require("./config/database");
 
 const ROUTES = require("./constants/routes");
 const v1Routes = require("./routes/v1");
@@ -49,15 +50,37 @@ app.use(
   })
 );
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
-app.use(
-  "/uploads/avatars",
-  express.static(env.AVATAR_UPLOAD_DIR, {
-    dotfiles: "deny",
-    index: false,
-    maxAge: "1d",
-    immutable: true,
-  })
-);
+
+if (env.AVATAR_STORAGE_BACKEND === "postgres") {
+  app.get("/uploads/avatars/:filename", async (req, res, next) => {
+    const { filename } = req.params;
+    if (!/^[a-f0-9-]+\.(jpg|png|webp)$/.test(filename)) {
+      return res.status(404).end();
+    }
+
+    try {
+      const avatar = await prisma.avatarBlob.findUnique({ where: { filename } });
+      if (!avatar) return res.status(404).end();
+
+      res.set("Content-Type", avatar.contentType);
+      res.set("Cache-Control", "public, max-age=86400, immutable");
+      res.set("X-Content-Type-Options", "nosniff");
+      return res.send(Buffer.from(avatar.data));
+    } catch (error) {
+      return next(error);
+    }
+  });
+} else {
+  app.use(
+    "/uploads/avatars",
+    express.static(env.AVATAR_UPLOAD_DIR, {
+      dotfiles: "deny",
+      index: false,
+      maxAge: "1d",
+      immutable: true,
+    })
+  );
+}
 
 app.use(globalLimiter);
 

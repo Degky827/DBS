@@ -1,0 +1,75 @@
+#cloud-config
+# First-boot setup for an Oracle Cloud Always Free Ubuntu VM (22.04 or 24.04).
+#
+# Paste this file into the instance's "cloud-init script" field, or pass it
+# with `oci compute instance launch --user-data-file deploy/oracle/cloud-init.yaml`.
+# It installs Docker Engine + Compose, certbot, and opens only 22/80/443 in the
+# instance firewall. The OCI Security List must be opened separately (see
+# deploy/oracle/README.md).
+#
+# No secret is stored here. The application .env is generated on the VM.
+timezone: UTC
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+  - openssl
+  - certbot
+  - python3
+  - jq
+  - unattended-upgrades
+
+write_files:
+  # Bound Docker logs: an unbounded json-file log filled the local disk during
+  # the workstation deployment. Three 50 MB files per container is enough for
+  # incident review.
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "50m",
+          "max-file": "3"
+        }
+      }
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+runcmd:
+  - |
+    set -eux
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+    . /etc/os-release
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+      > /etc/apt/sources.list.d/docker.list
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    systemctl enable --now docker
+    usermod -aG docker ubuntu
+  - |
+    set -eux
+    echo 'iptables-persistent iptables-persistent/autosave_v4 boolean true' | debconf-set-selections
+    echo 'iptables-persistent iptables-persistent/autosave_v6 boolean true' | debconf-set-selections
+    DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
+    iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 80 -j ACCEPT
+    iptables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 443 -j ACCEPT
+    netfilter-persistent save
+  - |
+    set -eux
+    mkdir -p /opt/banking-system
+    chown ubuntu:ubuntu /opt/banking-system
+    systemctl enable --now certbot.timer 2>/dev/null || true
+
+final_message: "Oracle VM ready for deploy/oracle/bootstrap.sh after $UPTIME seconds"

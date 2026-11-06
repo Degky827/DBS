@@ -1,0 +1,155 @@
+# Render Blueprint for the free-tier university demonstration deployment.
+#
+# One Docker web service runs the four Node services and the Nginx SPA gateway
+# as processes in a single container. Render free services cannot receive
+# private-network traffic and share a 750-hour monthly budget, so a single
+# service is the only topology that fits without paid resources. See
+# deploy/render/README.md for the rationale and manual setup steps.
+#
+# PostgreSQL is Neon (free, no card). Redis is Upstash (free, optional).
+# No Render database, disk or paid plan is declared here.
+
+services:
+  - type: web
+    name: dbs-demo
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: dev
+    autoDeploy: true
+    dockerfilePath: ./deploy/render/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    envVars:
+      - fromGroup: banking-demo-config
+
+      # Render generates strong values once and keeps them stable across
+      # deploys. The same service hosts every process, so one key pair is
+      # enough for all four services.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: INTERNAL_SERVICE_KEY
+        generateValue: true
+
+      # 64 hex characters each (openssl rand -hex 32). Losing the storage key
+      # makes existing encrypted KYC documents unreadable.
+      - key: STORAGE_ENCRYPTION_KEY
+        sync: false
+      - key: MFA_ENCRYPTION_KEY
+        sync: false
+
+      # One Neon database per service; see the setup guide. SSL is required
+      # (append ?sslmode=require to each URL).
+      - key: AUTH_DATABASE_URL
+        sync: false
+      - key: USER_DATABASE_URL
+        sync: false
+      - key: KYC_DATABASE_URL
+        sync: false
+      - key: NOTIFICATION_DATABASE_URL
+        sync: false
+
+      # Optional free Redis-compatible cache/rate-limit store (Upstash).
+      # Leave unset and each process falls back to its own counters.
+      - key: REDIS_URL
+        sync: false
+
+      # Brevo HTTPS transactional email. Render free services cannot use
+      # outbound SMTP ports, so the REST key (xkeysib-) is required.
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM_EMAIL
+        sync: false
+
+      # Demonstration seed. DEMO_SEED_PASSWORD (12+ characters) is supplied in
+      # the dashboard; no password is stored in this repository.
+      - key: DEMO_SEED_ENABLED
+        value: "true"
+      - key: DEMO_SEED_PASSWORD
+        sync: false
+
+      # Chapa and Didit stay disabled until their sandbox credentials exist.
+      - key: CHAPA_SECRET_KEY
+        sync: false
+      - key: CHAPA_WEBHOOK_SECRET
+        sync: false
+      - key: CHAPA_CALLBACK_URL
+        sync: false
+      - key: CHAPA_RETURN_URL
+        sync: false
+      - key: DIDIT_API_KEY
+        sync: false
+      - key: DIDIT_WORKFLOW_ID
+        sync: false
+      - key: DIDIT_WEBHOOK_SECRET
+        sync: false
+
+envVarGroups:
+  - name: banking-demo-config
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_ISSUER
+        value: auth-service
+      - key: JWT_AUDIENCE
+        value: banking-system
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: REFRESH_COOKIE_PATH
+        value: /api/auth
+      - key: REFRESH_COOKIE_SAME_SITE
+        value: lax
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: TRUST_PROXY
+        value: "2"
+      - key: ENABLE_HSTS
+        value: "true"
+      - key: ENABLE_API_DOCS
+        value: "false"
+      - key: LOG_LEVEL
+        value: info
+
+      # All four backends run on loopback inside the same container.
+      - key: DB_ADAPTER
+        value: pg
+      - key: AUTH_MODE
+        value: jwt
+      - key: AUTH_SERVICE_URL
+        value: http://127.0.0.1:5001/api/v1
+      - key: USER_SERVICE_URL
+        value: http://127.0.0.1:5002/api/v1
+      - key: KYC_SERVICE_URL
+        value: http://127.0.0.1:5003/api/v1/kyc
+      - key: NOTIFICATION_SERVICE_URL
+        value: http://127.0.0.1:5004/api/v1
+
+      # Exactly one container hosts the background workers.
+      - key: ENABLE_JOBS
+        value: "true"
+      - key: OUTBOX_ENABLED
+        value: "true"
+      - key: SCHEDULED_TRANSFERS_ENABLED
+        value: "true"
+      - key: LEDGER_VERIFICATION_ENABLED
+        value: "true"
+      - key: KYC_REVERIFICATION_ENABLED
+        value: "true"
+
+      # No persistent disk on the free plan: keep encrypted documents and
+      # avatars in PostgreSQL.
+      - key: STORAGE_BACKEND
+        value: postgres
+      - key: AVATAR_STORAGE_BACKEND
+        value: postgres
+      - key: MAX_FILE_SIZE_BYTES
+        value: "10485760"
+
+      - key: EMAIL_TRANSPORT
+        value: api
+      - key: EMAIL_ENABLED
+        value: "true"
+      - key: EMAIL_FROM
+        value: Meridian Bank

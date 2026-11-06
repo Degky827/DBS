@@ -310,6 +310,13 @@ const trustProxy = readInteger("TRUST_PROXY", isProduction ? 1 : 0, { min: 0, ma
 const metricsToken = readOptionalSecret("METRICS_TOKEN");
 
 const avatarUploadDir = readOptional("AVATAR_UPLOAD_DIR");
+
+// Hosts with an ephemeral filesystem keep uploaded avatars in PostgreSQL so
+// they survive restarts. Local development and Compose keep using a directory.
+const avatarStorageBackend = (process.env.AVATAR_STORAGE_BACKEND || "local").toLowerCase();
+if (!["local", "postgres"].includes(avatarStorageBackend)) {
+  fail('AVATAR_STORAGE_BACKEND must be "local" or "postgres".');
+}
 const chapaSecretKey = readOptionalSecret("CHAPA_SECRET_KEY");
 const chapaWebhookSecret = readOptionalSecret("CHAPA_WEBHOOK_SECRET");
 const chapaBaseUrl = readOptional("CHAPA_BASE_URL") || "https://api.chapa.global";
@@ -389,6 +396,7 @@ const env = Object.freeze({
   AVATAR_UPLOAD_DIR: path.resolve(
     avatarUploadDir || path.resolve(__dirname, "../../uploads/avatars")
   ),
+  AVATAR_STORAGE_BACKEND: avatarStorageBackend,
 
   BCRYPT_ROUNDS: readNumber("BCRYPT_ROUNDS", 12),
   CORS_ORIGINS: corsOrigins,

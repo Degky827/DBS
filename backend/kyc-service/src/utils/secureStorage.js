@@ -2,11 +2,13 @@ const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
 const env = require("../config/env");
+const prisma = require("../config/database");
 const ApiError = require("./ApiError");
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
+const USE_DATABASE = env.STORAGE_BACKEND === "postgres";
 
 // The keyring keeps the current key first and retired keys after it. New data
 // is always written with the current key; reads try every key so a rotation can
@@ -81,10 +83,28 @@ function resolveStoragePath(storageKey) {
   return resolved;
 }
 
+async function readEncrypted(storageKey) {
+  if (USE_DATABASE) {
+    const row = await prisma.storedDocumentBlob.findUnique({ where: { storageKey } });
+    if (!row) {
+      const error = new Error("Stored document not found");
+      error.code = "ENOENT";
+      throw error;
+    }
+    return Buffer.from(row.data);
+  }
+  return fs.readFile(resolveStoragePath(storageKey));
+}
+
 async function encryptAndStore(buffer, storageKey) {
   const encrypted = encryptBuffer(buffer);
-  const filePath = resolveStoragePath(storageKey);
 
+  if (USE_DATABASE) {
+    await prisma.storedDocumentBlob.create({ data: { storageKey, data: encrypted } });
+    return;
+  }
+
+  const filePath = resolveStoragePath(storageKey);
   await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
   await fs.writeFile(filePath, encrypted, { flag: "wx", mode: 0o600 });
 }
@@ -102,7 +122,7 @@ function decryptSensitiveValue(value) {
 }
 
 async function decryptFromStorage(storageKey) {
-  const encrypted = await fs.readFile(resolveStoragePath(storageKey));
+  const encrypted = await readEncrypted(storageKey);
   const { plaintext } = decryptBuffer(
     encrypted,
     "Stored document could not be decrypted"
@@ -113,18 +133,34 @@ async function decryptFromStorage(storageKey) {
 // Rotation helpers: the caller (script/rotateEncryptionKey.js) re-encrypts with
 // the current key and writes the result atomically next to the original.
 async function decryptStoredWithKeyStatus(storageKey) {
-  const encrypted = await fs.readFile(resolveStoragePath(storageKey));
+  const encrypted = await readEncrypted(storageKey);
   return decryptBuffer(encrypted, "Stored document could not be decrypted");
 }
 
 async function replaceStoredFile(storageKey, plaintext) {
+  const encrypted = encryptBuffer(plaintext);
+
+  if (USE_DATABASE) {
+    await prisma.storedDocumentBlob.upsert({
+      where: { storageKey },
+      update: { data: encrypted },
+      create: { storageKey, data: encrypted },
+    });
+    return;
+  }
+
   const filePath = resolveStoragePath(storageKey);
   const temporaryPath = `${filePath}.rotate-${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporaryPath, encryptBuffer(plaintext), { mode: 0o600 });
+  await fs.writeFile(temporaryPath, encrypted, { mode: 0o600 });
   await fs.rename(temporaryPath, filePath);
 }
 
 async function removeStoredFile(storageKey) {
+  if (USE_DATABASE) {
+    await prisma.storedDocumentBlob.deleteMany({ where: { storageKey } });
+    return;
+  }
+
   try {
     await fs.unlink(resolveStoragePath(storageKey));
   } catch (error) {
