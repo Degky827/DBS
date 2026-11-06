@@ -20,7 +20,6 @@ services:
     dockerfilePath: ./deploy/render/Dockerfile
     dockerContext: .
     healthCheckPath: /healthz
-    maxShutdownDelaySeconds: 30
     envVars:
       - fromGroup: banking-demo-config
 
