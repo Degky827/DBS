@@ -71,6 +71,7 @@ kyc_pid=$!
 DATABASE_URL="$NOTIFICATION_DATABASE_URL" PORT=5004 node /app/services/notification/server.js &
 notification_pid=$!
 
+mkdir -p /tmp/nginx/client_body /tmp/nginx/proxy /tmp/nginx/fastcgi /tmp/nginx/uwsgi /tmp/nginx/scgi
 sed "s|__PORT__|${PORT}|g" /etc/nginx/banking/nginx.conf.template > /tmp/nginx.conf
 nginx -c /tmp/nginx.conf -g "daemon off;" &
 nginx_pid=$!
