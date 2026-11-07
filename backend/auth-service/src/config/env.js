@@ -211,23 +211,36 @@ if (isProduction && enableApiDocs) {
 }
 
 const brevoApiKey = readOptionalSecret("BREVO_API_KEY");
-if (isProduction && !brevoApiKey) {
+const sendgridApiKey = readOptionalSecret("SENDGRID_API_KEY");
+if (isProduction && !brevoApiKey && !sendgridApiKey) {
   fail(
-    "BREVO_API_KEY is required in production: email verification and password reset cannot be delivered without it."
+    "BREVO_API_KEY or SENDGRID_API_KEY is required in production: email verification and password reset cannot be delivered without one."
   );
 }
 if (brevoApiKey && !/^(xkeysib|xsmtpsib)-/.test(brevoApiKey)) {
   fail("BREVO_API_KEY must be a Brevo REST (xkeysib-) or SMTP (xsmtpsib-) key.");
 }
-const emailTransport = (process.env.EMAIL_TRANSPORT || "").toLowerCase();
-if (emailTransport && !["api", "smtp"].includes(emailTransport)) {
-  fail('EMAIL_TRANSPORT must be "api" or "smtp" when set.');
+if (sendgridApiKey && !sendgridApiKey.startsWith("SG.")) {
+  fail("SENDGRID_API_KEY must be a SendGrid API key (SG.).");
 }
-if (isProduction && emailTransport === "api" && !brevoApiKey.startsWith("xkeysib-")) {
+const emailTransport = (process.env.EMAIL_TRANSPORT || "").toLowerCase();
+if (emailTransport && !["api", "smtp", "sendgrid"].includes(emailTransport)) {
+  fail('EMAIL_TRANSPORT must be "api", "smtp", or "sendgrid" when set.');
+}
+if (isProduction && emailTransport === "api" && !(brevoApiKey || "").startsWith("xkeysib-")) {
   fail("EMAIL_TRANSPORT=api requires a Brevo REST key (xkeysib-).");
 }
-if (isProduction && emailTransport === "smtp" && !brevoApiKey.startsWith("xsmtpsib-")) {
+if (isProduction && emailTransport === "smtp" && !(brevoApiKey || "").startsWith("xsmtpsib-")) {
   fail("EMAIL_TRANSPORT=smtp requires a Brevo SMTP key (xsmtpsib-).");
+}
+if (isProduction && emailTransport === "sendgrid" && !sendgridApiKey) {
+  fail("EMAIL_TRANSPORT=sendgrid requires SENDGRID_API_KEY.");
+}
+const sendgridApiBaseUrl = (
+  process.env.SENDGRID_API_BASE_URL || "https://api.sendgrid.com"
+).replace(/\/+$/, "");
+if (!sendgridApiBaseUrl.startsWith("https://")) {
+  fail("SENDGRID_API_BASE_URL must be an HTTPS URL.");
 }
 
 const enableHsts = readBoolean("ENABLE_HSTS", false);
@@ -302,6 +315,8 @@ const env = Object.freeze({
   ENABLE_HSTS: enableHsts,
 
   BREVO_API_KEY: brevoApiKey,
+  SENDGRID_API_KEY: sendgridApiKey,
+  SENDGRID_API_BASE_URL: sendgridApiBaseUrl,
   EMAIL_TRANSPORT: emailTransport,
   EMAIL_FROM: process.env.EMAIL_FROM || "Meridian Bank",
   EMAIL_FROM_EMAIL: process.env.EMAIL_FROM_EMAIL || "no-reply@meridianbank.example",
