@@ -82,8 +82,48 @@ require_value JWT_SECRET 32
 require_value INTERNAL_SERVICE_KEY 32
 require_value STORAGE_ENCRYPTION_KEY 64
 require_value MFA_ENCRYPTION_KEY 64
-require_value BREVO_API_KEY 20
 require_value EMAIL_FROM_EMAIL 3
+
+brevo_key="${BREVO_API_KEY:-}"
+sendgrid_key="${SENDGRID_API_KEY:-}"
+if [ -z "$brevo_key" ] && [ -z "$sendgrid_key" ]; then
+  fail "BREVO_API_KEY or SENDGRID_API_KEY must be set (HTTPS email; Render blocks SMTP)"
+fi
+if [ -n "$brevo_key" ]; then
+  case "$brevo_key" in
+    xkeysib-*) pass "BREVO_API_KEY is a Brevo REST key" ;;
+    *) fail "BREVO_API_KEY must be an xkeysib- REST key (Render blocks outbound SMTP)" ;;
+  esac
+fi
+if [ -n "$sendgrid_key" ]; then
+  case "$sendgrid_key" in
+    SG.*) pass "SENDGRID_API_KEY is a SendGrid API key" ;;
+    *) fail "SENDGRID_API_KEY must start with SG." ;;
+  esac
+fi
+case "${EMAIL_TRANSPORT:-}" in
+  '')
+    if [ -n "$sendgrid_key" ]; then
+      pass "EMAIL_TRANSPORT unset; auto-detect selects SendGrid"
+    else
+      pass "EMAIL_TRANSPORT unset; auto-detect selects Brevo API"
+    fi
+    ;;
+  api)
+    case "$brevo_key" in
+      xkeysib-*) pass "EMAIL_TRANSPORT=api matches the Brevo REST key" ;;
+      *) fail "EMAIL_TRANSPORT=api requires a Brevo REST key (xkeysib-)" ;;
+    esac
+    ;;
+  sendgrid)
+    if [ -n "$sendgrid_key" ]; then
+      pass "EMAIL_TRANSPORT=sendgrid matches SENDGRID_API_KEY"
+    else
+      fail "EMAIL_TRANSPORT=sendgrid requires SENDGRID_API_KEY"
+    fi
+    ;;
+  *) fail "EMAIL_TRANSPORT must be api, sendgrid, or unset (smtp is blocked on Render)" ;;
+esac
 
 if printf '%s' "${STORAGE_ENCRYPTION_KEY:-}" | grep -Eq '^[a-fA-F0-9]{64}$'; then
   pass "STORAGE_ENCRYPTION_KEY is 64 hex characters"
@@ -95,10 +135,6 @@ if printf '%s' "${MFA_ENCRYPTION_KEY:-}" | grep -Eq '^[a-fA-F0-9]{64}$'; then
 else
   fail "MFA_ENCRYPTION_KEY must be 64 hex characters (openssl rand -hex 32)"
 fi
-case "${BREVO_API_KEY:-}" in
-  xkeysib-*) pass "BREVO_API_KEY is a Brevo REST key" ;;
-  *) fail "BREVO_API_KEY must be an xkeysib- REST key (Render blocks outbound SMTP)" ;;
-esac
 
 if [ "${DEMO_SEED_ENABLED:-false}" = "true" ]; then
   require_value DEMO_SEED_PASSWORD 12

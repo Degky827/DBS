@@ -54,9 +54,13 @@ services:
       - key: REDIS_URL
         sync: false
 
-      # Brevo HTTPS transactional email. Render free services cannot use
-      # outbound SMTP ports, so the REST key (xkeysib-) is required.
+      # HTTPS transactional email. Render free services cannot use outbound
+      # SMTP ports, so a REST key is required: Brevo (xkeysib-) or SendGrid
+      # (SG.). Set one of them; the services auto-detect the provider when
+      # EMAIL_TRANSPORT is unset (SendGrid wins if both are set).
       - key: BREVO_API_KEY
+        sync: false
+      - key: SENDGRID_API_KEY
         sync: false
       - key: EMAIL_FROM_EMAIL
         sync: false
@@ -147,8 +151,6 @@ envVarGroups:
       - key: MAX_FILE_SIZE_BYTES
         value: "10485760"
 
-      - key: EMAIL_TRANSPORT
-        value: api
       - key: EMAIL_ENABLED
         value: "true"
       - key: EMAIL_FROM
