@@ -30,11 +30,39 @@ for variable in AUTH_DATABASE_URL USER_DATABASE_URL KYC_DATABASE_URL NOTIFICATIO
   [ -n "$value" ] || fail "$variable is required (one PostgreSQL database per service)"
 done
 
+# Prisma's migration advisory lock is session-level and cannot be held through
+# Neon's PgBouncer pooler endpoint (P1002). Neon's direct host is the pooled host
+# with the `-pooler` label removed, so derive it for migrations only; runtime
+# keeps the configured URL. Non-Neon URLs are returned unchanged.
+direct_database_url() {
+  node -e '
+    const raw = process.argv[1];
+    const m = raw.match(/^([^:]+:\/\/)([^@]*@)?([^/?#]+)(.*)$/);
+    if (!m) { process.stdout.write(raw); process.exit(0); }
+    const host = m[3].replace("-pooler.", ".");
+    process.stdout.write(m[1] + (m[2] || "") + host + m[4]);
+  ' "$1"
+}
+
 run_migration() {
   service="$1"
-  database_url="$2"
-  ( cd "/app/services/$service" && DATABASE_URL="$database_url" \
-      node /opt/migrator/node_modules/prisma/build/index.js migrate deploy )
+  database_url=$(direct_database_url "$2")
+  attempt=1
+  # Retry a few times so a transient lock timeout does not abort the deploy.
+  while :; do
+    if ( cd "/app/services/$service" && DATABASE_URL="$database_url" \
+        node /opt/migrator/node_modules/prisma/build/index.js migrate deploy ); then
+      return 0
+    fi
+    if [ "$attempt" -ge 5 ]; then
+      log "migration for $service failed after $attempt attempts"
+      return 1
+    fi
+    delay=$((attempt * 5))
+    log "migration for $service failed (attempt $attempt); retrying in ${delay}s"
+    attempt=$((attempt + 1))
+    sleep "$delay"
+  done
 }
 
 log "applying Prisma migrations"

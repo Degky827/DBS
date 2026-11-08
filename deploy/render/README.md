@@ -70,7 +70,7 @@ to the Compose stack, where nginx is the only proxy.
 | Web service | Render free | Yes | 512 MB RAM, 0.1 CPU, sleeps after 15 min, 750 h/month shared |
 | PostgreSQL | [Neon](https://neon.tech) free | Yes | No card required. One project, four databases, TLS required |
 | Redis | [Upstash](https://upstash.com) free | No | Rate-limit windows and KYC status cache; per-process fallback is safe |
-| Email | [Brevo](https://brevo.com) free | Yes | HTTPS API only; Render blocks SMTP 25/465/587 |
+| Email | [Brevo](https://brevo.com) or [SendGrid](https://sendgrid.com) free | Yes | HTTPS API only; Render blocks SMTP 25/465/587 |
 | KYC | Didit sandbox | No | Keep empty to disable provider verification |
 | Deposits | Chapa test mode | No | Never enable live mode for this demonstration |
 
@@ -130,15 +130,32 @@ Migrations are applied with `prisma migrate deploy` on every container boot.
 They are additive/forward-only. **Never** run `prisma migrate reset` against
 these databases and never point them at an existing production database.
 
-### 2. Brevo transactional email
+### 2. Transactional email (Brevo or SendGrid)
+
+Pick one HTTPS provider; both have free tiers without a card. Render blocks
+outbound SMTP on the free plan, so only the REST APIs are supported.
+
+**SendGrid** (100 emails/day free):
+
+1. Create a free SendGrid account.
+2. Complete **Single Sender Verification** for the address you will send from
+   (Settings → Sender Authentication). A personal Gmail address works; click
+   the verification link sent to that inbox.
+3. Create an API key (Settings → API Keys) with **Mail Send** permission; it
+   starts with `SG.`.
+4. Set `SENDGRID_API_KEY` and `EMAIL_FROM_EMAIL` to the verified sender.
+
+**Brevo** (300 emails/day free):
 
 1. Create a free Brevo account and verify a sender address or domain.
-2. Create an API key; it starts with `xkeysib-`.
+2. Create an API key from the **API Keys** tab (not the SMTP tab); it starts
+   with `xkeysib-`.
 3. Set `BREVO_API_KEY` and `EMAIL_FROM_EMAIL` to the verified sender.
-4. Confirm the sender before relying on OTP or password-reset delivery.
 
-The services use Brevo's HTTPS API at `https://api.brevo.com/v3`. No SMTP
-credentials are used because Render blocks outbound SMTP on the free plan.
+Transport selection: leave `EMAIL_TRANSPORT` unset to auto-detect (SendGrid
+wins if both keys are set), or pin `EMAIL_TRANSPORT=sendgrid` / `api` (Brevo).
+The services call `https://api.sendgrid.com/v3/mail/send` or
+`https://api.brevo.com/v3/smtp/email`. No SMTP credentials are used.
 
 ### 3. Optional Upstash Redis
 
@@ -176,8 +193,9 @@ The Blueprint prompts for these; none are committed:
 | `MFA_ENCRYPTION_KEY` | `openssl rand -hex 32` (64 hex chars) |
 | `DEMO_SEED_PASSWORD` | Any random string of 12+ characters |
 | `AUTH_DATABASE_URL` etc. | Neon connection strings with `sslmode=require` |
-| `BREVO_API_KEY` | Brevo dashboard (`xkeysib-`) |
-| `EMAIL_FROM_EMAIL` | Verified Brevo sender |
+| `BREVO_API_KEY` | Brevo dashboard (`xkeysib-`); optional if SendGrid is used |
+| `SENDGRID_API_KEY` | SendGrid dashboard (`SG.`); optional if Brevo is used |
+| `EMAIL_FROM_EMAIL` | Sender verified with the chosen email provider |
 | `CHAPA_*`, `DIDIT_*` | Sandbox dashboards only; leave empty to disable |
 
 Rules enforced by this setup:
@@ -259,7 +277,8 @@ MSYS_NO_PATHCONV=1 docker run --rm --name dbs-render-local -p 10000:10000 \
   dbs-render:local
 ```
 
-Never pass `EMAIL_ENABLED=true` with a production Brevo key for a local run.
+Never pass `EMAIL_ENABLED=true` with a production email-provider key for a
+local run.
 The database names come from `scripts/create-test-databases.sh` or the Compose
 PostgreSQL service. Do not copy the root `.env` into the image.
 
@@ -315,8 +334,9 @@ Manual checks that cannot be automated without provider accounts:
   PostgreSQL. This adds rows and bandwidth; keep the demo dataset small.
 - **Redis is optional**: without Upstash, rate limits are per process and
   reset on restart, and the KYC cache is per process.
-- **Email**: Brevo free has a daily sending limit. OTP and reset delivery
-  depend on a verified sender and sender reputation.
+- **Email**: the free provider tier has a daily sending limit (SendGrid 100,
+  Brevo 300). OTP and reset delivery depend on a verified sender and sender
+  reputation.
 - **PostgreSQL**: Neon free has storage and compute limits and may suspend
   idle compute. The first login after a long idle period can be slow.
 - **Payments/KYC**: Chapa and Didit are sandbox-only. No live money movement is

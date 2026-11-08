@@ -181,20 +181,36 @@ const trustProxy = readInteger("TRUST_PROXY", isProduction ? 1 : 0, { min: 0, ma
 const metricsToken = readOptionalSecret("METRICS_TOKEN");
 
 const brevoApiKey = readOptionalSecret("BREVO_API_KEY");
-const emailTransport = (process.env.EMAIL_TRANSPORT || (brevoApiKey ? "api" : "")).toLowerCase();
-if (emailTransport && emailTransport !== "api") {
-  fail('EMAIL_TRANSPORT currently supports only "api" (Brevo).');
+const sendgridApiKey = readOptionalSecret("SENDGRID_API_KEY");
+const emailTransport = (
+  process.env.EMAIL_TRANSPORT || (sendgridApiKey ? "sendgrid" : brevoApiKey ? "api" : "")
+).toLowerCase();
+if (emailTransport && !["api", "sendgrid"].includes(emailTransport)) {
+  fail('EMAIL_TRANSPORT must be "api" (Brevo) or "sendgrid" when set.');
+}
+if (sendgridApiKey && !sendgridApiKey.startsWith("SG.")) {
+  fail("SENDGRID_API_KEY must be a SendGrid API key (SG.).");
 }
 
-const emailEnabled = readBoolean("EMAIL_ENABLED", Boolean(brevoApiKey));
+const emailEnabled = readBoolean("EMAIL_ENABLED", Boolean(brevoApiKey || sendgridApiKey));
 const emailFromEmail = readOptional("EMAIL_FROM_EMAIL");
 if (emailEnabled) {
-  if (!brevoApiKey) {
-    fail("EMAIL_ENABLED requires BREVO_API_KEY (or BREVO_API_KEY_FILE).");
+  if (!brevoApiKey && !sendgridApiKey) {
+    fail("EMAIL_ENABLED requires BREVO_API_KEY or SENDGRID_API_KEY (or their _FILE variants).");
   }
   if (!emailFromEmail) {
     fail("EMAIL_ENABLED requires EMAIL_FROM_EMAIL.");
   }
+}
+if (emailTransport === "sendgrid" && !sendgridApiKey) {
+  fail("EMAIL_TRANSPORT=sendgrid requires SENDGRID_API_KEY.");
+}
+
+const sendgridApiBaseUrl = (
+  process.env.SENDGRID_API_BASE_URL || "https://api.sendgrid.com"
+).replace(/\/+$/, "");
+if (!sendgridApiBaseUrl.startsWith("https://")) {
+  fail("SENDGRID_API_BASE_URL must be an HTTPS URL.");
 }
 
 const brevoApiBaseUrl = (process.env.BREVO_API_BASE_URL || "https://api.brevo.com/v3").replace(
@@ -259,6 +275,8 @@ const env = Object.freeze({
   EMAIL_TRANSPORT: emailTransport || "api",
   BREVO_API_KEY: brevoApiKey,
   BREVO_API_BASE_URL: brevoApiBaseUrl,
+  SENDGRID_API_KEY: sendgridApiKey,
+  SENDGRID_API_BASE_URL: sendgridApiBaseUrl,
   EMAIL_FROM: readOptional("EMAIL_FROM") || "Meridian Bank",
   EMAIL_FROM_EMAIL: emailFromEmail,
   EMAIL_TIMEOUT_MS: readInteger("EMAIL_TIMEOUT_MS", 8000, { min: 1000, max: 60000 }),

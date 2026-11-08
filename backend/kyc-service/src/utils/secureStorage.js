@@ -23,9 +23,7 @@ function readKeys() {
 
   return [
     Buffer.from(env.STORAGE_ENCRYPTION_KEY, "hex"),
-    ...env.STORAGE_ENCRYPTION_KEYS_PREVIOUS.map((key) =>
-      Buffer.from(key, "hex")
-    ),
+    ...env.STORAGE_ENCRYPTION_KEYS_PREVIOUS.map((key) => Buffer.from(key, "hex")),
   ];
 }
 
@@ -40,11 +38,7 @@ function decryptBufferWithKey(encrypted, key) {
   if (encrypted.length < IV_LENGTH + TAG_LENGTH) {
     throw new Error("Ciphertext is too short");
   }
-  const decipher = crypto.createDecipheriv(
-    ALGORITHM,
-    key,
-    encrypted.subarray(0, IV_LENGTH)
-  );
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, encrypted.subarray(0, IV_LENGTH));
   decipher.setAuthTag(encrypted.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH));
   return Buffer.concat([
     decipher.update(encrypted.subarray(IV_LENGTH + TAG_LENGTH)),
@@ -123,10 +117,7 @@ function decryptSensitiveValue(value) {
 
 async function decryptFromStorage(storageKey) {
   const encrypted = await readEncrypted(storageKey);
-  const { plaintext } = decryptBuffer(
-    encrypted,
-    "Stored document could not be decrypted"
-  );
+  const { plaintext } = decryptBuffer(encrypted, "Stored document could not be decrypted");
   return plaintext;
 }
 

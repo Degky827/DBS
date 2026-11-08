@@ -64,8 +64,33 @@ const EMAIL_API_TIMEOUT_MS = 10 * 1000;
 
 const resolveTransport = () => {
   if (env.EMAIL_TRANSPORT) return env.EMAIL_TRANSPORT;
+  if (env.SENDGRID_API_KEY) return "sendgrid";
   // xkeysib- keys are REST API keys; xsmtpsib- keys are SMTP keys.
-  return env.BREVO_API_KEY.startsWith("xkeysib") ? "api" : "smtp";
+  return (env.BREVO_API_KEY || "").startsWith("xkeysib") ? "api" : "smtp";
+};
+
+const sendViaSendGrid = async ({ to, subject, html }) => {
+  const response = await fetch(`${env.SENDGRID_API_BASE_URL}/v3/mail/send`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.SENDGRID_API_KEY}`,
+      "content-type": "application/json",
+    },
+    signal: AbortSignal.timeout(EMAIL_API_TIMEOUT_MS),
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { name: env.EMAIL_FROM, email: env.EMAIL_FROM_EMAIL },
+      subject,
+      content: [{ type: "text/html", value: html }],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`SendGrid API responded ${response.status}: ${detail.slice(0, 300)}`);
+  }
+
+  logger.info({ to }, "Email sent via SendGrid API");
 };
 
 const sendViaApi = async ({ to, subject, html }) => {
@@ -132,16 +157,16 @@ const sendOtpEmail = async ({ to, otp, purpose }) => {
 
   const html = layout({ heading, body: intro + otpBlock(otp) });
 
-  if (!env.BREVO_API_KEY) {
+  if (!env.BREVO_API_KEY && !env.SENDGRID_API_KEY) {
     logger.warn(
       { to, verification: isVerification },
-      "Brevo key not set — OTP email delivery unavailable"
+      "No email provider key set — OTP email delivery unavailable"
     );
     return { delivered: false };
   }
 
   const transport = resolveTransport();
-  const sender = transport === "api" ? sendViaApi : sendViaSmtp;
+  const sender = { api: sendViaApi, smtp: sendViaSmtp, sendgrid: sendViaSendGrid }[transport];
 
   try {
     await sender({ to, subject, html });
@@ -184,13 +209,16 @@ const sendSecurityAlertEmail = async ({ to, changedAt = new Date(), via = "PASSW
                   security alert emails are enabled for your account.`,
   });
 
-  if (!env.BREVO_API_KEY) {
-    logger.warn({ to, purpose: via }, "Brevo key not set — security alert delivery unavailable");
+  if (!env.BREVO_API_KEY && !env.SENDGRID_API_KEY) {
+    logger.warn(
+      { to, purpose: via },
+      "No email provider key set — security alert delivery unavailable"
+    );
     return { delivered: false };
   }
 
   const transport = resolveTransport();
-  const sender = transport === "api" ? sendViaApi : sendViaSmtp;
+  const sender = { api: sendViaApi, smtp: sendViaSmtp, sendgrid: sendViaSendGrid }[transport];
 
   try {
     await sender({

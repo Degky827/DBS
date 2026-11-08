@@ -41,8 +41,11 @@ async function requestDidit(path, operation, options = {}) {
 
   if (!response.ok) {
     metrics.recordKycProviderFailure(operation);
+    // Surface the provider's own error detail; a bare status code cannot
+    // distinguish a bad workflow ID from an environment/key mismatch.
+    const providerResponse = await response.text().catch(() => "");
     logger.warn(
-      { statusCode: response.status },
+      { statusCode: response.status, providerResponse: providerResponse.slice(0, 500) },
       "Didit API rejected a KYC request"
     );
     if (response.status === 429 || response.status >= 500) {
@@ -80,20 +83,16 @@ async function createSession({ submissionId }) {
     typeof sessionUrl !== "string" ||
     !sessionUrl.startsWith("https://")
   ) {
-    throw ApiError.badGateway(
-      "Identity verification provider returned an invalid session"
-    );
+    throw ApiError.badGateway("Identity verification provider returned an invalid session");
   }
 
   return { sessionId, sessionUrl };
 }
 
 async function getSessionDecision(sessionId) {
-  return requestDidit(
-    `/v3/session/${encodeURIComponent(sessionId)}/decision/`,
-    "get_decision",
-    { method: "GET" }
-  );
+  return requestDidit(`/v3/session/${encodeURIComponent(sessionId)}/decision/`, "get_decision", {
+    method: "GET",
+  });
 }
 
 module.exports = { createSession, getSessionDecision };

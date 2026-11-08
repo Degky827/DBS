@@ -40,9 +40,7 @@ const buildContent = (notification) => {
 
 const isRetryableStatus = (status) => status === 429 || status >= 500;
 
-const sendEmail = async ({ to, subject, text, html }) => {
-  if (!env.EMAIL_ENABLED) return { skipped: true };
-
+const sendViaBrevo = async ({ to, subject, text, html }) => {
   let response;
   try {
     response = await fetch(`${env.BREVO_API_BASE_URL}/smtp/email`, {
@@ -81,6 +79,55 @@ const sendEmail = async ({ to, subject, text, html }) => {
   metrics.recordEmail("sent");
   logger.info({ to, messageId: body?.messageId || null }, "Notification email sent");
   return { messageId: body?.messageId || null };
+};
+
+const sendViaSendGrid = async ({ to, subject, text, html }) => {
+  let response;
+  try {
+    response = await fetch(`${env.SENDGRID_API_BASE_URL}/v3/mail/send`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.SENDGRID_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: to }] }],
+        from: { name: env.EMAIL_FROM, email: env.EMAIL_FROM_EMAIL },
+        subject,
+        content: [
+          { type: "text/plain", value: text },
+          { type: "text/html", value: html },
+        ],
+      }),
+      signal: AbortSignal.timeout(env.EMAIL_TIMEOUT_MS),
+    });
+  } catch (error) {
+    metrics.recordEmail("failed");
+    throw new EmailError(`SendGrid request failed: ${error.message}`);
+  }
+
+  if (!response.ok) {
+    metrics.recordEmail("failed");
+    const body = await response.json().catch(() => null);
+    const message =
+      body?.errors?.map((entry) => entry.message).join("; ") ||
+      `SendGrid responded with status ${response.status}`;
+    throw new EmailError(String(message).slice(0, 300), {
+      retryable: isRetryableStatus(response.status),
+      status: response.status,
+    });
+  }
+
+  const messageId = response.headers.get("x-message-id") || null;
+  metrics.recordEmail("sent");
+  logger.info({ to, messageId }, "Notification email sent");
+  return { messageId };
+};
+
+const sendEmail = async ({ to, subject, text, html }) => {
+  if (!env.EMAIL_ENABLED) return { skipped: true };
+  const sender = env.EMAIL_TRANSPORT === "sendgrid" ? sendViaSendGrid : sendViaBrevo;
+  return sender({ to, subject, text, html });
 };
 
 const sendNotificationEmail = (notification) =>

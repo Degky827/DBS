@@ -6,8 +6,7 @@ const { spawnSync } = require("node:child_process");
 const serviceRoot = path.resolve(__dirname, "..");
 
 const STRONG_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-const STRONG_INTERNAL_KEY =
-  "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+const STRONG_INTERNAL_KEY = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
 const baseEnv = {
   NODE_ENV: "production",
@@ -24,6 +23,8 @@ const baseEnv = {
   ENABLE_HSTS: "true",
   BCRYPT_ROUNDS: "12",
   BREVO_API_KEY: "xkeysib-test-key",
+  SENDGRID_API_KEY: "",
+  EMAIL_TRANSPORT: "",
   API_DOCS_USERNAME: "",
   API_DOCS_PASSWORD: "",
   ALLOW_INSECURE_COOKIES: "",
@@ -56,10 +57,7 @@ test("a strong production configuration loads", () => {
 
 test("production rejects a missing or weak JWT secret", () => {
   assertStartupFails({ JWT_SECRET: "" }, /JWT_SECRET/);
-  assertStartupFails(
-    { JWT_SECRET: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    /JWT_SECRET/
-  );
+  assertStartupFails({ JWT_SECRET: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, /JWT_SECRET/);
 });
 
 test("production rejects a missing or weak internal service key", () => {
@@ -82,27 +80,35 @@ test("the absolute refresh lifetime must cover the sliding lifetime", () => {
 
 test("production rejects wildcard and plaintext CORS origins", () => {
   assertStartupFails({ CORS_ORIGIN: "*" }, /wildcard/i);
-  assertStartupFails(
-    { CORS_ORIGIN: "http://bank.example.com" },
-    /HTTPS in production/i
-  );
-  assertStartupFails(
-    { CORS_ORIGIN: "https://bank.example.com/app" },
-    /bare http\(s\) origins/i
-  );
+  assertStartupFails({ CORS_ORIGIN: "http://bank.example.com" }, /HTTPS in production/i);
+  assertStartupFails({ CORS_ORIGIN: "https://bank.example.com/app" }, /bare http\(s\) origins/i);
 });
 
 test("production requires secure cookies", () => {
   assertStartupFails({ COOKIE_SECURE: "false" }, /COOKIE_SECURE/);
 });
 
-test("production requires a Brevo key so verification email can be delivered", () => {
-  assertStartupFails({ BREVO_API_KEY: "" }, /BREVO_API_KEY is required/);
+test("production requires an email provider key so verification email can be delivered", () => {
+  assertStartupFails({ BREVO_API_KEY: "" }, /BREVO_API_KEY or SENDGRID_API_KEY is required/);
   assertStartupFails({ BREVO_API_KEY: "not-a-brevo-key" }, /BREVO_API_KEY/);
   assertStartupFails(
     { BREVO_API_KEY: "xsmtpsib-test-key", EMAIL_TRANSPORT: "api" },
     /EMAIL_TRANSPORT=api/
   );
+  assertStartupFails(
+    { BREVO_API_KEY: "", SENDGRID_API_KEY: "not-a-sendgrid-key" },
+    /SENDGRID_API_KEY/
+  );
+  assertStartupFails(
+    { BREVO_API_KEY: "", SENDGRID_API_KEY: "SG.test-key", EMAIL_TRANSPORT: "api" },
+    /EMAIL_TRANSPORT=api/
+  );
+});
+
+test("production accepts a SendGrid-only email configuration", () => {
+  const result = loadEnv({ BREVO_API_KEY: "", SENDGRID_API_KEY: "SG.test-key" });
+  assert.equal(result.status, 0, result.stderr);
+  assertStartupFails({ EMAIL_TRANSPORT: "sendgrid" }, /EMAIL_TRANSPORT=sendgrid/);
 });
 
 test("production requires documentation credentials when docs are enabled", () => {
