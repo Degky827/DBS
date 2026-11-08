@@ -33,8 +33,24 @@ done
 run_migration() {
   service="$1"
   database_url="$2"
-  ( cd "/app/services/$service" && DATABASE_URL="$database_url" \
-      node /opt/migrator/node_modules/prisma/build/index.js migrate deploy )
+  attempt=1
+  # Neon's pooler endpoint drops session-level advisory locks, which makes
+  # `prisma migrate deploy` intermittently fail with P1002. Retry a few times so
+  # a transient lock timeout does not abort the whole deploy.
+  while :; do
+    if ( cd "/app/services/$service" && DATABASE_URL="$database_url" \
+        node /opt/migrator/node_modules/prisma/build/index.js migrate deploy ); then
+      return 0
+    fi
+    if [ "$attempt" -ge 5 ]; then
+      log "migration for $service failed after $attempt attempts"
+      return 1
+    fi
+    delay=$((attempt * 5))
+    log "migration for $service failed (attempt $attempt); retrying in ${delay}s"
+    attempt=$((attempt + 1))
+    sleep "$delay"
+  done
 }
 
 log "applying Prisma migrations"
